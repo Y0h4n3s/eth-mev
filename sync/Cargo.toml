@@ -1,0 +1,22 @@
+[package]
+name = "garb_sync_eth"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "garb_sync_eth"
+
+[dependencies]
+tokio = "1.21.2"
+url = "2.3.1"
+anyhow = "1.0.66"
+once_cell = "1.16.0"
+async-trait = "0.1.59"
+futures = "0.3.24"
+async-std = "1.12.0"
+serde = "1.0.147"
+serde_json = "1.0.87"
+kanal = "0.1.0-pre7"
+reqwest = "0.11.14"
+bincode = "2.0.0-rc.2"
+ethers = "1.0.2"
