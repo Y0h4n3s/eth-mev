@@ -1,7 +1,7 @@
 //https://info.uniswap.org/pools
 //'https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3'   -H 'authority: api.thegraph.com'   -H 'accept: */*'   -H 'accept-language: en-US,en;q=0.9'   -H 'content-type: application/json'   -H 'origin: https://info.uniswap.org'   -H 'referer: https://info.uniswap.org/'   -H 'sec-ch-ua: "Chromium";v="103", ".Not/A)Brand";v="99"'   -H 'sec-ch-ua-mobile: ?0'   -H 'sec-ch-ua-platform: "Linux"'   -H 'sec-fetch-dest: empty'   -H 'sec-fetch-mode: cors'   -H 'sec-fetch-site: cross-site'   -H 'user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.134 Safari/537.36'   --data-raw '{"operationName":"pools","variables":{},"query":"query pools {\n  pools(\n   orderBy: totalValueLockedUSD\n    orderDirection: desc\n    subgraphError: allow\n  ) {\n    id\n    feeTier\n    liquidity\n    sqrtPrice\n    tick\n    token0 {\n      id\n      symbol\n      name\n      decimals\n      derivedETH\n      __typename\n    }\n    token1 {\n      id\n      symbol\n      name\n      decimals\n      derivedETH\n      __typename\n    }\n    token0Price\n    token1Price\n    volumeUSD\n    volumeToken0\n    volumeToken1\n    txCount\n    totalValueLockedToken0\n    totalValueLockedToken1\n    totalValueLockedUSD\n    __typename\n  }\n  bundles(where: {id: \"1\"}) {\n    ethPriceUSD\n    __typename\n  }\n}\n"}'   --compressed | jq > uniswapV3Pools.json
 
-
+use coingecko::response::coins::CoinsMarketItem;
 use serde::{Serialize, Deserialize};
 use ethers::providers::{Provider, Http, Middleware};
 use tokio::task::{JoinHandle, LocalSet};
@@ -68,13 +68,13 @@ impl LiquidityProvider for UniSwapV3 {
 		let lock = self.pools.read().await;
 		lock.clone()
 	}
-	fn load_pools(&self) -> JoinHandle<()> {
+	fn load_pools(&self, filter_markets: Vec<CoinsMarketItem>) -> JoinHandle<()> {
 		let metadata = self.metadata.clone();
 		let pools = self.pools.clone();
 		tokio::spawn(async move {
 			let client = reqwest::Client::new();
 			let response = client.post("https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3")
-			                     .json(&json!({"operationName":"pools","variables":{},"query":"query pools {\n  pools(first: 1000, orderBy: totalValueLockedUSD,   orderDirection: desc, subgraphError: allow) {\n    id\n    feeTier\n    token0 {\n      id\n      symbol\n      name\n     decimals\n      derivedETH\n      __typename\n    }\n    token1 {\n      id\n      symbol\n      name\n      decimals\n      derivedETH\n      __typename\n    }\n    volumeUSD\n    totalValueLockedToken0\n    totalValueLockedToken1\n    totalValueLockedUSD\n    __typename\n  }\n}\n"}))
+			                     .json(&json!({"operationName":"pools","variables":{},"query":"query pools {\n  pools(first: 50, orderBy: totalValueLockedUSD,   orderDirection: desc, subgraphError: allow) {\n    id\n    feeTier\n    token0 {\n      id\n      symbol\n      name\n     decimals\n      derivedETH\n      __typename\n    }\n    token1 {\n      id\n      symbol\n      name\n      decimals\n      derivedETH\n      __typename\n    }\n    volumeUSD\n    totalValueLockedToken0\n    totalValueLockedToken1\n    totalValueLockedUSD\n    __typename\n  }\n}\n"}))
 			                     .send()
 			                     .await;
 			if let Ok(resources) = response {
@@ -82,15 +82,38 @@ impl LiquidityProvider for UniSwapV3 {
 				// let resp_values = resources.text().await.unwrap();
 				// println!("{:?}", resp_values);
 				for pool in resp_values.data.pools {
+					if !(
+						filter_markets.iter().any(|market|
+							  market.name == pool.token0.symbol
+								    || market.name == pool.token0.name
+								    || market.symbol == pool.token0.symbol
+								    || market.symbol == pool.token0.name
+								    || market.name == "W".to_string() + &pool.token0.symbol
+								    || market.name == "W".to_string() + &pool.token0.name
+								    || market.symbol == "W".to_string() + &pool.token0.symbol
+								    || market.symbol == "W".to_string() + &pool.token0.name)
+							  ||
+							  filter_markets.iter().any(|market|
+								    market.name == pool.token1.symbol
+									      || market.name == pool.token1.name
+									      || market.symbol == pool.token1.symbol
+									      || market.symbol == pool.token1.name
+									      || market.name == "W".to_string() + &pool.token1.symbol
+									      || market.name == "W".to_string() + &pool.token1.name
+									      || market.symbol =="W".to_string() + &pool.token1.symbol
+									      || market.symbol == "W".to_string() + &pool.token1.name) ) {
+						// println!("sync service>Skipping pool {}-{} {}-{}", pool.token0.symbol, pool.token1.symbol, pool.token0.name, pool.token1.name);
+						continue
+					}
 					let pool = Pool {
 						address: pool.id,
 						x_address: pool.token0.id,
-						fee_bps: 30,
+						fee_bps: pool.feeTier.parse::<u64>().unwrap() / 100,
 						y_address: pool.token1.id,
 						curve: None,
 						curve_type: Curve::Uncorrelated,
-						x_amount: pool.totalValueLockedToken0.parse::<f64>().unwrap() as u64,
-						y_amount: pool.totalValueLockedToken1.parse::<f64>().unwrap() as u64,
+						x_amount: pool.totalValueLockedToken0.parse::<f64>().unwrap() as u128,
+						y_amount: pool.totalValueLockedToken1.parse::<f64>().unwrap() as u128,
 						x_to_y: true,
 						provider: LiquidityProviders::UniswapV3
 					};
@@ -118,7 +141,21 @@ impl EventEmitter for UniSwapV3 {
 		let pools = self.pools.clone();
 		let subscribers = self.subscribers.clone();
 		std::thread::spawn( move || {
-			// websocket listen to any event on pools
+			let mut rt = Runtime::new().unwrap();
+			let pools = pools.clone();
+			let tasks = LocalSet::new();
+			tasks.block_on(&mut rt, async move {
+				let mut joins = vec![];
+				for pool in pools.read().await.values() {
+					let subscribers = subscribers.clone();
+					let mut pool = pool.clone();
+					joins.push(tokio::task::spawn_local(async move {
+					
+					}));
+				}
+				futures::future::join_all(joins).await;
+				
+			});
 		})
 	}
 }

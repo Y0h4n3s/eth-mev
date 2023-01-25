@@ -1,4 +1,5 @@
 
+mod abi;
 mod uniswap_v2;
 mod uniswap_v3;
 mod types;
@@ -15,12 +16,14 @@ use async_std::sync::Arc;
 use async_trait::async_trait;
 use std::hash::*;
 use std::fmt::Display;
+use coingecko::response::coins::CoinsMarketItem;
+
 #[async_trait]
 pub trait LiquidityProvider: EventEmitter {
 	type Metadata;
 	fn get_metadata(&self) -> Self::Metadata;
 	async fn get_pools(&self) -> HashMap<String, Pool>;
-	fn load_pools(&self) -> JoinHandle<()>;
+	fn load_pools(&self, filter_market: Vec<CoinsMarketItem>) -> JoinHandle<()>;
 	fn get_id(&self) -> LiquidityProviders;
 }
 
@@ -91,8 +94,8 @@ pub struct Pool {
 	pub curve: Option<String>,
 	pub curve_type: Curve,
 	pub fee_bps: u64,
-	pub x_amount: u64,
-	pub y_amount: u64,
+	pub x_amount: u128,
+	pub y_amount: u128,
 	pub x_to_y: bool,
 	pub provider: LiquidityProviders,
 }
@@ -152,7 +155,7 @@ impl CpmmCalculator {
 }
 
 impl Calculator for CpmmCalculator {
-	fn calculate_out(&self, in_: u64, pool: &Pool) -> u64 {
+	fn calculate_out(&self, in_: u128, pool: &Pool) -> u128 {
 		let swap_source_amount = if pool.x_to_y {
 			pool.x_amount
 		} else {
@@ -171,12 +174,12 @@ impl Calculator for CpmmCalculator {
 			  .checked_mul(swap_destination_amount as u128)
 			  .unwrap_or(0);
 		let denominator = ((swap_source_amount as u128) * 10000) + amount_in_with_fee;
-		(numerator / denominator) as u64
+		(numerator / denominator) as u128
 	}
 }
 
 pub trait Calculator {
-	fn calculate_out(&self, in_: u64, pool: &Pool) -> u64;
+	fn calculate_out(&self, in_: u128, pool: &Pool) -> u128;
 }
 pub struct CpmmCalculator {}
 
@@ -191,14 +194,26 @@ pub struct SyncConfig {
 
 pub async fn start(
 	pools: Arc<RwLock<HashMap<String, Pool>>>,
+	updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = Pool>>>,
 	config: SyncConfig,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
 	
+	
+	// collect top tokens by market cap
+	let coingecko_client = coingecko::CoinGeckoClient::new("https://api.coingecko.com/api/v3");
+	let mut markets_list = vec![];
+	
+	for i in 1..5 {
+		let coin_list = coingecko_client.coins_markets::<String>("usd", &[], Some("ethereum-ecosystem"), coingecko::params::MarketsOrder::VolumeDesc, 250, i, false, &[] ).await?;
+		markets_list.extend(coin_list);
+	}
+	println!("markets list: {:?}", markets_list.len());
 	let mut join_handles = vec![];
 	let mut amms = vec![];
 	for provider in config.providers {
 		let mut amm = provider.build();
-		join_handles.push(amm.load_pools());
+		join_handles.push(amm.load_pools(markets_list.clone()));
+		amm.subscribe(updated_q.clone()).await;
 		amms.push(amm);
 	}
 	
@@ -214,11 +229,20 @@ pub async fn start(
 			loaded_pools.insert(addr, pool);
 		}
 	}
+	
 	let mut pools = pools.write().await;
 	*pools = loaded_pools;
 	std::mem::drop(pools);
 	
-	Ok(tokio::spawn(async move {
+	let mut emitters = vec![];
+	for amm in &amms {
+		let emitter = amm.emit();
+		emitters.push(emitter);
+	}
 	
+	Ok(tokio::spawn(async move {
+		for emitter in emitters {
+			emitter.join().unwrap();
+		}
 	}))
 }

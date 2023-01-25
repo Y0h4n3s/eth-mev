@@ -30,7 +30,7 @@ pub async fn async_main() -> anyhow::Result<()> {
     let sync_config = SyncConfig {
         providers: PROVIDERS.clone(),
     };
-    garb_sync_eth::start(pools.clone(), sync_config)
+    garb_sync_eth::start(pools.clone(), update_q_sender, sync_config)
           .await
           .unwrap();
     
@@ -38,7 +38,7 @@ pub async fn async_main() -> anyhow::Result<()> {
     
     let graph_conifg = GraphConfig {
         from_file: false,
-        save_only: true
+        save_only: false
     };
     let graph_routes = routes_sender.clone();
     joins.push(std::thread::spawn(move || {

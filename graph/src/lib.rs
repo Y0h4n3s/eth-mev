@@ -116,7 +116,7 @@ pub async fn start(
     if config.from_file {
 	    println!("graph_service> Loading routes from file");
 	    let config = bincode::config::standard();
-		let contents = std::fs::read_to_string("path_lookup.json")?;
+		let contents = std::fs::read_to_string("path_lookup_1_uniswapv2_uniswapv1.json")?;
 		let mut path_lookup = path_lookup.write().await;
 		let encoded: Vec<u8> = serde_json::from_str(&contents)?;
 	
@@ -391,19 +391,19 @@ pub async fn start(
     println!("graph service> Found {} routes", total_paths);
     
     
-    println!("graph service> Registering Gas consumption for transactions");
-    for (_pool, paths) in path_lookup.read().await.clone() {
-        for (in_addr, path) in paths {
-            let order = Order {
-                size: MAX_SIZE.clone(),
-                decimals: decimals(in_addr),
-                route: path.clone()
-            };
-            let r = routes.write().await;
-            r.try_send(order).unwrap();
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    }
+    // println!("graph service> Registering Gas consumption for transactions");
+    // for (_pool, paths) in path_lookup.read().await.clone() {
+    //     for (in_addr, path) in paths {
+    //         let order = Order {
+    //             size: MAX_SIZE.clone(),
+    //             decimals: decimals(in_addr),
+    //             route: path.clone()
+    //         };
+    //         let r = routes.write().await;
+    //         r.try_send(order).unwrap();
+    //     }
+    //     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // }
     println!("graph service> Starting Listener thread");
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
@@ -411,6 +411,7 @@ pub async fn start(
         task_set.block_on(&rt, async {
             while let Ok(updated_market_event) = updated_q.recv().await {
                 let updated_market = updated_market_event.get_event();
+	            println!("graph service> Updated market: {:?}", updated_market);
                 let path_lookup = path_lookup.clone();
                 let routes = routes.clone();
                 tokio::task::spawn_local(async move {
@@ -418,6 +419,7 @@ pub async fn start(
                     let updated = read.iter().find(|(key, _value)|updated_market.address == key.address && updated_market.x_address == key.x_address && updated_market.y_address == key.y_address && updated_market.provider == key.provider);
                     if updated.is_some() {
                         let (pool, market_routes) =  updated.unwrap();
+	                    println!("graph service> Found {} routes for updated market", market_routes.len());
                         let pool = pool.clone();
                         let market_routes = market_routes.clone();
                         std::mem::drop(read);
@@ -445,8 +447,10 @@ pub async fn start(
                             
                             let mut best_route_index = 0;
                             let mut best_route = 0.0;
+	                        
+	                        // Todo: use binary search or quadratic searchhere
                             for i in 1..MAX_SIZE.clone()+1 {
-                                let i_atomic = (i as u64) * 10_u64.pow(decimals as u32);
+                                let i_atomic = (i as u128) * 10_u128.pow(decimals as u32);
                                 let mut in_ = i_atomic;
                                 for route in &paths {
                                     let calculator = route.provider.build_calculator();
@@ -456,6 +460,7 @@ pub async fn start(
                                 if in_ < i_atomic {
                                     continue;
                                 }
+	                            
                                 
                                 let percent = in_ as f64 - i_atomic as f64;
                                 
@@ -463,11 +468,18 @@ pub async fn start(
                                 if percent > best_route {
                                     best_route = percent;
                                     best_route_index = i;
+	                                // println!("graph service> Found route with in: {} out: {} at index {} with {}%", i_atomic, in_, best_route_index, percent);
+	
                                 }
                             }
                             
                             if best_route > 0.0 {
-                                
+	                            println!("`````````````````````` Tried Route ``````````````````````");
+	                                for (i,pool) in paths.iter().enumerate() {
+	                                    println!("{}. {}", i + 1, pool);
+	                                }
+	                                println!("\n\n");
+	                            continue;
                                 let order = Order {
                                     size: best_route_index as u64,
                                     decimals,

@@ -4,3 +4,31 @@
 .idea
 **path_lookup.json
 **Cargo.lock
+
+**node_modules/
+
+# Environment Variables
+**.env
+**.env.prod
+
+# Cached Build
+**cache/
+**out/
+
+# Vscode
+**.vscode/
+
+# huffc artifacts
+**artifacts
+
+# Ignore flattened files
+**flattened.txt
+
+# Ignore Broadcasts
+**broadcast
+
+# solidity
+**/**/lib
+**/**/out
+**/**/cache
+**/**/script
