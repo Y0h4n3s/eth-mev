@@ -43,6 +43,15 @@ impl From<u8> for LiquidityProviders {
 		}
 	}
 }
+
+impl From<LiquidityProviders> for u8 {
+	fn from(value: LiquidityProviders) -> Self {
+		match value {
+			LiquidityProviders::UniswapV2 => 1,
+			LiquidityProviders::UniswapV3 => 2,
+		}
+	}
+}
 pub trait EventSource: Send {
 	type Event: Send;
 	fn get_event(&self) -> Self::Event;
@@ -207,7 +216,6 @@ pub async fn start(
 		let coin_list = coingecko_client.coins_markets::<String>("usd", &[], Some("ethereum-ecosystem"), coingecko::params::MarketsOrder::VolumeDesc, 250, i, false, &[] ).await?;
 		markets_list.extend(coin_list);
 	}
-	println!("markets list: {:?}", markets_list.len());
 	let mut join_handles = vec![];
 	let mut amms = vec![];
 	for provider in config.providers {

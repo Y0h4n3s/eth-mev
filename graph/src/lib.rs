@@ -411,7 +411,6 @@ pub async fn start(
         task_set.block_on(&rt, async {
             while let Ok(updated_market_event) = updated_q.recv().await {
                 let updated_market = updated_market_event.get_event();
-	            println!("graph service> Updated market: {:?}", updated_market);
                 let path_lookup = path_lookup.clone();
                 let routes = routes.clone();
                 tokio::task::spawn_local(async move {
@@ -474,12 +473,6 @@ pub async fn start(
                             }
                             
                             if best_route > 0.0 {
-	                            println!("`````````````````````` Tried Route ``````````````````````");
-	                                for (i,pool) in paths.iter().enumerate() {
-	                                    println!("{}. {}", i + 1, pool);
-	                                }
-	                                println!("\n\n");
-	                            continue;
                                 let order = Order {
                                     size: best_route_index as u64,
                                     decimals,

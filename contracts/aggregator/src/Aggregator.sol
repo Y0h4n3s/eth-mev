@@ -1,20 +1,17 @@
 pragma solidity ^0.8.13;
 
-import "interfaces/IUniswapV3Pool.sol";
-import "interfaces/IUniswapV2Pair.sol";
-import "interfaces/IERC20.sol";
+import "src/interfaces/IUniswapV3Pool.sol";
+import "src/interfaces/IUniswapV2Pair.sol";
 contract Aggregator {
     uint256 public number;
 
-    uint8 constant private UNISWAPV2 = 0;
-    uint8 constant private UNISWAPV3 = 1;
-    function tryRoute(address[] pools, uint8[] poolIds, bool[] directions, uint256 amountIn)
-        external
-        view
-        returns (uint256 amountOut) {
+    uint8 constant private UNISWAPV2 = 1;
+    uint8 constant private UNISWAPV3 = 2;
+    function tryRoute(address[] calldata pools, uint8[] calldata poolIds, bool[] calldata directions, uint256 amountIn)
+        external {
 
         uint256 amount = amountIn;
-        for (uint8 i = 0; i < poolIds.len; i++) {
+        for (uint8 i = 0; i < poolIds.length; i++) {
             uint8 id = poolIds[i];
             if (id == UNISWAPV2) {
                 IUniswapV2Pair pair = IUniswapV2Pair(pools[i]);
@@ -30,17 +27,20 @@ contract Aggregator {
                 } else {
                     amount1Out = amount;
                 }
-                pair.swap(,_token1, _token2,_amount);
-                uint token2Balance = IERC20(_token2).balanceOf(address(this));
-                amount = token2Balance - token2InitialBalance;
+                pair.swap(amount0Out, amount1Out, address(this), "");
+                uint token2Balance = IERC20(token1).balanceOf(address(this));
+                amount = token2Balance - initialBalance;
             }
             if (id == UNISWAPV3) {
-                (amount0, amount1) = IUniswapV3Pool(pools[i]).swap(address(this), directions[i], amount, 0, "");
+                (int256 amount0, int256 amount1) = IUniswapV3Pool(pools[i]).swap(address(this), directions[i], int(amount), 0, "");
                 if (directions[i]) {
-                    amount = amount1;
+                    amount = uint(amount1);
                 } else {
-                    amount = amount0;
+                    amount = uint(amount0);
                 }
             }
         }
+
+        require(amount > amountIn, "Aggregator: No profit" );
     }
+}
