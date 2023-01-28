@@ -1,12 +1,25 @@
 pragma solidity ^0.8.13;
-
+// extra gas spent: 113320
+// uniswapv3 avg gas: 104522
+// uniswapv2 avg gas: 119421
+import "src/interfaces/ISwapRouter.sol";
 import "src/interfaces/IUniswapV3Pool.sol";
 import "src/interfaces/IUniswapV2Pair.sol";
+import "src/interfaces/IUniswapV2Router02.sol";
 contract Aggregator {
     uint256 public number;
+    address constant private MEVER = address(0xef344B9eFcc133EB4e7FEfbd73a613E3b2D05e86);
+    address constant private WETH9 = address(0xCBCdF9626bC03E24f779434178A73a0B4bad62eD);
+    address constant private UNISWAPV3ROUTER = address(0xE592427A0AEce92De3Edee1F18E0157C05861564);
+    address constant private UNISWAPV2ROUTER = address(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
 
     uint8 constant private UNISWAPV2 = 1;
     uint8 constant private UNISWAPV3 = 2;
+
+    event ErrorHandled(string message);
+    event AddressLog(address addr);
+    event UniswapV3Swap(ISwapRouter.ExactInputSingleParams params);
+    event BalanceLog(uint256 balance);
     function tryRoute(address[] calldata pools, uint8[] calldata poolIds, bool[] calldata directions, uint256 amountIn)
         external {
 
@@ -15,32 +28,51 @@ contract Aggregator {
             uint8 id = poolIds[i];
             if (id == UNISWAPV2) {
                 IUniswapV2Pair pair = IUniswapV2Pair(pools[i]);
-                address token0 = pair.token0();
-                address token1 = pair.token1();
-                uint amount0Out = 0;
-                uint amount1Out = 0;
-                uint initialBalance = IERC20(token0).balanceOf(address(this));
+                address tokenIn = pair.token0();
+                address tokenOut = pair.token1();
 
-                if (directions[i]) {
-                    amount0Out = amount;
-                    initialBalance = IERC20(token1).balanceOf(address(this));
-                } else {
-                    amount1Out = amount;
+                if (!directions[i]) {
+                    tokenIn = pair.token1();
+                    tokenOut = pair.token0();
                 }
-                pair.swap(amount0Out, amount1Out, address(this), "");
-                uint token2Balance = IERC20(token1).balanceOf(address(this));
+                IERC20(tokenIn).approve(address(UNISWAPV2ROUTER), amount);
+                uint initialBalance = IERC20(tokenOut).balanceOf(address(this));
+                address[] memory path = new address[](2);
+                path[0] = tokenIn;
+                path[1] = tokenOut;
+                IUniswapV2Router02(UNISWAPV2ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(amount,0, path, msg.sender, 9999999999999999999);
+                uint token2Balance = IERC20(tokenOut).balanceOf(address(this));
                 amount = token2Balance - initialBalance;
+                emit AddressLog(tokenOut);
+
             }
             if (id == UNISWAPV3) {
-                (int256 amount0, int256 amount1) = IUniswapV3Pool(pools[i]).swap(address(this), directions[i], int(amount), 0, "");
-                if (directions[i]) {
-                    amount = uint(amount1);
-                } else {
-                    amount = uint(amount0);
+
+                IUniswapV3Pool pool = IUniswapV3Pool(pools[i]);
+                address tokenIn = pool.token0();
+                address tokenOut = pool.token1();
+                address factory = pool.factory();
+                if (!directions[i]) {
+                    tokenOut = pool.token0();
+                    tokenIn = pool.token1();
                 }
+                IERC20(tokenIn).approve(address(UNISWAPV3ROUTER), amount);
+
+                ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+                    tokenIn: tokenIn,
+                    tokenOut: tokenOut,
+                    fee: pool.fee(),
+                    recipient: msg.sender,
+                    deadline: 9999999999999999,
+                    amountIn: amount,
+                    amountOutMinimum: 0,
+                    sqrtPriceLimitX96: 0
+                });
+                amount = ISwapRouter(UNISWAPV3ROUTER).exactInputSingle(params);
+                emit AddressLog(tokenOut);
             }
         }
 
-        require(amount > amountIn, "Aggregator: No profit" );
+        require(amount > amountIn, "" );
     }
 }

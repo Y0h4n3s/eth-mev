@@ -40,7 +40,7 @@ pub struct GraphConfig {
     pub save_only: bool
 }
 pub static CHECKED_COIN: Lazy<String> =  Lazy::new(|| {
-    std::env::var("ETH_CHECKED_COIN").unwrap_or("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string())
+    std::env::var("ETH_CHECKED_COIN").unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
 });
 
 pub static MAX_SIZE: Lazy<u64> = Lazy::new(|| {
