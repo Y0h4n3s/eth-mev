@@ -103,9 +103,9 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
             }
             
             let client = Arc::new(ethers_providers::Provider::<Http>::try_from(NODE_URL.clone().to_string()).unwrap());
-            let contract = Aggregator::new(CONTRACT_ADDRESS.clone(), client.clone());
+            // let contract = Aggregator::new(CONTRACT_ADDRESS.clone(), client.clone());
             
-            contract.try_route(pools, pool_ids, directions, U256::from(order.size)).await.unwrap();
+            // contract.try_route(pools, pool_ids, directions, U256::from(order.size)).await.unwrap();
         }
        
     }

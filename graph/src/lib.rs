@@ -3,10 +3,13 @@ use async_std::sync::Arc;
 use garb_sync_eth::{EventSource, Pool};
 use petgraph::algo::all_simple_paths;
 use petgraph::prelude::{Graph, NodeIndex};
-use petgraph::Undirected;
+use petgraph::{Undirected, Outgoing, visit::{IntoNeighborsDirected, NodeCount}};
 use tokio::runtime::Runtime;
 use tokio::sync::{RwLock, Semaphore};
 use once_cell::sync::Lazy;
+use std::hash::Hash;
+use std::iter::from_fn;
+use petgraph::visit::Bfs;
 
 
 fn combinations<T>(v: &[T], k: usize) -> Vec<Vec<T>>
@@ -32,7 +35,8 @@ fn combinations<T>(v: &[T], k: usize) -> Vec<Vec<T>>
 pub struct Order {
     pub size: u64,
     pub decimals: u64,
-    pub route: Vec<Pool>
+    pub route: Vec<Pool>,
+	pub profit: f64,
 }
 
 pub struct GraphConfig {
@@ -43,8 +47,8 @@ pub static CHECKED_COIN: Lazy<String> =  Lazy::new(|| {
     std::env::var("ETH_CHECKED_COIN").unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
 });
 
-pub static MAX_SIZE: Lazy<u64> = Lazy::new(|| {
-    std::env::var("ETH_MAX_SIZE").unwrap_or("100".to_string()).parse().unwrap()
+pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
+    std::env::var("ETH_MAX_SIZE").unwrap_or("1".to_string()).parse().unwrap()
 });
 
 
@@ -208,16 +212,12 @@ pub async fn start(
 				    for checked_coin in &*checked_coin_indices {
 					    let in_address = the_graph.node_weight(*checked_coin).unwrap().to_string();
 					
-					    // TODO: make max_intermediate_nodes and min_intermediate_nodes configurable
-					    // find all the paths that lead to the current checked coin from the updated coin
-					    // max_intermediate_nodes limits the number of swaps we make, it can be any number but the bigger
-					    // the number the more time it will take to find the paths
 					    let to_checked_paths = all_simple_paths::<Vec<NodeIndex>, _>(
 						    &the_graph,
 						    node,
 						    *checked_coin,
 						    0,
-						    Some(1),
+						    Some(2),
 					    )
 						      .collect::<Vec<_>>();
 					
@@ -228,21 +228,13 @@ pub async fn start(
 								    continue;
 							    }
 							
-							    // eg. assuming the checked coin is wormhole usdc and the other coin is apt
-							    //     ni: [apt -> via aux -> usdd -> via liquidswap -> usdc]
-							    //     for each nj: [[apt -> via animeswap -> usdc],[apt -> via aux -> mojo -> via aux -> usdc],...]
-							    //
-							    // p1 -> reverse -> pop = [usdc -> via liquidswap -> usdd]
-							    // new_path = [usdc -> via liquidswap -> usdd -> via aux -> apt -> via animeswap -> usdc]
 							    let mut p1 = ni.clone();
 							    p1.reverse();
 							    p1.pop();
 							
 							    let new_path: Vec<&NodeIndex> = p1.iter().chain(nj).collect();
 							    // println!("{}", new_path.len());
-							    if new_path.len() < 4 {
-								    continue;
-							    }
+							   
 							    // collect all the pools between the coins
 							    // combine the edges
 							    let mut edge_paths: Vec<Vec<Pool>> = vec![];
@@ -283,8 +275,14 @@ pub async fn start(
 								    }
 								    edge_paths = new_edge_paths;
 							    }
+							    
+							
 							
 							    'add: for mut edge_path in edge_paths {
+								    // if arb token is on all pools skip
+								    if edge_path.iter().all(|p| p.x_address == in_address || p.y_address == in_address) {
+									    continue
+								    }
 								    // if consecutive pools are the same, skip
 								    for i in 1..edge_path.len() {
 									    if edge_path[i - 1].x_address == edge_path[i].x_address
@@ -329,15 +327,21 @@ pub async fn start(
 								    && p.provider == edge.provider
 					      })
 				      })
-				      //       .map(|(in_addr, path)| {
-				      //     let mut first_pool = path.first().unwrap().clone();
-				      //     let mut second_pool = path.get(1).unwrap().clone();
-				      //     let mut last_pool = path.last().unwrap().clone();
-				      //
-				      //     first_pool.x_to_y = first_pool.x_address == CHECKED_COIN.clone();
-				      //     last_pool.x_to_y = last_pool.x_address == CHECKED_COIN.clone();
-				      //     return (in_addr, vec![first_pool.clone(), second_pool.clone(), last_pool.clone()]);
-				      // })
+				            .map(|(in_addr, path)| {
+				                let mut new_path = vec![];
+					            let mut in_ = in_addr.clone();
+					            for pool in path {
+						            let mut new_pool = pool.clone();
+						            new_pool.x_to_y = new_pool.x_address == in_;
+						            in_ = if new_pool.x_to_y {
+							            new_pool.y_address.clone()
+						            } else {
+							            new_pool.x_address.clone()
+						            };
+						            new_path.push(new_pool);
+					            }
+				          return (in_addr, new_path);
+				      })
 				      .collect();
 			    let two_step = two_step_routes
 				      .clone()
@@ -444,39 +448,52 @@ pub async fn start(
                             };
                             let decimals = decimals(in_addr);
                             
-                            let mut best_route_index = 0;
-                            let mut best_route = 0.0;
+                            let mut best_route_size = 0.0;
+                            let mut best_route_profit = 0;
+							let negf = -0.2;
+	                        let mut mid = MAX_SIZE.clone() / 2.0;
+	                        let mut left = 0.0;
+	                        let mut right = MAX_SIZE.clone();
+	                        // binary search for 10 steps
+	                        // println!("`````````````````````` Tried Route ``````````````````````");
+	                        // for (i,pool) in paths.iter().enumerate() {
+	                        //     println!("{}. {}", i + 1, pool);
+	                        // }
+	                        // println!("\n\n");
+	                        for i in 0..10 {
+		                        let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
+		                        let mut in_ = i_atomic as u128;
+		                        for route in &paths {
+			                        let calculator = route.provider.build_calculator();
+			                        in_ = calculator.calculate_out(in_, route);
+			                        // println!("{} {} {}", in_, route.x_amount, route.y_amount);
+		                        }
+		                        
+		                        let profit = (in_ as i128 - i_atomic as i128);
+		
+		                        if i == 0 {
+			                        best_route_profit ==  profit;
+		                        }
+		                        if profit > best_route_profit {
+			                        best_route_profit = profit;
+			                        best_route_size = i_atomic;
+									left = mid;
+			                       
+		                        } else {
+			                        right = mid;
+		                        }
+		                        mid = (left + right) / 2.0;
+		                        // println!("Step {}: {} new mid {} ({} - {}) {} {}", i, profit, mid ,left, right, in_, i_atomic);
+		
+	                        }
 	                        
-	                        // Todo: use binary search or quadratic searchhere
-                            for i in 1..MAX_SIZE.clone()+1 {
-                                let i_atomic = (i as u128) * 10_u128.pow(decimals as u32);
-                                let mut in_ = i_atomic;
-                                for route in &paths {
-                                    let calculator = route.provider.build_calculator();
-                                    
-                                    in_ = calculator.calculate_out(in_, route);
-                                }
-                                if in_ < i_atomic {
-                                    continue;
-                                }
-	                            
-                                
-                                let percent = in_ as f64 - i_atomic as f64;
-                                
-                                
-                                if percent > best_route {
-                                    best_route = percent;
-                                    best_route_index = i;
-	                                // println!("graph service> Found route with in: {} out: {} at index {} with {}%", i_atomic, in_, best_route_index, percent);
-	
-                                }
-                            }
                             
-                            if best_route > 0.0 {
+                            if best_route_profit > 0 {
                                 let order = Order {
-                                    size: best_route_index as u64,
+                                    size: best_route_size as u64,
                                     decimals,
                                     route: paths.clone(),
+	                                profit: best_route_profit as f64
                                 };
                                 
                                 let r = routes.write().await;
@@ -501,8 +518,8 @@ pub async fn start(
 fn decimals(coin: String) -> u64 {
     match coin.as_str() {
         "0x1::aptos_coin::AptosCoin" => {
-            8
+            18
         }
-        _ => {6}
+        _ => {18}
     }
 }

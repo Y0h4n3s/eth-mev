@@ -19,8 +19,11 @@ use crate::types::{UniSwapV3Pool};
 use std::error::Error;
 use reqwest;
 use serde_json::json;
+use ethers::abi::{Address, Uint};
+use ethers::types::H160;
+use ethers_providers::Ws;
 use crate::{Pool, EventSource, EventEmitter};
-
+use crate::abi::IERC20;
 #[derive(Clone)]
 pub struct UniswapV3Metadata {
 	
@@ -73,8 +76,10 @@ impl LiquidityProvider for UniSwapV3 {
 		let pools = self.pools.clone();
 		tokio::spawn(async move {
 			let client = reqwest::Client::new();
+			let eth_client = Arc::new(Provider::<Ws>::connect("ws://89.58.31.215:8546").await.unwrap());
+			
 			let response = client.post("https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3")
-			                     .json(&json!({"operationName":"pools","variables":{},"query":"query pools {\n  pools(first: 50, orderBy: totalValueLockedUSD,   orderDirection: desc, subgraphError: allow) {\n    id\n    feeTier\n    token0 {\n      id\n      symbol\n      name\n     decimals\n      derivedETH\n      __typename\n    }\n    token1 {\n      id\n      symbol\n      name\n      decimals\n      derivedETH\n      __typename\n    }\n    volumeUSD\n    totalValueLockedToken0\n    totalValueLockedToken1\n    totalValueLockedUSD\n    __typename\n  }\n}\n"}))
+			                     .json(&json!({"operationName":"pools","variables":{},"query":"query pools {\n  pools(first: 30, orderBy: totalValueLockedUSD,   orderDirection: desc, subgraphError: allow) {\n    id\n    feeTier\n    token0 {\n      id\n      symbol\n      name\n     decimals\n      derivedETH\n      __typename\n    }\n    token1 {\n      id\n      symbol\n      name\n      decimals\n      derivedETH\n      __typename\n    }\n    volumeUSD\n    totalValueLockedToken0\n    totalValueLockedToken1\n    totalValueLockedUSD\n    __typename\n  }\n}\n"}))
 			                     .send()
 			                     .await;
 			if let Ok(resources) = response {
@@ -105,6 +110,11 @@ impl LiquidityProvider for UniSwapV3 {
 						// println!("sync service>Skipping pool {}-{} {}-{}", pool.token0.symbol, pool.token1.symbol, pool.token0.name, pool.token1.name);
 						continue
 					}
+					
+					let token0 = IERC20::new(pool.token0.id.parse::<H160>().unwrap(), eth_client.clone());
+					let token1 = IERC20::new(pool.token1.id.parse::<H160>().unwrap(), eth_client.clone());
+					let token0_balance: Uint = token0.method::<Address, Uint>("balanceOf", pool.id.parse::<Address>().unwrap()).unwrap().call().await.unwrap();
+					let token1_balance: Uint = token1.method::<Address, Uint>("balanceOf", pool.id.parse::<Address>().unwrap()).unwrap().call().await.unwrap();
 					let pool = Pool {
 						address: pool.id,
 						x_address: pool.token0.id,
@@ -112,8 +122,8 @@ impl LiquidityProvider for UniSwapV3 {
 						y_address: pool.token1.id,
 						curve: None,
 						curve_type: Curve::Uncorrelated,
-						x_amount: pool.totalValueLockedToken0.parse::<f64>().unwrap() as u128,
-						y_amount: pool.totalValueLockedToken1.parse::<f64>().unwrap() as u128,
+						x_amount: token0_balance.as_u128(),
+						y_amount: token1_balance.as_u128(),
 						x_to_y: true,
 						provider: LiquidityProviders::UniswapV3
 					};

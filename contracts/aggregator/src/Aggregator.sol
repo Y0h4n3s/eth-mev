@@ -2,24 +2,18 @@ pragma solidity ^0.8.13;
 // extra gas spent: 113320
 // uniswapv3 avg gas: 104522
 // uniswapv2 avg gas: 119421
-import "src/interfaces/ISwapRouter.sol";
-import "src/interfaces/IUniswapV3Pool.sol";
-import "src/interfaces/IUniswapV2Pair.sol";
-import "src/interfaces/IUniswapV2Router02.sol";
+import "./interfaces/ISwapRouter.sol";
+import "./interfaces/IUniswapV3Pool.sol";
+import "./interfaces/IUniswapV2Pair.sol";
+import "./interfaces/IUniswapV2Router02.sol";
 contract Aggregator {
     uint256 public number;
-    address constant private MEVER = address(0xef344B9eFcc133EB4e7FEfbd73a613E3b2D05e86);
-    address constant private WETH9 = address(0xCBCdF9626bC03E24f779434178A73a0B4bad62eD);
     address constant private UNISWAPV3ROUTER = address(0xE592427A0AEce92De3Edee1F18E0157C05861564);
     address constant private UNISWAPV2ROUTER = address(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
 
     uint8 constant private UNISWAPV2 = 1;
     uint8 constant private UNISWAPV3 = 2;
 
-    event ErrorHandled(string message);
-    event AddressLog(address addr);
-    event UniswapV3Swap(ISwapRouter.ExactInputSingleParams params);
-    event BalanceLog(uint256 balance);
     function tryRoute(address[] calldata pools, uint8[] calldata poolIds, bool[] calldata directions, uint256 amountIn)
         external {
 
@@ -43,8 +37,6 @@ contract Aggregator {
                 IUniswapV2Router02(UNISWAPV2ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(amount,0, path, msg.sender, 9999999999999999999);
                 uint token2Balance = IERC20(tokenOut).balanceOf(address(this));
                 amount = token2Balance - initialBalance;
-                emit AddressLog(tokenOut);
-
             }
             if (id == UNISWAPV3) {
 
@@ -69,10 +61,10 @@ contract Aggregator {
                     sqrtPriceLimitX96: 0
                 });
                 amount = ISwapRouter(UNISWAPV3ROUTER).exactInputSingle(params);
-                emit AddressLog(tokenOut);
             }
+            require(amount > 0, "AL0");
         }
 
-        require(amount > amountIn, "" );
+        require(amount > amountIn, "NP" );
     }
 }

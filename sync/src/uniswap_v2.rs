@@ -2,9 +2,10 @@
 
 use serde::{Serialize, Deserialize};
 use ethers_providers::{Provider, Ws, StreamExt, Middleware};
-use ethers::prelude::{abigen, Abigen};
+use ethers::prelude::{abigen, Abigen, H160};
 use ethers::core::types::ValueOrArray;
 use crate::abi::SyncFilter;
+use crate::abi::IERC20;
 use tokio::task::{JoinHandle, LocalSet};
 use tokio::sync::{RwLock};
 use tokio::runtime::Runtime;
@@ -19,6 +20,7 @@ use crate::Meta;
 use crate::types::{UniSwapV2Pair};
 use std::error::Error;
 use coingecko::response::coins::CoinsMarketItem;
+use ethers::abi::{Address, Uint};
 use reqwest;
 use serde_json::json;
 use crate::{Pool, EventSource, EventEmitter};
@@ -77,8 +79,11 @@ impl LiquidityProvider for UniSwapV2 {
 		let pools = self.pools.clone();
 		tokio::spawn(async move {
 			let client = reqwest::Client::new();
+			let eth_client = Arc::new(Provider::<Ws>::connect("ws://89.58.31.215:8546").await.unwrap());
+			
+			
 			let response = client.post("https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2")
-				.json(&json!({"operationName":"pairs","variables":{},"query":"query pairs {\n  pairs(first: 50, orderBy: reserveUSD, orderDirection: desc) {\n    id\n    __typename\n    token0 {\n    id\n    symbol\n    name\n    decimals\n    totalLiquidity\n    derivedETH\n    __typename\n  }\n  token1 {\n    id\n    symbol\n    name\n    decimals\n    totalLiquidity\n    derivedETH\n    __typename\n  }\n  reserve0\n  reserve1\n  reserveUSD\n   volumeUSD\n  }\n}\n"}))
+				.json(&json!({"operationName":"pairs","variables":{},"query":"query pairs {\n  pairs(first: 30, orderBy: reserveUSD, orderDirection: desc) {\n    id\n    __typename\n    token0 {\n    id\n    symbol\n    name\n    decimals\n    totalLiquidity\n    derivedETH\n    __typename\n  }\n  token1 {\n    id\n    symbol\n    name\n    decimals\n    totalLiquidity\n    derivedETH\n    __typename\n  }\n  reserve0\n  reserve1\n  reserveUSD\n   volumeUSD\n  }\n}\n"}))
 				.send()
 				.await;
 			if let Ok(resources) = response {
@@ -108,6 +113,11 @@ impl LiquidityProvider for UniSwapV2 {
 						// println!("sync service>Skipping pair {}-{} {}-{}", pair.token0.symbol, pair.token1.symbol, pair.token0.name, pair.token1.name);
 						continue
 					}
+					
+					let token0 = IERC20::new(pair.token0.id.parse::<H160>().unwrap(), eth_client.clone());
+					let token1 = IERC20::new(pair.token1.id.parse::<H160>().unwrap(), eth_client.clone());
+					let token0_balance: Uint = token0.method::<Address, Uint>("balanceOf", pair.id.parse::<Address>().unwrap()).unwrap().call().await.unwrap();
+					let token1_balance: Uint = token1.method::<Address, Uint>("balanceOf", pair.id.parse::<Address>().unwrap()).unwrap().call().await.unwrap();
 					let pool = Pool {
 						address: pair.id,
 						x_address: pair.token0.id,
@@ -115,8 +125,8 @@ impl LiquidityProvider for UniSwapV2 {
 						y_address: pair.token1.id,
 						curve: None,
 						curve_type: Curve::Uncorrelated,
-						x_amount: pair.reserve0.parse::<f64>().unwrap() as u128,
-						y_amount: pair.reserve1.parse::<f64>().unwrap() as u128,
+						x_amount: token0_balance.as_u128(),
+						y_amount: token1_balance.as_u128(),
 						x_to_y: true,
 						provider: LiquidityProviders::UniswapV2
 					};
