@@ -52,6 +52,25 @@ pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
 });
 
 
+pub fn all_simple_paths_non_circular<TargetColl>(
+	g: Graph<String, Pool, Undirected>,
+	from: NodeIndex,
+	to: NodeIndex,
+	min_intermediate_nodes: usize,
+	max_intermediate_nodes: Option<usize>,
+) -> impl Iterator<Item = TargetColl>
+	where
+		  TargetColl: FromIterator<G::NodeId>,
+{
+	let mut bfs = Bfs::new(&g, from);
+	while let Some(nx) = bfs.next(&graph) {
+		// we can access `graph` mutably here still
+		println!("{}", bfs.discovered);
+		break;
+	}
+
+}
+
 pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event = Pool>>>,
@@ -212,6 +231,13 @@ pub async fn start(
 				    for checked_coin in &*checked_coin_indices {
 					    let in_address = the_graph.node_weight(*checked_coin).unwrap().to_string();
 					
+					    all_simple_paths_non_circular::<Vec<NodeIndex>>(
+						    &the_graph,
+						    node,
+						    *checked_coin,
+						    0,
+						    Some(2),
+					    );
 					    let to_checked_paths = all_simple_paths::<Vec<NodeIndex>, _>(
 						    &the_graph,
 						    node,
