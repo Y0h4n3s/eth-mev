@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use async_std::sync::Arc;
-use garb_sync_eth::{EventSource, Pool};
+use garb_sync_eth::{EventSource, LiquidityProviders, Pool};
 use petgraph::algo::all_simple_paths;
 use petgraph::prelude::{Graph, NodeIndex};
 use petgraph::{Undirected, Outgoing, visit::{IntoNeighborsDirected, NodeCount}};
@@ -11,7 +11,16 @@ use std::hash::Hash;
 use std::iter::from_fn;
 use petgraph::visit::{Bfs, Dfs};
 use neo4rs::{Graph as NGraph, query};
-
+use tokio::time::Duration;
+use bolt_proto::Message;
+use bb8_bolt::{
+	bb8::Pool as BPool,
+	bolt_client::Metadata,
+	bolt_proto::{version::*, Value},
+	Manager,
+};
+use bb8_bolt::bolt_client::Params;
+use bolt_proto::value::{Node, Relationship};
 
 static NEO4J_USER: Lazy<String> = Lazy::new(|| std::env::var("ETH_NEO4J_USER").unwrap_or("neo4j".to_string()));
 static NEO4J_PASS: Lazy<String> =Lazy::new(|| std::env::var("ETH_NEO4J_PASS").unwrap_or("neo4j".to_string()));
@@ -72,7 +81,7 @@ pub fn all_simple_paths_non_circular<TargetColl>(
 		if nx == to {
 			found_paths.push(Vec::from(dfs.stack.clone()));
 		} else {
-			println!("len {}", dfs.stack.len());
+			// println!("len {}", dfs.stack.len());
 			if dfs.stack.len() > 10 {
 				dfs.stack.pop_front();
 			}
@@ -95,8 +104,27 @@ pub async fn start(
     let pr = pools.read().await;
 	let graph = Arc::new(NGraph::new(&NEO4J_URL, &NEO4J_USER, &NEO4J_PASS).await.unwrap());
 	let mut txn = graph.start_txn().await.unwrap();
-	let mut queries = vec![];
 	
+	let manager = Manager::new(
+		&NEO4J_URL.clone(),
+		None,
+		[V4_4, V4_3, 0, 0],
+		Metadata::from_iter(vec![
+			("user_agent", "bolt-client/X.Y.Z"),
+			("scheme", "basic"),
+			("principal", &NEO4J_USER),
+			("credentials", &NEO4J_PASS),
+		]),
+	).await?;
+	// Create a connection pool. This should be shared across your application.
+	let pool = Arc::new(BPool::builder().build(manager).await?);
+	
+	// Fetch and use a connection from the pool
+	let mut conn = pool.get().await?;
+	let res = conn.run("MATCH (n)
+DETACH DELETE n", None, None).await?;
+	let pull_meta = Metadata::from_iter(vec![("n", 1)]);
+	let (records, response) = conn.pull(Some(pull_meta)).await?;
 	
     for (_, pool) in pr.iter() {
         let index1 = the_graph
@@ -104,8 +132,10 @@ pub async fn start(
               .find(|i| the_graph[*i] == pool.x_address.clone());
         
         let i1 = if index1.is_none() {
-	        let q = query("CREATE (t:Token {address: $address})").param("address", pool.x_address.clone());
-	        queries.push(q);
+	        let res = conn.run("CREATE (t:Token {address: $address, provider: $provider})", Some(Params::from_iter(vec![("address", pool.x_address.clone()), ("provider", format!("{:?}", pool.provider))])), None).await?;
+	        let pull_meta = Metadata::from_iter(vec![("n", 1)]);
+	        let (records, response) = conn.pull(Some(pull_meta)).await?;
+	
 	        the_graph.add_node(pool.x_address.clone())
         } else {
             index1.unwrap()
@@ -115,8 +145,10 @@ pub async fn start(
 		      .node_indices()
 		      .find(|i| the_graph[*i] == pool.y_address.clone());
         let i2 = if index2.is_none() {
-	        let q = query("CREATE (t:Token {address: $address})").param("address", pool.y_address.clone());
-	        queries.push(q);
+	        let res =conn.run("CREATE (t:Token {address: $address, provider: $provider})", Some(Params::from_iter(vec![("address", pool.y_address.clone()), ("provider", format!("{:?}", pool.provider))])), None).await?;
+	        let pull_meta = Metadata::from_iter(vec![("n", 1)]);
+	        let (records, response) = conn.pull(Some(pull_meta)).await?;
+	
 	        the_graph.add_node(pool.y_address.clone())
 	
         } else {
@@ -132,13 +164,42 @@ pub async fn start(
               })
               .is_none()
         {
-            queries.push(query("MATCH (a), (b) WHERE a = $x_address AND b = $y_address CREATE (a)-[r:LP {{ pool: $pool_address }}]->(b) RETURN type(r)").param("x_address", pool.x_address.clone()).param("y_address", pool.y_address.clone()).param("pool_address", pool.address.clone()));
+	        let res = conn
+		          .run(
+			          "MATCH (a:Token), (b:Token) WHERE a.address = $x_address AND a.provider = $x_provider AND b.address = $y_address AND b.provider = $y_provider CREATE (a)-[r:LP { pool: $pool_address, bn: $provider }]->(b) RETURN type(r)",
+			          Some(Params::from_iter(vec![
+				          ("x_address", pool.x_address.clone()),
+				          ("x_provider", format!("{:?}", pool.provider)),
+				          ("y_address", pool.y_address.clone()),
+				          ("y_provider", format!("{:?}", pool.provider)),
+				          ("pool_address", pool.address.clone()),
+				          ("provider", format!("{:?}", pool.provider))])),
+			          None).await?;
+	        let pull_meta = Metadata::from_iter(vec![("n", 1)]);
+	        let (records, response) = conn.pull(Some(pull_meta)).await?;
+	
+	        let res = conn
+		          .run(
+			          "MATCH (a:Token), (b:Token) WHERE a.address = $y_address AND a.provider = $y_provider AND b.address = $x_address AND b.provider = $x_provider CREATE (a)-[r:LP { pool: $pool_address, bn: $provider }]->(b) RETURN type(r)",
+			          Some(Params::from_iter(vec![
+				          ("x_address", pool.x_address.clone()),
+				          ("x_provider", format!("{:?}", pool.provider)),
+				          ("y_address", pool.y_address.clone()),
+				          ("y_provider", format!("{:?}", pool.provider)),
+				          ("pool_address", pool.address.clone()),
+				          ("provider", format!("{:?}", pool.provider))])),
+			          None).await?;
+	        let pull_meta = Metadata::from_iter(vec![("n", 1)]);
+	        let (records, response) = conn.pull(Some(pull_meta)).await?;
+	
+	
             the_graph.add_edge(i1, i2, pool.clone());
         }
     }
+	drop(pr);
 	
-	txn.run_queries(queries).await.unwrap();
-	txn.commit().await.unwrap();
+	// txn.run_queries(queries).await.unwrap();
+	// txn.commit().await.unwrap();
     println!(
         "graph service> Preparing routes {} ",
         the_graph.node_count(),
@@ -175,259 +236,94 @@ pub async fn start(
 	    let (decoded, len): (HashMap<Pool, HashSet<(String, Vec<Pool>)>>, usize) = bincode::decode_from_slice(&encoded[..], config).unwrap();
 	    *path_lookup = decoded;
     } else {
-	    let mut two_step_routes = HashSet::<(String, Vec<Pool>)>::new();
-	
-	    // two step routes first
-	    for node in the_graph.node_indices() {
-		    for checked_coin in &*checked_coin_indices {
-			    let in_address = the_graph.node_weight(*checked_coin).unwrap().to_string();
-			
-			    two_step_routes = two_step_routes
-				      .union(
-					      &the_graph
-							    .neighbors(node.clone())
-							    .map(|p| {
-								    let neighbor = the_graph.node_weight(p).unwrap();
-								    if *neighbor == in_address {
-									    let edges_connecting = the_graph.edges_connecting(node.clone(), p);
-									    if edges_connecting.clone().count() >= 2 {
-										    let mut pools: Vec<Pool> = vec![];
-										    // println!("graph service> Found route for {} to {} via {}", node_addr, neighbor, edges_connecting.clone().count());
-										
-										    for edge in edges_connecting {
-											    pools.push(Pool::from(edge.weight()));
-										    }
-										    let combined_routes = combinations(pools.as_mut_slice(), 2);
-										    return combined_routes
-											      .iter()
-											      .filter(|path| {
-												      let first_pool = path.first().unwrap();
-												      let last_pool = path.last().unwrap();
-												      if (first_pool.x_address == in_address
-														    && last_pool.y_address == in_address)
-														    || (first_pool.y_address == in_address
-														    && last_pool.x_address == in_address)
-												      {
-													      return true;
-												      } else {
-													      return false;
-												      }
-											      })
-											      .map(|path| (in_address.clone(), path.clone()))
-											      .collect::<Vec<(String, Vec<Pool>)>>();
-									    } else {
-										    return vec![];
-									    }
-								    } else {
-									    vec![]
-								    }
-							    })
-							    .filter(|p| p.len() > 0)
-							    .flatten()
-							    .collect::<HashSet<(String, Vec<Pool>)>>(),
-				      )
-				      .map(|i| i.clone())
-				      .collect();
-		    }
-	    }
+	    
+	    let max_intermidiate_nodes = 4;
 	    let cores = num_cpus::get();
-	    let permits = Arc::new(Semaphore::new(cores));
+	    let permits = Arc::new(Semaphore::new(2));
 	    let edges_count = the_graph.edge_count();
-	    for (i, edge) in the_graph.edge_indices().enumerate() {
-		    let permit = permits.clone().acquire_owned().await.unwrap();
-		    println!("graph service> Preparing routes {} / {}", i, edges_count);
-		    let the_graph = the_graph.clone();
-		    let checked_coin_indices = checked_coin_indices.clone();
-		    let two_step_routes = two_step_routes.clone();
+	    let mut handles = vec![];
+	    for i in 1..max_intermidiate_nodes {
+		    let permit = permits.clone().acquire_owned().await?;
+		    println!("graph service> Preparing {} step routes ", i);
 		    let path_lookup = path_lookup.clone();
-		    tokio::spawn(async move {
-			    let edge = the_graph.edge_weight(edge).unwrap();
+		    let pools = pools.clone();
+		    let pool = pool.clone();
+		    handles.push(tokio::spawn(async move {
+			    let mut conn = pool.get().await?;
 			
-			    let index1 = the_graph
-				      .node_indices()
-				      .find(|i| the_graph[*i] == edge.x_address)
-				      .unwrap();
-			    let index2 = the_graph
-				      .node_indices()
-				      .find(|i| the_graph[*i] == edge.y_address)
-				      .unwrap();
-			    // println!("graph service> Finding routes for {}", edge);
-			
-			    let updated_nodes = vec![index1, index2];
-			    let mut safe_paths: HashSet<(String, Vec<Pool>)> = HashSet::new();
-			
-			    for node in updated_nodes {
-				    for checked_coin in &*checked_coin_indices {
-					    let in_address = the_graph.node_weight(*checked_coin).unwrap().to_string();
-					
-					    let to_checked_paths = all_simple_paths_non_circular::<Vec<NodeIndex>>(
-						    &the_graph,
-						    node,
-						    *checked_coin,
-						    0,
-						    2,
-					    );
-					    // let to_checked_paths = all_simple_paths::<Vec<NodeIndex>, _>(
-						//     &the_graph,
-						//     node,
-						//     *checked_coin,
-						//     0,
-						//     Some(2),
-					    // )
-						//       .collect::<Vec<_>>();
-					    println!("{}", to_checked_paths.len());
-					
-					    for (i, ni) in to_checked_paths.iter().enumerate() {
-						    for (j, nj) in to_checked_paths.iter().enumerate() {
-							    // skip routing back and forth
-							    if i == j {
-								    continue;
-							    }
-							
-							    let mut p1 = ni.clone();
-							    p1.reverse();
-							    p1.pop();
-							
-							    let new_path: Vec<&NodeIndex> = p1.iter().chain(nj).collect();
-							    // println!("{}", new_path.len());
-							   
-							    // collect all the pools between the coins
-							    // combine the edges
-							    let mut edge_paths: Vec<Vec<Pool>> = vec![];
-							    for (i, node) in new_path.iter().enumerate() {
-								    if i == 0 {
-									    continue;
-								    }
-								    let edges = the_graph.edges_connecting(**node, *new_path[i - 1]);
-								
-								    if edge_paths.len() <= 0 {
-									    for edge in edges.clone() {
-										    let mut pool = edge.weight().clone();
-										    pool.x_to_y = pool.x_address == in_address;
-										    edge_paths.push(vec![pool]);
-									    }
-									    continue;
-								    }
-								    let mut new_edge_paths = vec![];
-								
-								    for old_path in edge_paths {
-									    let last_pool = old_path.last().unwrap();
-									    let in_a = if last_pool.x_to_y {
-										    last_pool.y_address.clone()
-									    } else {
-										    last_pool.x_address.clone()
-									    };
-									    for edge in edges.clone() {
-										    let mut pool = edge.weight().clone();
-										    pool.x_to_y = pool.x_address == in_a;
-										    new_edge_paths.push(
-											    old_path
-												      .clone()
-												      .into_iter()
-												      .chain(vec![pool])
-												      .collect(),
-										    );
-									    }
-								    }
-								    edge_paths = new_edge_paths;
-							    }
-							    
-							
-							
-							    'add: for mut edge_path in edge_paths {
-								    // if arb token is on all pools skip
-								    if edge_path.iter().all(|p| p.x_address == in_address || p.y_address == in_address) {
-									    continue
-								    }
-								    // if consecutive pools are the same, skip
-								    for i in 1..edge_path.len() {
-									    if edge_path[i - 1].x_address == edge_path[i].x_address
-										      && edge_path[i - 1].y_address == edge_path[i].y_address
-										      && edge_path[i - 1].provider == edge_path[i].provider
-										      && edge_path[i - 1].address == edge_path[i].address
-									    {
-										    continue 'add;
-									    }
-								    }
-								    safe_paths.insert((in_address.clone(), edge_path.clone()));
-								
-								    // add the reverse of each path just to be thorough
-								    edge_path.reverse();
-								    let mut new_path = vec![];
-								    let mut in_a = in_address.clone();
-								    for pool in edge_path {
-									    let mut new_pool = pool.clone();
-									    new_pool.x_to_y = new_pool.x_address == in_a;
-									    in_a = if new_pool.x_to_y {
-										    new_pool.y_address.clone()
-									    } else {
-										    new_pool.x_address.clone()
-									    };
-									    new_path.push(new_pool);
-								    }
-								    // println!("pools: {}", new_path.len());
-								    safe_paths.insert((in_address.clone(), new_path));
-							    }
+			    let res = conn.run(format!("match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle", CHECKED_COIN.clone(), i, i,CHECKED_COIN.clone()), None, None).await?;
+			    let pull_meta = Metadata::from_iter(vec![("n", 1000)]);
+			    let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
+
+			    loop {
+				    // populate path_lookup with this batch
+				    for record in &records {
+					    let ps = pools.read().await;
+					    let pools = record.fields().iter().filter_map(|val|  {
+							 match val {
+								 Value::Relationship(rel) => {
+									 let address = match rel.properties().get("pool") {
+										 Some(Value::String(s)) => {s.clone()}
+										 _ => "0x0".to_string()
+									 };
+									 let provider = match rel.properties().get("bn") {
+										 Some(Value::String(provider)) => {LiquidityProviders::from(provider)}
+										 _ => LiquidityProviders::UniswapV2
+									 };
+									 match ps.iter().find(|(_, p)| p.address == address && p.provider == provider ) {
+										 Some((s, pool)) => Some(pool.clone()),
+										 _ => None
+									 }
+								 }
+								 _ => None
+							 }
+						   }).collect::<Vec<Pool>>();
+					    
+					    
+					    for pool in pools.iter() {
+						    let mut w = path_lookup.write().await;
+						    if let Some(mut existing) = w.get_mut(&pool) {
+							    existing.insert((pool.address.clone(), pools.clone()));
+						    } else {
+							    let mut set = HashSet::new();
+							    set.insert((pool.address.clone(), pools.clone()));
+							    w.insert(pool.clone(), set);
 						    }
 					    }
 				    }
+				    
+				    // query next batch from stream
+				    match &response {
+					    
+					    Message::Success(success) => {
+						    if let Some(has_more) = success.metadata().get("has_more") {
+							    (records,  response) = conn.pull(Some(pull_meta.clone())).await?;
+						    } else {
+							    break
+						    }
+					    }
+					    _ => break
+				    }
 			    }
-			    // use only paths that route through the current edge
-			    safe_paths = safe_paths
-				      .into_iter()
-				      .filter(|(_in, path)| {
-					      path.iter().any(|p| {
-						      p.address == edge.address
-								    && p.x_address == edge.x_address
-								    && p.y_address == edge.y_address
-								    && p.provider == edge.provider
-					      })
-				      })
-				            .map(|(in_addr, path)| {
-				                let mut new_path = vec![];
-					            let mut in_ = in_addr.clone();
-					            for pool in path {
-						            let mut new_pool = pool.clone();
-						            new_pool.x_to_y = new_pool.x_address == in_;
-						            in_ = if new_pool.x_to_y {
-							            new_pool.y_address.clone()
-						            } else {
-							            new_pool.x_address.clone()
-						            };
-						            new_path.push(new_pool);
-					            }
-				          return (in_addr, new_path);
-				      })
-				      .collect();
-			    let two_step = two_step_routes
-				      .clone()
-				      .into_iter()
-				      .filter(|(_in_addr, path)| {
-					      path.iter().any(|p| {
-						      p.address == edge.address
-								    && p.x_address == edge.x_address
-								    && p.y_address == edge.y_address
-								    && p.provider == edge.provider
-					      })
-				      })
-				      .map(|(in_addr, path)| {
-					      let mut first_pool = path.first().unwrap().clone();
-					      let mut second_pool = path.last().unwrap().clone();
-					      if first_pool.x_address != in_addr {
-						      first_pool.x_to_y = false;
-					      }
-					      if second_pool.x_address != in_addr {
-						      second_pool.x_to_y = false;
-					      }
-					      return (in_addr, vec![first_pool.clone(), second_pool.clone()]);
-				      })
-				      .collect::<HashSet<(String, Vec<Pool>)>>();
-			    safe_paths.extend(two_step);
-			    let mut w = path_lookup.write().await;
-			    w.insert(Pool::from(edge), safe_paths);
-			    std::mem::drop(permit);
-		    });
+			    
+			    println!("Done {} step", i);
+			    drop(permit);
+			    Ok::<(), anyhow::Error>(())
+		    }));
+		    
+		    loop {
+			    if permits.available_permits() <= 0 {
+				    tokio::time::sleep(Duration::from_secs(1)).await;
+				    continue
+			    } else {
+				    break;
+			    }
+		    }
 	    }
+	    for handle in handles {
+		    handle.await?;
+	    }
+
 	    if config.save_only {
 		    let config = bincode::config::standard();
 		    let file = std::fs::File::create(std::path::PathBuf::from("path_lookup.json"))?;
@@ -478,15 +374,15 @@ pub async fn start(
                     let updated = read.iter().find(|(key, _value)|updated_market.address == key.address && updated_market.x_address == key.x_address && updated_market.y_address == key.y_address && updated_market.provider == key.provider);
                     if updated.is_some() {
                         let (pool, market_routes) =  updated.unwrap();
-	                    println!("graph service> Found {} routes for updated market", market_routes.len());
+	                    // println!("graph service> Found {} routes for updated market", market_routes.len());
                         let pool = pool.clone();
                         let market_routes = market_routes.clone();
                         std::mem::drop(read);
                         if market_routes.len() <= 0  {
                             return;
                         }
-                        
-                        
+    
+    
                         let mut new_market_routes = HashSet::new();
                         for (_pool_addr, mut paths) in market_routes.into_iter() {
                             if !(paths.iter().find(|p| p.address == updated_market.address && p.x_address == updated_market.x_address && p.y_address == updated_market.y_address && p.provider == updated_market.provider ).is_some()) {
@@ -496,14 +392,14 @@ pub async fn start(
                             let pool_index = paths.iter().position(|p| p.address == updated_market.address && p.x_address == updated_market.x_address && p.y_address == updated_market.y_address && p.provider == updated_market.provider ).unwrap();
                             paths[pool_index] = updated_market.clone();
                             new_market_routes.insert((_pool_addr, paths.clone()));
-                            
+    
                             let in_addr = if paths.first().unwrap().x_to_y {
                                 paths.first().unwrap().x_address.clone()
                             } else {
                                 paths.first().unwrap().y_address.clone()
                             };
                             let decimals = decimals(in_addr);
-                            
+    
                             let mut best_route_size = 0.0;
                             let mut best_route_profit = 0;
 							let negf = -0.2;
@@ -524,9 +420,9 @@ pub async fn start(
 			                        in_ = calculator.calculate_out(in_, route);
 			                        // println!("{} {} {}", in_, route.x_amount, route.y_amount);
 		                        }
-		                        
+	
 		                        let profit = (in_ as i128 - i_atomic as i128);
-		
+	
 		                        if i == 0 {
 			                        best_route_profit ==  profit;
 		                        }
@@ -534,16 +430,16 @@ pub async fn start(
 			                        best_route_profit = profit;
 			                        best_route_size = i_atomic;
 									left = mid;
-			                       
+	
 		                        } else {
 			                        right = mid;
 		                        }
 		                        mid = (left + right) / 2.0;
 		                        // println!("Step {}: {} new mid {} ({} - {}) {} {}", i, profit, mid ,left, right, in_, i_atomic);
-		
+	
 	                        }
-	                        
-                            
+	
+    
                             if best_route_profit > 0 {
                                 let order = Order {
                                     size: best_route_size as u64,
@@ -551,13 +447,13 @@ pub async fn start(
                                     route: paths.clone(),
 	                                profit: best_route_profit as f64
                                 };
-                                
+    
                                 let r = routes.write().await;
                                 r.try_send(order).unwrap();
                             }
                         }
                         let mut w = path_lookup.write().await;
-                        
+    
                         w.insert(pool.clone(), new_market_routes);
                     } else {
                         eprintln!("graph service> No routes found for {}", updated_market);
@@ -565,7 +461,7 @@ pub async fn start(
                 });
             }
         });
-        
+    
     }).join().unwrap();
     
     

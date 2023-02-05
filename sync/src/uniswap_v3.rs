@@ -119,7 +119,6 @@ impl LiquidityProvider for UniSwapV3 {
 				drop(w);
 				
 				if let Some((from_block, to_block)) = span {
-					println!("Loading block {} - {}", from_block, to_block);
 					let eth_client = eth_client.clone();
 					handles.push(tokio::spawn(async move {
 						if let Ok(logs) = eth_client
@@ -158,13 +157,11 @@ impl LiquidityProvider for UniSwapV3 {
 			for handle in handles {
 				handle.await;
 			}
-			println!("{}", pairs.read().await.len());
 			
 			for pair in pairs.read().await.iter() {
 				if !(filter_tokens.iter().any(|token| token == &pair.token0.id) && filter_tokens.iter().any(|token| token == &pair.token1.id)) {
 					continue
 				}
-				println!("{}", pair.id);
 				let pool = Pool {
 					address: pair.id.clone(),
 					x_address: pair.token0.id.clone(),

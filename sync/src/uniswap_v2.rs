@@ -131,15 +131,11 @@ impl LiquidityProvider for UniSwapV2 {
 			for handle in handles {
 				handle.await;
 			}
-			println!("{}", pairs.read().await.len());
-				
-				
-					
+			
 			for pair in pairs.read().await.iter() {
 				if !(filter_tokens.iter().any(|token| token == &pair.token0.id) && filter_tokens.iter().any(|token| token == &pair.token1.id)) {
 					continue
 				}
-				println!("{}", pair.id);
 				let pool = Pool {
 					address: pair.id.clone(),
 					x_address: pair.token0.id.clone(),

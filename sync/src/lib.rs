@@ -34,11 +34,15 @@ pub enum LiquidityProviders {
 	UniswapV3
 }
 
-impl From<u8> for LiquidityProviders {
-	fn from(value: u8) -> Self {
-		match value {
-			1 => LiquidityProviders::UniswapV2,
-			2 => LiquidityProviders::UniswapV3,
+
+
+impl<T: Into<String>> From<T> for LiquidityProviders {
+	fn from(value: T) -> Self {
+		match value.into().as_str() {
+			"UniswapV2" => LiquidityProviders::UniswapV2,
+			"UniswapV3" => LiquidityProviders::UniswapV3,
+			"1" => LiquidityProviders::UniswapV2,
+			"2" => LiquidityProviders::UniswapV3,
 			_ => panic!("Invalid liquidity provider"),
 		}
 	}

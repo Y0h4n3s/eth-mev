@@ -21,3 +21,5 @@ garb_sync_eth = { path = "../sync" }
 num_cpus = "1.14.0"
 kanal = "0.1.0-pre7"
 neo4rs = "0.5.9"
+bb8-bolt = "0.8.0"
+bolt-proto = "0.12.0"
