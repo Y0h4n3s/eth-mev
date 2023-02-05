@@ -5,7 +5,7 @@ use serde::{Serialize, Deserialize};
 
 
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub struct UniSwapV2Token {
 	pub id: String,
 	pub symbol: String,
@@ -16,7 +16,7 @@ pub struct UniSwapV2Token {
 	pub __typename: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub struct UniSwapV3Token {
 	pub id: String,
 	pub symbol: String,
@@ -33,8 +33,8 @@ pub struct UniSwapV2Pair {
 	pub token1: UniSwapV2Token,
 	pub reserve0: String,
 	pub reserve1: String,
-	pub reserveUSD: String,
-	pub volumeUSD: String
+	pub token0_decimals: u8,
+	pub token1_decimals: u8
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]

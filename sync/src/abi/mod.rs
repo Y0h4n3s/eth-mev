@@ -2,7 +2,8 @@
 //!
 //! Contract ABIs are refactored into their own module to gracefully deal with allowing missing docs on the abigen macro.
 #![allow(missing_docs)]
-
+pub mod uniswap_v2;
+pub mod uniswap_v3;
 use ethers::{abi::AbiDecode, prelude::*};
 
 abigen!(UniswapV2Pair, "src/abi/IUniswapV2Pair.json");

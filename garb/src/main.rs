@@ -14,7 +14,7 @@ use ethers::types::U256;
 use ethers_providers::Http;
 use garb_graph_eth::{GraphConfig, Order};
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
-    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2".to_string()))
+    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1".to_string()))
                                     .split(",")
                                     .map(|s| s.parse::<u8>().unwrap())
                                     .map(|i| LiquidityProviders::from(i))

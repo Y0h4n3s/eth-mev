@@ -9,7 +9,13 @@ use tokio::sync::{RwLock, Semaphore};
 use once_cell::sync::Lazy;
 use std::hash::Hash;
 use std::iter::from_fn;
-use petgraph::visit::Bfs;
+use petgraph::visit::{Bfs, Dfs};
+use neo4rs::{Graph as NGraph, query};
+
+
+static NEO4J_USER: Lazy<String> = Lazy::new(|| std::env::var("ETH_NEO4J_USER").unwrap_or("neo4j".to_string()));
+static NEO4J_PASS: Lazy<String> =Lazy::new(|| std::env::var("ETH_NEO4J_PASS").unwrap_or("neo4j".to_string()));
+static NEO4J_URL: Lazy<String> =Lazy::new(|| std::env::var("ETH_NEO4J_URL").unwrap_or("127.0.0.1:7687".to_string()));
 
 
 fn combinations<T>(v: &[T], k: usize) -> Vec<Vec<T>>
@@ -53,21 +59,27 @@ pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
 
 
 pub fn all_simple_paths_non_circular<TargetColl>(
-	g: Graph<String, Pool, Undirected>,
+	g: &Graph<String, Pool, Undirected>,
 	from: NodeIndex,
 	to: NodeIndex,
 	min_intermediate_nodes: usize,
-	max_intermediate_nodes: Option<usize>,
-) -> impl Iterator<Item = TargetColl>
-	where
-		  TargetColl: FromIterator<G::NodeId>,
+	max_intermediate_nodes: usize,
+) -> Vec<Vec<NodeIndex>>
 {
-	let mut bfs = Bfs::new(&g, from);
-	while let Some(nx) = bfs.next(&graph) {
-		// we can access `graph` mutably here still
-		println!("{}", bfs.discovered);
-		break;
+	let mut dfs = Bfs::new(g, from);
+	let mut found_paths = vec![];
+	while let Some(nx) = dfs.next(g) {
+		if nx == to {
+			found_paths.push(Vec::from(dfs.stack.clone()));
+		} else {
+			println!("len {}", dfs.stack.len());
+			if dfs.stack.len() > 10 {
+				dfs.stack.pop_front();
+			}
+		}
+		
 	}
+	found_paths
 
 }
 
@@ -81,20 +93,32 @@ pub async fn start(
     let mut the_graph: Graph<String, Pool, Undirected> =
           Graph::<String, Pool, Undirected>::new_undirected();
     let pr = pools.read().await;
+	let graph = Arc::new(NGraph::new(&NEO4J_URL, &NEO4J_USER, &NEO4J_PASS).await.unwrap());
+	let mut txn = graph.start_txn().await.unwrap();
+	let mut queries = vec![];
+	
+	
     for (_, pool) in pr.iter() {
         let index1 = the_graph
               .node_indices()
               .find(|i| the_graph[*i] == pool.x_address.clone());
-        let index2 = the_graph
-              .node_indices()
-              .find(|i| the_graph[*i] == pool.y_address.clone());
+        
         let i1 = if index1.is_none() {
-            the_graph.add_node(pool.x_address.clone())
+	        let q = query("CREATE (t:Token {address: $address})").param("address", pool.x_address.clone());
+	        queries.push(q);
+	        the_graph.add_node(pool.x_address.clone())
         } else {
             index1.unwrap()
         };
+	
+	    let index2 = the_graph
+		      .node_indices()
+		      .find(|i| the_graph[*i] == pool.y_address.clone());
         let i2 = if index2.is_none() {
-            the_graph.add_node(pool.y_address.clone())
+	        let q = query("CREATE (t:Token {address: $address})").param("address", pool.y_address.clone());
+	        queries.push(q);
+	        the_graph.add_node(pool.y_address.clone())
+	
         } else {
             index2.unwrap()
         };
@@ -108,17 +132,22 @@ pub async fn start(
               })
               .is_none()
         {
-            
+            queries.push(query("MATCH (a), (b) WHERE a = $x_address AND b = $y_address CREATE (a)-[r:LP {{ pool: $pool_address }}]->(b) RETURN type(r)").param("x_address", pool.x_address.clone()).param("y_address", pool.y_address.clone()).param("pool_address", pool.address.clone()));
             the_graph.add_edge(i1, i2, pool.clone());
         }
     }
+	
+	txn.run_queries(queries).await.unwrap();
+	txn.commit().await.unwrap();
     println!(
         "graph service> Preparing routes {} ",
         the_graph.node_count(),
     );
     
     let mut checked_coin_indices: Vec<NodeIndex> = vec![];
-    
+	
+	
+	
     if let Some(index) = the_graph
           .node_indices()
           .find(|i| the_graph[*i] == CHECKED_COIN.clone())
@@ -231,21 +260,22 @@ pub async fn start(
 				    for checked_coin in &*checked_coin_indices {
 					    let in_address = the_graph.node_weight(*checked_coin).unwrap().to_string();
 					
-					    all_simple_paths_non_circular::<Vec<NodeIndex>>(
+					    let to_checked_paths = all_simple_paths_non_circular::<Vec<NodeIndex>>(
 						    &the_graph,
 						    node,
 						    *checked_coin,
 						    0,
-						    Some(2),
+						    2,
 					    );
-					    let to_checked_paths = all_simple_paths::<Vec<NodeIndex>, _>(
-						    &the_graph,
-						    node,
-						    *checked_coin,
-						    0,
-						    Some(2),
-					    )
-						      .collect::<Vec<_>>();
+					    // let to_checked_paths = all_simple_paths::<Vec<NodeIndex>, _>(
+						//     &the_graph,
+						//     node,
+						//     *checked_coin,
+						//     0,
+						//     Some(2),
+					    // )
+						//       .collect::<Vec<_>>();
+					    println!("{}", to_checked_paths.len());
 					
 					    for (i, ni) in to_checked_paths.iter().enumerate() {
 						    for (j, nj) in to_checked_paths.iter().enumerate() {

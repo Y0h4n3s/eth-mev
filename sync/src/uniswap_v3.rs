@@ -1,11 +1,8 @@
-//https://info.uniswap.org/pools
-//'https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3'   -H 'authority: api.thegraph.com'   -H 'accept: */*'   -H 'accept-language: en-US,en;q=0.9'   -H 'content-type: application/json'   -H 'origin: https://info.uniswap.org'   -H 'referer: https://info.uniswap.org/'   -H 'sec-ch-ua: "Chromium";v="103", ".Not/A)Brand";v="99"'   -H 'sec-ch-ua-mobile: ?0'   -H 'sec-ch-ua-platform: "Linux"'   -H 'sec-fetch-dest: empty'   -H 'sec-fetch-mode: cors'   -H 'sec-fetch-site: cross-site'   -H 'user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.134 Safari/537.36'   --data-raw '{"operationName":"pools","variables":{},"query":"query pools {\n  pools(\n   orderBy: totalValueLockedUSD\n    orderDirection: desc\n    subgraphError: allow\n  ) {\n    id\n    feeTier\n    liquidity\n    sqrtPrice\n    tick\n    token0 {\n      id\n      symbol\n      name\n      decimals\n      derivedETH\n      __typename\n    }\n    token1 {\n      id\n      symbol\n      name\n      decimals\n      derivedETH\n      __typename\n    }\n    token0Price\n    token1Price\n    volumeUSD\n    volumeToken0\n    volumeToken1\n    txCount\n    totalValueLockedToken0\n    totalValueLockedToken1\n    totalValueLockedUSD\n    __typename\n  }\n  bundles(where: {id: \"1\"}) {\n    ethPriceUSD\n    __typename\n  }\n}\n"}'   --compressed | jq > uniswapV3Pools.json
 
 use coingecko::response::coins::CoinsMarketItem;
 use serde::{Serialize, Deserialize};
 use ethers::providers::{Provider, Http, Middleware};
 use tokio::task::{JoinHandle, LocalSet};
-use tokio::sync::{RwLock};
 use tokio::runtime::Runtime;
 use async_std::sync::Arc;
 use std::time::Duration;
@@ -16,16 +13,23 @@ use std::str::FromStr;
 use crate::{LiquidityProvider, LiquidityProviders, Curve};
 use crate::Meta;
 use crate::types::{UniSwapV3Pool};
+use tokio::sync::{Mutex, RwLock, Semaphore};
+use std::collections::VecDeque;
 use std::error::Error;
+use ethers::types::BlockNumber;
+use ethers::types::ValueOrArray;
 use reqwest;
 use serde_json::json;
 use ethers::abi::{Address, Uint};
-use ethers::types::H160;
+use ethers::types::{H160, H256};
 use ethers_providers::Ws;
 use crate::{Pool, EventSource, EventEmitter};
 use crate::abi::IERC20;
+use ethers::abi::{ParamType, Token};
+use crate::types::UniSwapV3Token;
 #[derive(Clone)]
 pub struct UniswapV3Metadata {
+	pub factory_address: String
 	
 }
 
@@ -33,6 +37,12 @@ impl Meta for UniswapV3Metadata {
 	
 }
 
+const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 16169621;
+
+pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
+	120, 60, 202, 28, 4, 18, 221, 13, 105, 94, 120, 69, 104, 201, 109, 162, 233, 194, 47, 249, 137,
+	53, 122, 46, 139, 29, 155, 43, 78, 107, 113, 24,
+]);
 pub struct UniSwapV3 {
 	pub metadata: UniswapV3Metadata,
 	pub pools: Arc<RwLock<HashMap<String, Pool>>>,
@@ -71,67 +81,104 @@ impl LiquidityProvider for UniSwapV3 {
 		let lock = self.pools.read().await;
 		lock.clone()
 	}
-	fn load_pools(&self, filter_markets: Vec<CoinsMarketItem>) -> JoinHandle<()> {
+	fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()> {
 		let metadata = self.metadata.clone();
 		let pools = self.pools.clone();
+		let factory_address = H160::from_str(&self.metadata.factory_address).unwrap();
+		
 		tokio::spawn(async move {
 			let client = reqwest::Client::new();
 			let eth_client = Arc::new(Provider::<Ws>::connect("ws://89.58.31.215:8546").await.unwrap());
+			let current_block = eth_client
+				  .get_block_number()
+				  .await
+				  .unwrap()
+				  .0[0];
 			
-			let response = client.post("https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3")
-			                     .json(&json!({"operationName":"pools","variables":{},"query":"query pools {\n  pools(first: 30, orderBy: totalValueLockedUSD,   orderDirection: desc, subgraphError: allow) {\n    id\n    feeTier\n    token0 {\n      id\n      symbol\n      name\n     decimals\n      derivedETH\n      __typename\n    }\n    token1 {\n      id\n      symbol\n      name\n      decimals\n      derivedETH\n      __typename\n    }\n    volumeUSD\n    totalValueLockedToken0\n    totalValueLockedToken1\n    totalValueLockedUSD\n    __typename\n  }\n}\n"}))
-			                     .send()
-			                     .await;
-			if let Ok(resources) = response {
-				let resp_values = resources.json::<ApiResponse<PoolsResponse>>().await.unwrap();
-				// let resp_values = resources.text().await.unwrap();
-				// println!("{:?}", resp_values);
-				for pool in resp_values.data.pools {
-					if !(
-						filter_markets.iter().any(|market|
-							  market.name == pool.token0.symbol
-								    || market.name == pool.token0.name
-								    || market.symbol == pool.token0.symbol
-								    || market.symbol == pool.token0.name
-								    || market.name == "W".to_string() + &pool.token0.symbol
-								    || market.name == "W".to_string() + &pool.token0.name
-								    || market.symbol == "W".to_string() + &pool.token0.symbol
-								    || market.symbol == "W".to_string() + &pool.token0.name)
-							  ||
-							  filter_markets.iter().any(|market|
-								    market.name == pool.token1.symbol
-									      || market.name == pool.token1.name
-									      || market.symbol == pool.token1.symbol
-									      || market.symbol == pool.token1.name
-									      || market.name == "W".to_string() + &pool.token1.symbol
-									      || market.name == "W".to_string() + &pool.token1.name
-									      || market.symbol =="W".to_string() + &pool.token1.symbol
-									      || market.symbol == "W".to_string() + &pool.token1.name) ) {
-						// println!("sync service>Skipping pool {}-{} {}-{}", pool.token0.symbol, pool.token1.symbol, pool.token0.name, pool.token1.name);
-						continue
-					}
-					
-					let token0 = IERC20::new(pool.token0.id.parse::<H160>().unwrap(), eth_client.clone());
-					let token1 = IERC20::new(pool.token1.id.parse::<H160>().unwrap(), eth_client.clone());
-					let token0_balance: Uint = token0.method::<Address, Uint>("balanceOf", pool.id.parse::<Address>().unwrap()).unwrap().call().await.unwrap();
-					let token1_balance: Uint = token1.method::<Address, Uint>("balanceOf", pool.id.parse::<Address>().unwrap()).unwrap().call().await.unwrap();
-					let pool = Pool {
-						address: pool.id,
-						x_address: pool.token0.id,
-						fee_bps: pool.feeTier.parse::<u64>().unwrap() / 100,
-						y_address: pool.token1.id,
-						curve: None,
-						curve_type: Curve::Uncorrelated,
-						x_amount: token0_balance.as_u128(),
-						y_amount: token1_balance.as_u128(),
-						x_to_y: true,
-						provider: LiquidityProviders::UniswapV3
-					};
-					let mut w = pools.write().await;
-					w.insert(pool.address.clone(), pool);
+			let step = 100000_u64;
+			let mut handles = vec![];
+			
+			let cores = num_cpus::get();
+			let permits = Arc::new(Semaphore::new(cores));
+			let mut pairs = Arc::new(RwLock::new(Vec::<UniSwapV3Pool>::new()));
+			let mut indices: Arc<Mutex<VecDeque<(u64, u64)>>> = Arc::new(Mutex::new(VecDeque::new()));
+			
+			for i in (UNISWAP_V3_DEPLOYMENT_BLOCK..current_block).step_by(step as usize) {
+				let mut w = indices.lock().await;
+				w.push_back((i, i+step));
+			}
+			
+			loop {
+				let permit = permits.clone().acquire_owned().await.unwrap();
+				let pairs = pairs.clone();
+				let mut w = indices.lock().await;
+				if w.len() == 0 {
+					break
 				}
-			} else {
-				eprintln!("{:?}: {:?}", LiquidityProviders::UniswapV3, response.unwrap_err());
+				let span = w.pop_back();
+				drop(w);
+				
+				if let Some((from_block, to_block)) = span {
+					println!("Loading block {} - {}", from_block, to_block);
+					let eth_client = eth_client.clone();
+					handles.push(tokio::spawn(async move {
+						if let Ok(logs) = eth_client
+							  .get_logs(
+								  &ethers::types::Filter::new()
+										.topic0(ValueOrArray::Value(POOL_CREATED_EVENT_SIGNATURE))
+										.address(factory_address)
+										.from_block(BlockNumber::Number(ethers::types::U64([from_block])))
+										.to_block(BlockNumber::Number(ethers::types::U64([to_block]))),
+							  )
+							  .await {
+							for chunk in logs.iter().map(|log| {
+								let tokens = ethers::abi::decode(&[ ParamType::Uint(32), ParamType::Address ], &log.data).unwrap();
+								match tokens.get(1).unwrap() {
+									Token::Address(addr) => {
+										addr.clone()
+									}
+									_ => Default::default()
+								}
+							}).collect::<Vec<H160>>().as_slice().chunks(76) {
+								let pairs_data = crate::abi::uniswap_v3::get_pool_data_batch_request(chunk.to_vec(), eth_client.clone()).await;
+								if let Ok(mut pairs_data) = pairs_data {
+									let mut w = pairs.write().await;
+									w.append(&mut pairs_data);
+								} else {
+									eprintln!("{:?}", pairs_data.unwrap_err())
+								}
+							}
+						}
+						drop(permit);
+						
+					}));
+				}
+				
+			}
+			for handle in handles {
+				handle.await;
+			}
+			println!("{}", pairs.read().await.len());
+			
+			for pair in pairs.read().await.iter() {
+				if !(filter_tokens.iter().any(|token| token == &pair.token0.id) && filter_tokens.iter().any(|token| token == &pair.token1.id)) {
+					continue
+				}
+				println!("{}", pair.id);
+				let pool = Pool {
+					address: pair.id.clone(),
+					x_address: pair.token0.id.clone(),
+					fee_bps: 30,
+					y_address: pair.token1.id.clone(),
+					curve: None,
+					curve_type: Curve::Uncorrelated,
+					x_amount: 0,
+					y_amount: 0,
+					x_to_y: true,
+					provider: LiquidityProviders::UniswapV3
+				};
+				let mut w = pools.write().await;
+				w.insert(pool.address.clone(), pool);
 			}
 			println!("{:?} Pools: {}",LiquidityProviders::UniswapV3, pools.read().await.len());
 		})

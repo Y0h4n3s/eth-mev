@@ -23,7 +23,7 @@ pub trait LiquidityProvider: EventEmitter {
 	type Metadata;
 	fn get_metadata(&self) -> Self::Metadata;
 	async fn get_pools(&self) -> HashMap<String, Pool>;
-	fn load_pools(&self, filter_market: Vec<CoinsMarketItem>) -> JoinHandle<()>;
+	fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()>;
 	fn get_id(&self) -> LiquidityProviders;
 }
 
@@ -73,13 +73,13 @@ impl LiquidityProviders {
 		match *self {
 			LiquidityProviders::UniswapV2 => {
 				let metadata = UniswapV2Metadata {
-
+					factory_address: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f".to_string()
 				};
 				Box::new(uniswap_v2::UniSwapV2::new(metadata))
 			}
 			LiquidityProviders::UniswapV3 => {
 				let metadata = UniswapV3Metadata {
-
+					factory_address: "0x1F98431c8aD98523631AE4a59f267346ea31F984".to_string()
 				};
 				Box::new(uniswap_v3::UniSwapV3::new(metadata))
 			}
@@ -211,22 +211,35 @@ pub async fn start(
 	// collect top tokens by market cap
 	let coingecko_client = coingecko::CoinGeckoClient::new("https://api.coingecko.com/api/v3");
 	let mut markets_list = vec![];
-	
-	for i in 1..5 {
+	let all_coins = coingecko_client.coins_list(true).await?;
+	let mut high_volume_tokens: Vec<String> = vec![];
+	for i in 1..10 {
 		let coin_list = coingecko_client.coins_markets::<String>("usd", &[], Some("ethereum-ecosystem"), coingecko::params::MarketsOrder::VolumeDesc, 250, i, false, &[] ).await?;
 		markets_list.extend(coin_list);
+	}
+	for market in markets_list {
+		if let Some(coin_info) = all_coins.iter().find(|coin| coin.id == market.id) {
+			if let Some(platforms) = &coin_info.platforms {
+				if platforms.contains_key(&"ethereum".to_string()) {
+					if let Some(contract) = platforms.get("ethereum").unwrap() {
+						high_volume_tokens.push(contract.clone())
+					}
+					
+				}
+			}
+		}
 	}
 	let mut join_handles = vec![];
 	let mut amms = vec![];
 	for provider in config.providers {
 		let mut amm = provider.build();
-		join_handles.push(amm.load_pools(markets_list.clone()));
+		join_handles.push(amm.load_pools(high_volume_tokens.clone()));
 		amm.subscribe(updated_q.clone()).await;
 		amms.push(amm);
 	}
 	
 	// Make sure pools are loaded before starting the listener
-	println!("Loading Pools...");
+	println!("Loading Pools... {}", high_volume_tokens.len());
 	for handle in join_handles {
 		handle.await?;
 	}

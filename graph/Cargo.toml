@@ -20,3 +20,4 @@ async-std = "1.12.0"
 garb_sync_eth = { path = "../sync" }
 num_cpus = "1.14.0"
 kanal = "0.1.0-pre7"
+neo4rs = "0.5.9"

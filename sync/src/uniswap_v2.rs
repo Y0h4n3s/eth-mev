@@ -1,17 +1,17 @@
-//https://v2.info.uniswap.org/pairs
 
 use serde::{Serialize, Deserialize};
 use ethers_providers::{Provider, Ws, StreamExt, Middleware};
-use ethers::prelude::{abigen, Abigen, H160};
+use ethers::prelude::{abigen, Abigen, H160, U256, H256};
 use ethers::core::types::ValueOrArray;
-use crate::abi::SyncFilter;
+use crate::abi::{SyncFilter, UniswapV2Factory};
 use crate::abi::IERC20;
 use tokio::task::{JoinHandle, LocalSet};
-use tokio::sync::{RwLock};
+use tokio::sync::{Mutex, RwLock, Semaphore};
+
 use tokio::runtime::Runtime;
 use async_std::sync::Arc;
 use std::time::Duration;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use kanal::AsyncSender;
 use async_trait::async_trait;
 use std::str::FromStr;
@@ -29,7 +29,7 @@ use crate::{Pool, EventSource, EventEmitter};
 
 #[derive(Clone)]
 pub struct UniswapV2Metadata {
-
+	pub factory_address: String
 }
 
 impl Meta for UniswapV2Metadata {
@@ -74,69 +74,86 @@ impl LiquidityProvider for UniSwapV2 {
 		let lock = self.pools.read().await;
 		lock.clone()
 	}
-	fn load_pools(&self, filter_markets: Vec<CoinsMarketItem>) -> JoinHandle<()> {
+	fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()> {
 		let metadata = self.metadata.clone();
 		let pools = self.pools.clone();
+		let factory_address = H160::from_str(&self.metadata.factory_address).unwrap();
 		tokio::spawn(async move {
 			let client = reqwest::Client::new();
 			let eth_client = Arc::new(Provider::<Ws>::connect("ws://89.58.31.215:8546").await.unwrap());
+			let factory = UniswapV2Factory::new(factory_address, eth_client.clone());
 			
+			let pairs_length: U256 = factory.all_pairs_length().call().await.unwrap();
+			let step = 766;
+			let cores = num_cpus::get();
+			let permits = Arc::new(Semaphore::new(cores));
+			let mut pairs = Arc::new(RwLock::new(Vec::<UniSwapV2Pair>::new()));
+			let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> = Arc::new(Mutex::new(VecDeque::new()));
 			
-			let response = client.post("https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2")
-				.json(&json!({"operationName":"pairs","variables":{},"query":"query pairs {\n  pairs(first: 30, orderBy: reserveUSD, orderDirection: desc) {\n    id\n    __typename\n    token0 {\n    id\n    symbol\n    name\n    decimals\n    totalLiquidity\n    derivedETH\n    __typename\n  }\n  token1 {\n    id\n    symbol\n    name\n    decimals\n    totalLiquidity\n    derivedETH\n    __typename\n  }\n  reserve0\n  reserve1\n  reserveUSD\n   volumeUSD\n  }\n}\n"}))
-				.send()
-				.await;
-			if let Ok(resources) = response {
-				let resp_values = resources.json::<ApiResponse<PairsResponse>>().await.unwrap();
-				// let resp_values = resources.text().await.unwrap();
-				for pair in resp_values.data.pairs {
-					if !(
-						filter_markets.iter().any(|market|
-							  market.name == pair.token0.symbol
-									|| market.name == pair.token0.name
-									|| market.symbol == pair.token0.symbol
-									|| market.symbol == pair.token0.name
-									|| market.name == "W".to_string() + &pair.token0.symbol
-									|| market.name == "W".to_string() + &pair.token0.name
-									|| market.symbol == "W".to_string() + &pair.token0.symbol
-									|| market.symbol == "W".to_string() + &pair.token0.name)
-							  ||
-							  filter_markets.iter().any(|market|
-									market.name == pair.token1.symbol
-										  || market.name == pair.token1.name
-										  || market.symbol == pair.token1.symbol
-										  || market.symbol == pair.token1.name
-										  || market.name == "W".to_string() + &pair.token1.symbol
-										  || market.name == "W".to_string() + &pair.token1.name
-										  || market.symbol =="W".to_string() + &pair.token1.symbol
-										  || market.symbol == "W".to_string() + &pair.token1.name) ) {
-						// println!("sync service>Skipping pair {}-{} {}-{}", pair.token0.symbol, pair.token1.symbol, pair.token0.name, pair.token1.name);
-						continue
-					}
-					
-					let token0 = IERC20::new(pair.token0.id.parse::<H160>().unwrap(), eth_client.clone());
-					let token1 = IERC20::new(pair.token1.id.parse::<H160>().unwrap(), eth_client.clone());
-					let token0_balance: Uint = token0.method::<Address, Uint>("balanceOf", pair.id.parse::<Address>().unwrap()).unwrap().call().await.unwrap();
-					let token1_balance: Uint = token1.method::<Address, Uint>("balanceOf", pair.id.parse::<Address>().unwrap()).unwrap().call().await.unwrap();
-					let pool = Pool {
-						address: pair.id,
-						x_address: pair.token0.id,
-						fee_bps: 30,
-						y_address: pair.token1.id,
-						curve: None,
-						curve_type: Curve::Uncorrelated,
-						x_amount: token0_balance.as_u128(),
-						y_amount: token1_balance.as_u128(),
-						x_to_y: true,
-						provider: LiquidityProviders::UniswapV2
-					};
-					let mut w = pools.write().await;
-					w.insert(pool.address.clone(), pool);
+			for i in (0..pairs_length.as_usize()).step_by(step) {
+				let mut w = indices.lock().await;
+				w.push_back((i, i+step));
+			}
+			let mut handles = vec![];
+			loop {
+				let permit = permits.clone().acquire_owned().await.unwrap();
+				let pairs = pairs.clone();
+				let mut w = indices.lock().await;
+				if w.len() == 0 {
+						break
 				}
-				// println!("{:?}", resp_values);
+				let span = w.pop_back();
+				drop(w);
 				
-			} else {
-				eprintln!("{:?}: {:?}", LiquidityProviders::UniswapV2, response.unwrap_err());
+				if let Some((idx_from, idx_to)) = span {
+					let eth_client = eth_client.clone();
+					handles.push(tokio::spawn(async move {
+						let response = crate::abi::uniswap_v2::get_pairs_batch_request(factory_address, U256::from(idx_from), U256::from(idx_to), eth_client.clone()).await;
+						
+						if let Ok(resources) = response {
+							for pair_chunk in resources.as_slice().chunks(127) {
+								let pairs_data = crate::abi::uniswap_v2::get_pool_data_batch_request(pair_chunk.to_vec(), eth_client.clone()).await;
+								if let Ok(mut pairs_data) = pairs_data {
+									let mut w = pairs.write().await;
+									w.append(&mut pairs_data);
+								} else {
+									eprintln!("{:?}", pairs_data.unwrap_err())
+								}
+							}
+							
+						}
+						drop(permit);
+						
+					}));
+				}
+				
+			}
+			for handle in handles {
+				handle.await;
+			}
+			println!("{}", pairs.read().await.len());
+				
+				
+					
+			for pair in pairs.read().await.iter() {
+				if !(filter_tokens.iter().any(|token| token == &pair.token0.id) && filter_tokens.iter().any(|token| token == &pair.token1.id)) {
+					continue
+				}
+				println!("{}", pair.id);
+				let pool = Pool {
+					address: pair.id.clone(),
+					x_address: pair.token0.id.clone(),
+					fee_bps: 30,
+					y_address: pair.token1.id.clone(),
+					curve: None,
+					curve_type: Curve::Uncorrelated,
+					x_amount: pair.reserve0.parse::<u128>().unwrap(),
+					y_amount: pair.reserve1.parse::<u128>().unwrap(),
+					x_to_y: true,
+					provider: LiquidityProviders::UniswapV2
+				};
+				let mut w = pools.write().await;
+				w.insert(pool.address.clone(), pool);
 			}
 			println!("{:?} Pools: {}",LiquidityProviders::UniswapV2, pools.read().await.len());
 		})
