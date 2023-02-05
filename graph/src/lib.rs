@@ -260,36 +260,54 @@ DETACH DELETE n", None, None).await?;
 				    for record in &records {
 					    let ps = pools.read().await;
 					    let pools = record.fields().iter().filter_map(|val|  {
-							 match val {
-								 Value::Relationship(rel) => {
-									 let address = match rel.properties().get("pool") {
-										 Some(Value::String(s)) => {s.clone()}
-										 _ => "0x0".to_string()
-									 };
-									 let provider = match rel.properties().get("bn") {
-										 Some(Value::String(provider)) => {LiquidityProviders::from(provider)}
-										 _ => LiquidityProviders::UniswapV2
-									 };
-									 match ps.iter().find(|(_, p)| p.address == address && p.provider == provider ) {
-										 Some((s, pool)) => Some(pool.clone()),
-										 _ => None
-									 }
-								 }
-								 _ => None
+						
+						    match val {
+							    Value::List(rels) => {
+								    let mut r = vec![];
+								    for rel in rels {
+									    match rel {
+										    Value::Relationship(rel) => {
+											    let address = match rel.properties().get("pool") {
+												    Some(Value::String(s)) => {s.clone()}
+												    _ => "0x0".to_string()
+											    };
+											    let provider = match rel.properties().get("bn") {
+												    Some(Value::String(provider)) => {LiquidityProviders::from(provider)}
+												    _ => LiquidityProviders::UniswapV2
+											    };
+											    match ps.iter().find(|(_, p)| p.address == address && p.provider == provider ) {
+												    Some((s, pool)) => r.push(pool.clone()),
+												    _ => ()
+											    }
+										    }
+										    _ => ()
+									    }
+									    
+								    }
+								    if r.len() != rels.len() {
+									    None
+								    } else {
+									    Some(r)
+								    }
+								    
+							    }
+							    _ => None
+								 
 							 }
-						   }).collect::<Vec<Pool>>();
-					    
-					    
-					    for pool in pools.iter() {
-						    let mut w = path_lookup.write().await;
-						    if let Some(mut existing) = w.get_mut(&pool) {
-							    existing.insert((pool.address.clone(), pools.clone()));
-						    } else {
-							    let mut set = HashSet::new();
-							    set.insert((pool.address.clone(), pools.clone()));
-							    w.insert(pool.clone(), set);
+						   }).collect::<Vec<Vec<Pool>>>();
+					    for p in pools {
+						    for pool in p.iter() {
+							    let mut w = path_lookup.write().await;
+							    if let Some(mut existing) = w.get_mut(&pool) {
+								    existing.insert((pool.address.clone(), p.clone()));
+							    } else {
+								    let mut set = HashSet::new();
+								    set.insert((pool.address.clone(), p.clone()));
+								    w.insert(pool.clone(), set);
+							    }
 						    }
 					    }
+					    
 				    }
 				    
 				    // query next batch from stream
