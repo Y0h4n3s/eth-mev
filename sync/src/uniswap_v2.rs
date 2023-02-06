@@ -7,6 +7,7 @@ use crate::abi::{SyncFilter, UniswapV2Factory};
 use crate::abi::IERC20;
 use tokio::task::{JoinHandle, LocalSet};
 use tokio::sync::{Mutex, RwLock, Semaphore};
+use bincode::{ Decode, Encode};
 
 use tokio::runtime::Runtime;
 use async_std::sync::Arc;
@@ -27,7 +28,7 @@ use crate::{Pool, EventSource, EventEmitter};
 
 
 
-#[derive(Clone)]
+#[derive( Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV2Metadata {
 	pub factory_address: String
 }
@@ -90,7 +91,7 @@ impl LiquidityProvider for UniSwapV2 {
 			let mut pairs = Arc::new(RwLock::new(Vec::<UniSwapV2Pair>::new()));
 			let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> = Arc::new(Mutex::new(VecDeque::new()));
 			
-			for i in (0..pairs_length.as_usize()).step_by(step) {
+			for i in (pairs_length.as_usize()-step..pairs_length.as_usize()).step_by(step) {
 				let mut w = indices.lock().await;
 				w.push_back((i, i+step));
 			}
@@ -146,16 +147,16 @@ impl LiquidityProvider for UniSwapV2 {
 					x_amount: pair.reserve0.parse::<u128>().unwrap(),
 					y_amount: pair.reserve1.parse::<u128>().unwrap(),
 					x_to_y: true,
-					provider: LiquidityProviders::UniswapV2
+					provider: LiquidityProviders::UniswapV2(Default::default())
 				};
 				let mut w = pools.write().await;
 				w.insert(pool.address.clone(), pool);
 			}
-			println!("{:?} Pools: {}",LiquidityProviders::UniswapV2, pools.read().await.len());
+			println!("{:?} Pools: {}",LiquidityProviders::UniswapV2(Default::default()), pools.read().await.len());
 		})
 	}
 	fn get_id(&self) -> LiquidityProviders {
-		LiquidityProviders::UniswapV2
+		LiquidityProviders::UniswapV2(Default::default())
 	}
 }
 

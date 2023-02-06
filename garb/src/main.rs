@@ -98,7 +98,7 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
             for pool in order.route.iter() {
                 directions.push(pool.x_to_y);
                 pools.push(pool.address.clone().parse::<H160>().unwrap());
-                pool_ids.push(pool.provider as u8);
+                pool_ids.push(u8::from(pool.provider.clone()));
             }
             
             let client = Arc::new(ethers_providers::Provider::<Http>::try_from(NODE_URL.clone().to_string()).unwrap());

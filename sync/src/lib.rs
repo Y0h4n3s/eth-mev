@@ -4,6 +4,7 @@ mod uniswap_v2;
 mod uniswap_v3;
 mod types;
 mod events;
+
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use bincode::{ Decode, Encode};
@@ -17,7 +18,9 @@ use async_trait::async_trait;
 use std::hash::*;
 use std::fmt::Display;
 use coingecko::response::coins::CoinsMarketItem;
-
+use ethers::types::{H160, H256, U256};
+use ethers_providers::{Provider, Ws};
+use std::str::FromStr;
 #[async_trait]
 pub trait LiquidityProvider: EventEmitter {
 	type Metadata;
@@ -30,8 +33,8 @@ pub trait LiquidityProvider: EventEmitter {
 #[derive( Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum LiquidityProviders {
-	UniswapV2,
-	UniswapV3
+	UniswapV2(UniswapV2Metadata),
+	UniswapV3(UniswapV3Metadata)
 }
 
 
@@ -39,11 +42,21 @@ pub enum LiquidityProviders {
 impl<T: Into<String>> From<T> for LiquidityProviders {
 	fn from(value: T) -> Self {
 		match value.into().as_str() {
-			"UniswapV2" => LiquidityProviders::UniswapV2,
-			"UniswapV3" => LiquidityProviders::UniswapV3,
-			"1" => LiquidityProviders::UniswapV2,
-			"2" => LiquidityProviders::UniswapV3,
-			_ => panic!("Invalid liquidity provider"),
+			"1" => LiquidityProviders::UniswapV2(Default::default()),
+			"2" => LiquidityProviders::UniswapV3(Default::default()),
+			val => {
+				match val.split("(").collect::<Vec<&str>>().get(0) {
+					Some(v) => {
+						match *v {
+							"UniswapV2" => LiquidityProviders::UniswapV2(Default::default()),
+							"UniswapV3" => LiquidityProviders::UniswapV3(Default::default()),
+							_ => panic!("Invalid Liquidity Provider {}", v)
+							
+						}
+					}
+					None => panic!("Invalid Liquidity Provider {}", val)
+				}
+			},
 		}
 	}
 }
@@ -51,8 +64,8 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
 impl From<LiquidityProviders> for u8 {
 	fn from(value: LiquidityProviders) -> Self {
 		match value {
-			LiquidityProviders::UniswapV2 => 1,
-			LiquidityProviders::UniswapV3 => 2,
+			LiquidityProviders::UniswapV2(_) => 1,
+			LiquidityProviders::UniswapV3(_) => 2,
 		}
 	}
 }
@@ -66,24 +79,26 @@ pub type BoxedLiquidityProvider = Box<
 >;
 
 impl LiquidityProviders {
-	pub fn build_calculator(&self) -> Box<dyn Calculator> {
-		match *self {
-			LiquidityProviders::UniswapV2 => Box::new(CpmmCalculator::new()),
-			LiquidityProviders::UniswapV3 => Box::new(CpmmCalculator::new()),
+	pub async fn build_calculator(&self) -> Box<dyn Calculator> {
+		match self {
+			LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new()),
+			LiquidityProviders::UniswapV3(meta) => Box::new(UniswapV3Calculator::new(meta.clone()).await),
 			_ => panic!("Invalid liquidity provider"),
 		}
 	}
 	pub fn build(&self) -> BoxedLiquidityProvider {
-		match *self {
-			LiquidityProviders::UniswapV2 => {
+		match self {
+			LiquidityProviders::UniswapV2(meta) => {
 				let metadata = UniswapV2Metadata {
-					factory_address: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f".to_string()
+					factory_address: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f".to_string(),
+					..meta.clone()
 				};
 				Box::new(uniswap_v2::UniSwapV2::new(metadata))
 			}
-			LiquidityProviders::UniswapV3 => {
+			LiquidityProviders::UniswapV3(meta) => {
 				let metadata = UniswapV3Metadata {
-					factory_address: "0x1F98431c8aD98523631AE4a59f267346ea31F984".to_string()
+					factory_address: "0x1F98431c8aD98523631AE4a59f267346ea31F984".to_string(),
+					..meta.clone()
 				};
 				Box::new(uniswap_v3::UniSwapV3::new(metadata))
 			}
@@ -167,8 +182,9 @@ impl CpmmCalculator {
 	}
 }
 
+#[async_trait]
 impl Calculator for CpmmCalculator {
-	fn calculate_out(&self, in_: u128, pool: &Pool) -> u128 {
+	async fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128> {
 		let swap_source_amount = if pool.x_to_y {
 			pool.x_amount
 		} else {
@@ -180,22 +196,47 @@ impl Calculator for CpmmCalculator {
 			pool.x_amount
 		};
 		if in_ >= swap_source_amount {
-			return swap_destination_amount;
+			return Ok(swap_destination_amount);
 		}
 		let amount_in_with_fee = (in_ as u128) * ((10000 - pool.fee_bps) as u128);
 		let numerator = amount_in_with_fee
 			  .checked_mul(swap_destination_amount as u128)
 			  .unwrap_or(0);
 		let denominator = ((swap_source_amount as u128) * 10000) + amount_in_with_fee;
-		(numerator / denominator) as u128
+		Ok((numerator / denominator) as u128)
 	}
 }
 
+#[async_trait]
 pub trait Calculator {
-	fn calculate_out(&self, in_: u128, pool: &Pool) -> u128;
+	async fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128>;
 }
 pub struct CpmmCalculator {}
 
+pub struct UniswapV3Calculator {
+	meta: UniswapV3Metadata,
+	middleware: Arc<Provider<Ws>>
+}
+
+impl UniswapV3Calculator {
+	pub async fn new(meta: UniswapV3Metadata) -> Self {
+		Self {
+			middleware: Arc::new(Provider::<Ws>::connect("ws://89.58.31.215:8546").await.unwrap()),
+			meta
+		}
+	}
+}
+#[async_trait]
+impl Calculator for UniswapV3Calculator {
+	async fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128> {
+		let token_in = if pool.x_to_y {
+			H160::from_str(&pool.x_address)?
+		} else {
+			H160::from_str(&pool.y_address)?
+		};
+		Ok(self.meta.simulate_swap(token_in, U256::from(in_), self.middleware.clone()).await?.as_u128())
+	}
+}
 pub trait Meta {}
 
 

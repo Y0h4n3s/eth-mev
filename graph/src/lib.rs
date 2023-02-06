@@ -237,7 +237,7 @@ DETACH DELETE n", None, None).await?;
 	    *path_lookup = decoded;
     } else {
 	    
-	    let max_intermidiate_nodes = 4;
+	    let max_intermidiate_nodes = 8;
 	    let cores = num_cpus::get();
 	    let permits = Arc::new(Semaphore::new(2));
 	    let edges_count = the_graph.edge_count();
@@ -273,7 +273,7 @@ DETACH DELETE n", None, None).await?;
 											    };
 											    let provider = match rel.properties().get("bn") {
 												    Some(Value::String(provider)) => {LiquidityProviders::from(provider)}
-												    _ => LiquidityProviders::UniswapV2
+												    _ => LiquidityProviders::UniswapV2(Default::default())
 											    };
 											    match ps.iter().find(|(_, p)| p.address == address && p.provider == provider ) {
 												    Some((s, pool)) => r.push(pool.clone()),
@@ -434,8 +434,8 @@ DETACH DELETE n", None, None).await?;
 		                        let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
 		                        let mut in_ = i_atomic as u128;
 		                        for route in &paths {
-			                        let calculator = route.provider.build_calculator();
-			                        in_ = calculator.calculate_out(in_, route);
+			                        let calculator = route.provider.build_calculator().await;
+			                        in_ = calculator.calculate_out(in_, route).await.unwrap();
 			                        // println!("{} {} {}", in_, route.x_amount, route.y_amount);
 		                        }
 	
