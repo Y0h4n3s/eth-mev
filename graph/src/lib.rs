@@ -237,7 +237,7 @@ DETACH DELETE n", None, None).await?;
 	    *path_lookup = decoded;
     } else {
 	    
-	    let max_intermidiate_nodes = 8;
+	    let max_intermidiate_nodes = 4;
 	    let cores = num_cpus::get();
 	    let permits = Arc::new(Semaphore::new(2));
 	    let edges_count = the_graph.edge_count();
@@ -259,7 +259,7 @@ DETACH DELETE n", None, None).await?;
 				    // populate path_lookup with this batch
 				    for record in &records {
 					    let ps = pools.read().await;
-					    let pools = record.fields().iter().filter_map(|val|  {
+					    let mut pools = record.fields().iter().filter_map(|val|  {
 						
 						    match val {
 							    Value::List(rels) => {
@@ -295,14 +295,27 @@ DETACH DELETE n", None, None).await?;
 								 
 							 }
 						   }).collect::<Vec<Vec<Pool>>>();
+					    
 					    for p in pools {
-						    for pool in p.iter() {
+						    let mut new_path = vec![];
+						    let mut in_ = CHECKED_COIN.clone();
+						    for pool in p {
+							    let mut new_pool = pool.clone();
+							    new_pool.x_to_y = new_pool.x_address == in_;
+							    in_ = if new_pool.x_to_y {
+								    new_pool.y_address.clone()
+							    } else {
+								    new_pool.x_address.clone()
+							    };
+							    new_path.push(new_pool);
+						    }
+						    for pool in new_path.iter() {
 							    let mut w = path_lookup.write().await;
 							    if let Some(mut existing) = w.get_mut(&pool) {
-								    existing.insert((pool.address.clone(), p.clone()));
+								    existing.insert((pool.address.clone(), new_path.clone()));
 							    } else {
 								    let mut set = HashSet::new();
-								    set.insert((pool.address.clone(), p.clone()));
+								    set.insert((pool.address.clone(), new_path.clone()));
 								    w.insert(pool.clone(), set);
 							    }
 						    }
@@ -392,7 +405,7 @@ DETACH DELETE n", None, None).await?;
                     let updated = read.iter().find(|(key, _value)|updated_market.address == key.address && updated_market.x_address == key.x_address && updated_market.y_address == key.y_address && updated_market.provider == key.provider);
                     if updated.is_some() {
                         let (pool, market_routes) =  updated.unwrap();
-	                    // println!("graph service> Found {} routes for updated market", market_routes.len());
+	                    println!("graph service> Found {} routes for updated market", market_routes.len());
                         let pool = pool.clone();
                         let market_routes = market_routes.clone();
                         std::mem::drop(read);

@@ -32,6 +32,7 @@ use num_bigfloat::BigFloat;
 use uniswap_v3_math::tick_math::{MIN_SQRT_RATIO, MAX_SQRT_RATIO, MAX_TICK, MIN_TICK};
 use std::ops::Add;
 
+// Todo: add word in here to update and remove middleware use in simulate_swap
 #[derive( Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV3Metadata {
 	pub factory_address: String,
