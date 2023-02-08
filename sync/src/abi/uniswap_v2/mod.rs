@@ -1,14 +1,14 @@
+use crate::types::{UniSwapV2Pair, UniSwapV2Token};
+use anyhow::Result;
+use ethers::abi::AbiEncode;
 use ethers::{
     abi::{ParamType, Token},
     prelude::abigen,
     providers::Middleware,
     types::{Bytes, H160, U256},
 };
-use std::sync::Arc;
 use ethers_providers::ProviderError::JsonRpcClientError;
-use crate::types::{UniSwapV2Pair, UniSwapV2Token};
-use anyhow::Result;
-use ethers::abi::AbiEncode;
+use std::sync::Arc;
 
 abigen!(
     GetUniswapV2PairsBatchRequest,
@@ -62,7 +62,7 @@ pub async fn get_pool_data_batch_request<M: Middleware>(
     for pair in pairs.iter() {
         target_addresses.push(Token::Address(pair.clone()));
     }
-    
+
     let mut final_pairs = vec![];
 
     let constructor_args = Token::Tuple(vec![Token::Array(target_addresses)]);
@@ -72,7 +72,7 @@ pub async fn get_pool_data_batch_request<M: Middleware>(
 
     loop {
         let call = deployer.call_raw().await;
-        if let Ok(return_data) =  call {
+        if let Ok(return_data) = call {
             let return_data_tokens = ethers::abi::decode(
                 &[ParamType::Array(Box::new(ParamType::Tuple(vec![
                     ParamType::Address,   // token a
@@ -84,30 +84,62 @@ pub async fn get_pool_data_batch_request<M: Middleware>(
                 ])))],
                 &return_data,
             )?;
-    
+
             let mut pool_idx = 0;
-    
+
             for tokens in return_data_tokens {
                 if let Some(tokens_arr) = tokens.into_array() {
                     for tup in tokens_arr {
                         if let Some(pool_data) = tup.into_tuple() {
-                            if !pool_data[0].to_owned().into_address().unwrap().is_zero() && !pool_data[2].to_owned().into_address().unwrap().is_zero() {
+                            if !pool_data[0].to_owned().into_address().unwrap().is_zero()
+                                && !pool_data[2].to_owned().into_address().unwrap().is_zero()
+                            {
                                 //Update the pool data
                                 if let pair_address = pairs.get(pool_idx).unwrap() {
                                     let u_pair = UniSwapV2Pair {
                                         id: hex_to_address_string(pair_address.encode_hex()),
                                         token0: UniSwapV2Token {
-                                            id: hex_to_address_string(pool_data[0].to_owned().into_address().unwrap().encode_hex()),
+                                            id: hex_to_address_string(
+                                                pool_data[0]
+                                                    .to_owned()
+                                                    .into_address()
+                                                    .unwrap()
+                                                    .encode_hex(),
+                                            ),
                                             ..Default::default()
                                         },
                                         token1: UniSwapV2Token {
-                                            id: hex_to_address_string(pool_data[2].to_owned().into_address().unwrap().encode_hex()),
+                                            id: hex_to_address_string(
+                                                pool_data[2]
+                                                    .to_owned()
+                                                    .into_address()
+                                                    .unwrap()
+                                                    .encode_hex(),
+                                            ),
                                             ..Default::default()
                                         },
-                                        reserve0: pool_data[4].to_owned().into_uint().unwrap().to_string(),
-                                        reserve1:  pool_data[5].to_owned().into_uint().unwrap().to_string(),
-                                        token0_decimals: pool_data[1].to_owned().into_uint().unwrap().as_u32() as u8,
-                                        token1_decimals: pool_data[3].to_owned().into_uint().unwrap().as_u32() as u8
+                                        reserve0: pool_data[4]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .to_string(),
+                                        reserve1: pool_data[5]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .to_string(),
+                                        token0_decimals: pool_data[1]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .as_u32()
+                                            as u8,
+                                        token1_decimals: pool_data[3]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .as_u32()
+                                            as u8,
                                     };
                                     final_pairs.push(u_pair);
                                 }
@@ -117,22 +149,17 @@ pub async fn get_pool_data_batch_request<M: Middleware>(
                     }
                 }
             }
-            break
-            
+            break;
         } else {
             match call.unwrap_err() {
                 JsonRpcClientError(err) => {
                     // eprintln!("{:?}", err);
-                    continue
+                    continue;
                 }
-                _ => break
+                _ => break,
             }
         }
-    
     }
-    
-
-    
 
     Ok(final_pairs)
 }

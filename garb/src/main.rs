@@ -85,7 +85,7 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
     while let Ok(order) = routes.try_recv() {
         
         if let Some(order) = order {
-            println!("`````````````````````` Tried Route ``````````````````````");
+            println!("`````````````````````` Tried Route for profit {} ``````````````````````", order.profit);
             for (i,pool) in order.route.iter().enumerate() {
                 println!("{}. {}", i + 1, pool);
             }
