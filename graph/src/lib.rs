@@ -165,7 +165,6 @@ DETACH DELETE n",
 
         let pull_meta = Metadata::from_iter(vec![("n", -1)]);
         let (records, response) = conn.pull(Some(pull_meta)).await?;
-
         let res = conn
 		          .run(
 			          "MATCH (a:Token), (b:Token) WHERE a.address = $x_address  AND b.address = $y_address  MERGE (a)-[r:LP { pool: $pool_address, bn: $provider }]->(b) RETURN type(r)",
@@ -173,7 +172,7 @@ DETACH DELETE n",
 				          ("x_address", pool.x_address.clone()),
 				          ("y_address", pool.y_address.clone()),
 				          ("pool_address", pool.address.clone()),
-				          ("provider", format!("{:?}", pool.provider))])),
+				          ("provider", serde_json::to_string(&pool.provider).unwrap())])),
 			          None).await?;
 
         let pull_meta = Metadata::from_iter(vec![("n", -1)]);
@@ -202,7 +201,7 @@ DETACH DELETE n",
             bincode::decode_from_slice(&encoded[..], config).unwrap();
         *path_lookup = decoded;
     } else {
-        let max_intermidiate_nodes = 4;
+        let max_intermidiate_nodes = 5;
         let cores = num_cpus::get();
         let permits = Arc::new(Semaphore::new(2));
         let mut handles = vec![];
@@ -218,7 +217,6 @@ DETACH DELETE n",
 			    let res = conn.run(format!("match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle", CHECKED_COIN.clone(), i, i,CHECKED_COIN.clone()), None, None).await?;
 			    let pull_meta = Metadata::from_iter(vec![("n", 1000)]);
 			    let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
-
 			    loop {
 				    // populate path_lookup with this batch
 				    for record in &records {
@@ -259,7 +257,6 @@ DETACH DELETE n",
 								 
 							 }
 						   }).collect::<Vec<Vec<Pool>>>();
-					    
 					    for p in pools {
 						    let mut new_path = vec![];
 						    let mut in_ = CHECKED_COIN.clone();
@@ -331,13 +328,13 @@ DETACH DELETE n",
     let mut total_paths = 0;
     for (_pool, paths) in path_lookup.read().await.clone() {
         total_paths += paths.len();
-        for (forf, path) in paths {
-            println!("`````````````````````` Tried Route ``````````````````````");
-            for (i, pool) in path.iter().enumerate() {
-                println!("{}. {}", i + 1, pool);
-            }
-            println!("\n\n");
-        }
+        // for (forf, path) in paths {
+        //     println!("`````````````````````` Tried Route ``````````````````````");
+        //     for (i, pool) in path.iter().enumerate() {
+        //         println!("{}. {}", i + 1, pool);
+        //     }
+        //     println!("\n\n");
+        // }
     }
     println!("graph service> Found {} routes", total_paths);
 
@@ -355,7 +352,6 @@ DETACH DELETE n",
     //     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     // }
     println!("graph service> Starting Listener thread");
-    return Ok(());
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
         let task_set = tokio::task::LocalSet::new();
@@ -453,7 +449,7 @@ DETACH DELETE n",
                                     right = mid;
                                 }
                                 mid = (left + right) / 2.0;
-                                // println!("Step {}: {} new mid {} ({} - {}) {} {}", i, profit, mid ,left, right, in_, i_atomic);
+                                println!("Step {}: {} new mid {} ({} - {}) {} {}", i, profit, mid ,left, right, in_, i_atomic);
                             }
 
                             if best_route_profit > 0 {

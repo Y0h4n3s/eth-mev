@@ -25,7 +25,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
-#[derive(Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
+#[derive(Serialize, Deserialize,Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV2Metadata {
     pub factory_address: String,
 }
@@ -89,7 +89,7 @@ impl LiquidityProvider for UniSwapV2 {
             let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
-            for i in (0..pairs_length.as_usize()).step_by(step) {
+            for i in (pairs_length.as_usize() - 10000..pairs_length.as_usize()).step_by(step) {
                 let mut w = indices.lock().await;
                 w.push_back((i, i + step));
             }
@@ -211,9 +211,8 @@ impl EventEmitter for UniSwapV2 {
                             pool.y_amount = log.reserve_1;
                             let mut subscribers = subscribers.write().await;
                             for subscriber in subscribers.iter_mut() {
-                                subscriber.send(Box::new(pool.clone())).await.unwrap();
+                                let res = subscriber.send(Box::new(pool.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV3 Send Error {:?}", e));
                             }
-                            println!("{log:?}");
                         }
                     }));
                 }

@@ -11,12 +11,15 @@ use ethers::{
     types::{Bytes, I256},
 };
 use ethers_providers::ProviderError::JsonRpcClientError;
+use byte_slice_cast::AsByteSlice;
 abigen!(
     GetUniswapV3PoolDataBatchRequest,
     "src/abi/uniswap_v3/GetUniswapV3PoolDataBatchRequest.json";
     SyncUniswapV3PoolBatchRequest,
     "src/abi/uniswap_v3/SyncUniswapV3PoolBatchRequest.json";
 );
+abigen!(UniswapV3Pool, "src/abi/IUniswapV3Pool.json");
+
 
 pub async fn get_pool_data_batch_request<M: Middleware>(
     pools: Vec<H160>,
@@ -63,6 +66,7 @@ pub async fn get_pool_data_batch_request<M: Middleware>(
                             if !pool_data[0].to_owned().into_address().unwrap().is_zero() {
                                 //Update the pool data
                                 if let pool_address = pools.get(pool_idx).unwrap() {
+    
                                     let pool = UniSwapV3Pool {
                                         id: hex_to_address_string(pool_address.encode_hex()),
                                         feeTier: pool_data[8]
@@ -91,11 +95,15 @@ pub async fn get_pool_data_batch_request<M: Middleware>(
                                             ),
                                             ..Default::default()
                                         },
-                                        volumeUSD: "".to_string(),
-                                        totalValueLockedToken0: "".to_string(),
-                                        totalValueLockedToken1: "".to_string(),
-                                        totalValueLockedUSD: "".to_string(),
-                                        __typename: "".to_string(),
+                                        token0_decimals: pool_data[1].to_owned().into_uint().unwrap().as_u32() as u8,
+                                        token1_decimals: pool_data[3].to_owned().into_uint().unwrap().as_u32() as u8,
+                                        fee: pool_data[8].to_owned().into_uint().unwrap().as_u32(),
+                                        liquidity: pool_data[4].to_owned().into_uint().unwrap().as_u128(),
+                                        sqrt_price: pool_data[5].to_owned().into_uint().unwrap().to_string(),
+                                        tick: 1,
+                                        tick_spacing: 1,
+                                        liquidity_net: 1,
+                                        __typename: "V3Pool".to_string(),
                                     };
                                     final_pools.push(pool);
                                 }

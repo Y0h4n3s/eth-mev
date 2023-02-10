@@ -20,6 +20,7 @@ use std::hash::*;
 use std::str::FromStr;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
+use nom::FindSubstring;
 #[async_trait]
 pub trait LiquidityProvider: EventEmitter {
     type Metadata;
@@ -29,7 +30,7 @@ pub trait LiquidityProvider: EventEmitter {
     fn get_id(&self) -> LiquidityProviders;
 }
 
-#[derive(Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
+#[derive(Deserialize, Serialize, Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum LiquidityProviders {
     UniswapV2(UniswapV2Metadata),
@@ -40,14 +41,18 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
     fn from(value: T) -> Self {
         match value.into().as_str() {
             "1" => LiquidityProviders::UniswapV2(Default::default()),
-            "2" => LiquidityProviders::UniswapV3(Default::default()),
-            val => match val.split("(").collect::<Vec<&str>>().get(0) {
-                Some(v) => match *v {
-                    "UniswapV2" => LiquidityProviders::UniswapV2(Default::default()),
-                    "UniswapV3" => LiquidityProviders::UniswapV3(Default::default()),
-                    _ => panic!("Invalid Liquidity Provider {}", v),
-                },
-                None => panic!("Invalid Liquidity Provider {}", val),
+            "2" => LiquidityProviders::UniswapV3(UniswapV3Metadata {
+                sqrt_price: "0".to_string(),
+                ..Default::default()
+            }),
+            val => match val.find_substring("UniswapV2") {
+                Some(v) => serde_json::from_str(val).unwrap(),
+                None => {
+                    match val.find_substring("UniswapV3") {
+                        Some(v) => serde_json::from_str(val).unwrap(),
+                        None => panic!("Invalid Liquidity Provider {}", val),
+                    }
+                }
             },
         }
     }
@@ -227,16 +232,14 @@ impl UniswapV3Calculator {
 #[async_trait]
 impl Calculator for UniswapV3Calculator {
     async fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128> {
-        let token_in = if pool.x_to_y {
-            H160::from_str(&pool.x_address)?
+        let token_in = if pool.x_to_y { &pool.x_address
         } else {
-            H160::from_str(&pool.y_address)?
+            &pool.y_address
         };
-        Ok(self
-            .meta
-            .simulate_swap(token_in, U256::from(in_), self.middleware.clone())
-            .await?
-            .as_u128())
+        
+        let price = self.meta.calculate_price(token_in.to_string());
+        println!("{} {}", in_, price);
+        Ok((in_ as f64 / price) as u128)
     }
 }
 pub trait Meta {}
