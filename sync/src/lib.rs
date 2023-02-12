@@ -11,15 +11,18 @@ use async_std::sync::Arc;
 use async_trait::async_trait;
 use bincode::{Decode, Encode};
 use coingecko::response::coins::CoinsMarketItem;
-use ethers::types::{H160, H256, U256};
+use ethers::types::{H160, H256, I256, U256};
 use ethers_providers::{Provider, Ws};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::hash::*;
 use std::str::FromStr;
+use bincode::error::IntegerType::U128;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
+
+
 use nom::FindSubstring;
 #[async_trait]
 pub trait LiquidityProvider: EventEmitter {
@@ -76,11 +79,11 @@ pub type BoxedLiquidityProvider = Box<
 >;
 
 impl LiquidityProviders {
-    pub async fn build_calculator(&self) -> Box<dyn Calculator> {
+    pub fn build_calculator(&self) -> Box<dyn Calculator> {
         match self {
             LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::UniswapV3(meta) => {
-                Box::new(UniswapV3Calculator::new(meta.clone()).await)
+                Box::new(UniswapV3Calculator::new(meta.clone()))
             }
             _ => panic!("Invalid liquidity provider"),
         }
@@ -181,9 +184,8 @@ impl CpmmCalculator {
     }
 }
 
-#[async_trait]
 impl Calculator for CpmmCalculator {
-    async fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128> {
+    fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128> {
         let swap_source_amount = if pool.x_to_y {
             pool.x_amount
         } else {
@@ -206,41 +208,90 @@ impl Calculator for CpmmCalculator {
     }
 }
 
-#[async_trait]
 pub trait Calculator {
-    async fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128>;
+    fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128>;
 }
 pub struct CpmmCalculator {}
 
 pub struct UniswapV3Calculator {
-    meta: UniswapV3Metadata,
-    middleware: Arc<Provider<Ws>>,
+    meta: UniswapV3Metadata
 }
 
 impl UniswapV3Calculator {
-    pub async fn new(meta: UniswapV3Metadata) -> Self {
+    pub fn new(meta: UniswapV3Metadata) -> Self {
         Self {
-            middleware: Arc::new(
-                Provider::<Ws>::connect("ws://89.58.31.215:8546")
-                    .await
-                    .unwrap(),
-            ),
             meta,
+        }
+    }
+    pub fn _get_amount_0_delta(
+        &self,
+        mut sqrt_ratio_a_x_96: U256,
+        mut sqrt_ratio_b_x_96: U256,
+        liquidity: u128,
+        round_up: bool,
+    ) -> anyhow::Result<U256> {
+        if sqrt_ratio_a_x_96 > sqrt_ratio_b_x_96 {
+            (sqrt_ratio_a_x_96, sqrt_ratio_b_x_96) = (sqrt_ratio_b_x_96, sqrt_ratio_a_x_96)
+        };
+        
+        let numerator_1 = U256::from(liquidity) << 96;
+        let numerator_2 = sqrt_ratio_b_x_96 - sqrt_ratio_a_x_96;
+
+        
+        if round_up {
+            let numerator_partial = uniswap_v3_math::full_math::mul_div_rounding_up(numerator_1, numerator_2, sqrt_ratio_b_x_96)?;
+            Ok(uniswap_v3_math::unsafe_math::div_rounding_up(numerator_partial, sqrt_ratio_a_x_96))
+        } else {
+            Ok(uniswap_v3_math::full_math::mul_div(numerator_1, numerator_2, sqrt_ratio_b_x_96)? / sqrt_ratio_a_x_96)
+        }
+    }
+    
+    
+    pub fn _get_amount_1_delta(
+        &self,
+        mut sqrt_ratio_a_x_96: U256,
+        mut sqrt_ratio_b_x_96: U256,
+        liquidity: u128,
+        round_up: bool,
+    ) -> anyhow::Result<U256> {
+        if sqrt_ratio_a_x_96 > sqrt_ratio_b_x_96 {
+            (sqrt_ratio_a_x_96, sqrt_ratio_b_x_96) = (sqrt_ratio_b_x_96, sqrt_ratio_a_x_96)
+        };
+        
+        if round_up {
+            Ok(uniswap_v3_math::full_math::mul_div_rounding_up(
+                U256::from(liquidity),
+                sqrt_ratio_b_x_96 - sqrt_ratio_a_x_96,
+                U256::from("0x1000000000000000000000000"),
+            ).unwrap_or(U256::from(0)))
+        } else {
+            Ok(uniswap_v3_math::full_math::mul_div(
+                U256::from(liquidity),
+                sqrt_ratio_b_x_96 - sqrt_ratio_a_x_96,
+                U256::from("0x1000000000000000000000000"),
+            ).unwrap_or(U256::from(0)))
         }
     }
 }
 #[async_trait]
 impl Calculator for UniswapV3Calculator {
-    async fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128> {
-        let token_in = if pool.x_to_y { &pool.x_address
+    fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128> {
+        let sqrt_ratio_current_x_96 = U256::from_dec_str(&self.meta.sqrt_price).unwrap();
+        let zero_for_one = pool.x_to_y;
+        let  sqrt_ratio_target_x_96 = if pool.x_to_y {
+            U256::from(1)
         } else {
-            &pool.y_address
+            sqrt_ratio_current_x_96.checked_mul(U256::from(2)).unwrap()
         };
+        let mut amount_out = U256::zero();
+        let (sqrt_ratio_next_x_96, amount_in, amount_out, fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from(in_).checked_mul(I256::from(1)).unwrap(), self.meta.fee).unwrap();
         
-        let price = self.meta.calculate_price(token_in.to_string());
-        println!("{} {}", in_, price);
-        Ok((in_ as f64 / price) as u128)
-    }
+            Ok(amount_out.as_u128())
+        }
+    
+
+    
+    
 }
 pub trait Meta {}
 
@@ -321,4 +372,51 @@ pub async fn start(
             emitter.join().unwrap();
         }
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::test;
+    #[test]
+    async fn test_uniswap_v3_calculator() {
+        let meta = UniswapV3Metadata {
+            factory_address: "".to_string(),
+            address: "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640".to_string(),
+            token_a: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".to_string(),
+            token_b: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(),
+            token_a_decimals: 6,
+            token_b_decimals: 18,
+            fee: 500,
+            liquidity: 229553535761302309707,
+            sqrt_price: "2030685815623659403894576284118504".to_string(),
+            tick: 203048,
+            tick_spacing: 10,
+            liquidity_net: 0
+        };
+        let pool = Pool {
+            address: "".to_string(),
+            x_address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 ".to_string(),
+            y_address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 ".to_string(),
+            curve: None,
+            curve_type: Curve::Uncorrelated,
+            fee_bps: 0,
+            x_amount: 0,
+            y_amount: 0,
+            x_to_y: false,
+            provider: LiquidityProviders::UniswapV3(meta.clone())
+        };
+    
+        let eth_client = Arc::new(
+            Provider::<Ws>::connect("ws://89.58.31.215:8546")
+                  .await
+                  .unwrap(),
+        );
+        let calculator = pool.provider.build_calculator();
+        let out2 = meta.simulate_swap(H160::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(), U256::from(10_u128.pow(18)), eth_client).await;
+        let out = calculator.calculate_out(10_u128.pow(18) , &pool).unwrap();
+        assert_eq!(out, out2.unwrap().as_u128());
+    }
+    
+    
 }

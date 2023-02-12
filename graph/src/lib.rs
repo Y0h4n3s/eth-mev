@@ -431,8 +431,8 @@ DETACH DELETE n",
                                 let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
                                 let mut in_ = i_atomic as u128;
                                 for route in &paths {
-                                    let calculator = route.provider.build_calculator().await;
-                                    in_ = calculator.calculate_out(in_, route).await.unwrap();
+                                    let calculator = route.provider.build_calculator();
+                                    in_ = calculator.calculate_out(in_, route).unwrap();
                                     // println!("{} {} {}", in_, route.x_amount, route.y_amount);
                                 }
 
