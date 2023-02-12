@@ -105,12 +105,6 @@ pub async fn start(
 ) -> anyhow::Result<()> {
     Graph::<String, Pool, Undirected>::new_undirected();
     let pr = pools.read().await;
-    let graph = Arc::new(
-        NGraph::new(&NEO4J_URL, &NEO4J_USER, &NEO4J_PASS)
-            .await
-            .unwrap(),
-    );
-    let mut txn = graph.start_txn().await.unwrap();
 
     let manager = Manager::new(
         &NEO4J_URL.clone(),
@@ -449,7 +443,7 @@ DETACH DELETE n",
                                     right = mid;
                                 }
                                 mid = (left + right) / 2.0;
-                                println!("Step {}: {} new mid {} ({} - {}) {} {}", i, profit, mid ,left, right, in_, i_atomic);
+                                // println!("Step {}: {} new mid {} ({} - {}) {} {}", i, profit, mid ,left, right, in_, i_atomic);
                             }
 
                             if best_route_profit > 0 {

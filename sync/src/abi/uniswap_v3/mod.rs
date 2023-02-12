@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::types::{UniSwapV3Pool, UniSwapV3Token};
-use anyhow::Result;
+use anyhow::{Error, Result};
 use ethers::abi::AbiEncode;
 use ethers::types::H160;
 use ethers::{
@@ -12,6 +12,9 @@ use ethers::{
 };
 use ethers_providers::ProviderError::JsonRpcClientError;
 use byte_slice_cast::AsByteSlice;
+use ethers::prelude::builders::ContractCall;
+
+use crate::U256;
 abigen!(
     GetUniswapV3PoolDataBatchRequest,
     "src/abi/uniswap_v3/GetUniswapV3PoolDataBatchRequest.json";
@@ -19,113 +22,75 @@ abigen!(
     "src/abi/uniswap_v3/SyncUniswapV3PoolBatchRequest.json";
 );
 abigen!(UniswapV3Pool, "src/abi/IUniswapV3Pool.json");
+abigen!(IERC20, "src/abi/IERC20.json");
 
 
-pub async fn get_pool_data_batch_request<M: Middleware>(
+pub async fn get_pool_data_batch_request(
     pools: Vec<H160>,
-    middleware: Arc<M>,
+    middleware: Arc<ethers_providers::Provider<ethers_providers::Ws>>,
 ) -> Result<Vec<UniSwapV3Pool>> {
+    let blacklist = ["0x8de5977111c68c3fe95e63e7f7319dd5a01f77a0".to_string()];
     let mut target_addresses = vec![];
-
     for pool in pools.iter() {
         target_addresses.push(Token::Address(pool.clone()));
     }
-
-    let constructor_args = Token::Tuple(vec![Token::Array(target_addresses)]);
-    let deployer =
-        GetUniswapV3PoolDataBatchRequest::deploy(middleware.clone(), constructor_args).unwrap();
-    let mut final_pools = vec![];
-
-    loop {
-        let call = deployer.call_raw().await;
-        if let Ok(return_data) = call {
-            let return_data_tokens = ethers::abi::decode(
-                &[ParamType::Array(Box::new(ParamType::Tuple(vec![
-                    ParamType::Address,   // token a
-                    ParamType::Uint(8),   // token a decimals
-                    ParamType::Address,   // token b
-                    ParamType::Uint(8),   // token b decimals
-                    ParamType::Uint(128), // liquidity
-                    ParamType::Uint(160), // sqrtPrice
-                    ParamType::Int(24),   // tick
-                    ParamType::Int(24),   // tickSpacing
-                    ParamType::Uint(24),  // fee
-                    ParamType::Int(128),  // liquidityNet
-                ])))],
-                &return_data,
-            )?;
-
-            let mut pool_idx = 0;
-
-            //Update pool data
-            for tokens in return_data_tokens {
-                if let Some(tokens_arr) = tokens.into_array() {
-                    for tup in tokens_arr {
-                        if let Some(pool_data) = tup.into_tuple() {
-                            //If the pool token A is not zero, signaling that the pool data was populated
-                            if !pool_data[0].to_owned().into_address().unwrap().is_zero() {
-                                //Update the pool data
-                                if let pool_address = pools.get(pool_idx).unwrap() {
     
-                                    let pool = UniSwapV3Pool {
-                                        id: hex_to_address_string(pool_address.encode_hex()),
-                                        feeTier: pool_data[8]
-                                            .to_owned()
-                                            .into_uint()
-                                            .unwrap()
-                                            .as_u64()
-                                            .to_string(),
-                                        token0: UniSwapV3Token {
-                                            id: hex_to_address_string(
-                                                pool_data[0]
-                                                    .to_owned()
-                                                    .into_address()
-                                                    .unwrap()
-                                                    .encode_hex(),
-                                            ),
-                                            ..Default::default()
-                                        },
-                                        token1: UniSwapV3Token {
-                                            id: hex_to_address_string(
-                                                pool_data[2]
-                                                    .to_owned()
-                                                    .into_address()
-                                                    .unwrap()
-                                                    .encode_hex(),
-                                            ),
-                                            ..Default::default()
-                                        },
-                                        token0_decimals: pool_data[1].to_owned().into_uint().unwrap().as_u32() as u8,
-                                        token1_decimals: pool_data[3].to_owned().into_uint().unwrap().as_u32() as u8,
-                                        fee: pool_data[8].to_owned().into_uint().unwrap().as_u32(),
-                                        liquidity: pool_data[4].to_owned().into_uint().unwrap().as_u128(),
-                                        sqrt_price: pool_data[5].to_owned().into_uint().unwrap().to_string(),
-                                        tick: 1,
-                                        tick_spacing: 1,
-                                        liquidity_net: 1,
-                                        __typename: "V3Pool".to_string(),
-                                    };
-                                    final_pools.push(pool);
-                                }
-                                pool_idx += 1;
-                            }
-                        }
-                    }
-                }
+    let mut handles = vec![];
+    for pool in pools {
+        let provider = middleware.clone();
+        handles.push(tokio::spawn(async move {
+            let contract = UniswapV3Pool::new(pool.clone(), provider.clone());
+            let token0_call = Box::pin(contract.token_0());
+            let token1_call = Box::pin(contract.token_1());
+            let liquidity_call = Box::pin(contract.liquidity());
+            let fee_call = Box::pin(contract.fee());
+            let slot_0_call = Box::pin(contract.slot_0());
+            let (token0, token1, liquidity, fee, sqrt_price): (H160, H160, u128, u32, U256) =
+                  (
+                      token0_call.call().await.map_err(|e| Error::msg(format!("Missing function token_0() for {}", hex_to_address_string(pool.encode_hex())))).unwrap(),
+                      token1_call.call().await.map_err(|e| Error::msg(format!("Missing function token_1() for {}", hex_to_address_string(pool.encode_hex())))).unwrap(),
+                      liquidity_call.call().await.map_err(|e| Error::msg(format!("Missing function liquidity() for {}", hex_to_address_string(pool.encode_hex())))).unwrap(),
+                      fee_call.call().await.map_err(|e| Error::msg(format!("Missing function fee() for {}", hex_to_address_string(pool.encode_hex())))).unwrap(),
+                      slot_0_call.call().await.map_err(|e| Error::msg(format!("Missing function slot_0() for {}", hex_to_address_string(pool.encode_hex())))).unwrap().0
+                  );
+            
+            let token0_contract = IERC20::new(token0, provider.clone());
+            let token1_contract = IERC20::new(token1, provider.clone());
+            let token_0_decimals_call = Box::pin(token0_contract.decimals());
+            let token_1_decimals_call = Box::pin(token1_contract.decimals());
+            
+            let (token_0_decimals, token_1_decimals) : (u8, u8) = (
+                  token_0_decimals_call.call().await.map_err(|e|Error::msg(format!("No decimals for {}", hex_to_address_string(token0.encode_hex())))).unwrap(),
+                  token_1_decimals_call.call().await.map_err(|e|Error::msg(format!("No decimals for {}", hex_to_address_string(token1.encode_hex())))).unwrap()
+                  );
+            
+            UniSwapV3Pool {
+                id: hex_to_address_string(pool.encode_hex()),
+                fee,
+                token0: UniSwapV3Token {
+                    id: hex_to_address_string(token0.encode_hex()),
+                    ..Default::default()
+                },
+                token1: UniSwapV3Token {
+                    id: hex_to_address_string(token1.encode_hex()),
+                    ..Default::default()
+                },
+                liquidity,
+                sqrt_price: sqrt_price.to_string(),
+                token0_decimals: token_0_decimals,
+                token1_decimals: token_1_decimals,
+                ..Default::default()
             }
-            break;
-        } else {
-            match call.unwrap_err() {
-                JsonRpcClientError(err) => {
-                    // eprintln!("{:?}", err);
-                    continue;
-                }
-                _ => break,
-            }
-        }
+        }));
     }
+    return Ok(futures::future::join_all(handles).await.into_iter().filter_map(|p| {
+        if p.is_err() {
+            None
+        } else {
+            Some(p.unwrap())
+        }
+    }).collect());
 
-    Ok(final_pools)
 }
 
 fn hex_to_address_string(hex: String) -> String {

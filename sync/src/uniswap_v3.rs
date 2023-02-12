@@ -359,7 +359,7 @@ impl UniswapV3Metadata {
     }
 }
 
-const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 16369621;
+const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 14369621;
 
 pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
     120, 60, 202, 28, 4, 18, 221, 13, 105, 94, 120, 69, 104, 201, 109, 162, 233, 194, 47, 249, 137,
@@ -409,7 +409,7 @@ impl LiquidityProvider for UniSwapV3 {
         tokio::spawn(async move {
             let client = reqwest::Client::new();
             let eth_client = Arc::new(
-                Provider::<Ws>::connect("ws://89.58.31.215:8546")
+                Provider::<Ws>::connect("ws://65.21.198.115:8546")
                     .await
                     .unwrap(),
             );

@@ -34,7 +34,7 @@ pub struct UniSwapV2Pair {
     pub token1_decimals: u8,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub struct UniSwapV3Pool {
     pub id: String,
     pub feeTier: String,
