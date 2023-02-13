@@ -18,7 +18,7 @@ use ethers::types::transaction::eip2718::TypedTransaction;
 use tokio::time::Duration;
 use ethers_providers::{Http, Middleware};
 use ethers_flashbots::{BundleRequest, FlashbotsMiddleware, BundleTransaction};
-use garb_graph_eth::{GraphConfig, Order};
+use garb_graph_eth::{GraphConfig, Order, CHECKED_COIN};
 use rand::Rng;
 use ethers::utils::serialize;
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
@@ -200,7 +200,25 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
                     pools.push(Token::Address(pool.address.clone().parse::<H160>().unwrap()));
                     pool_ids.push(Token::Uint(U256::from(u8::from(pool.provider.clone()))));
                 }
-        
+                let approve_function  = ethers::abi::Function {
+                    name: "approve".to_string(),
+                    inputs: vec![
+                        ethers::abi::Param {
+                            name: "spender".to_string(),
+                            kind: ParamType::Address,
+                            internal_type: None
+                        },
+                        ethers::abi::Param {
+                            name: "amount".to_string(),
+                            kind: ParamType::Uint(256),
+                            internal_type: None
+                        }
+                        
+                    ],
+                    outputs: vec![],
+                    constant: None,
+                    state_mutability: StateMutability::View
+                };
                 let call_function = ethers::abi::Function {
                     name: "tryRoute".to_string(),
                     inputs: vec![
@@ -229,30 +247,49 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
                     constant: None,
                     state_mutability: StateMutability::View
                 };
+                let approve_tx_data = approve_function.encode_input(vec![Token::Address(CONTRACT_ADDRESS.clone()), Token::Uint(U256::from(order.size))].as_slice()).unwrap();
                 let tx_data = call_function.encode_input(vec![Token::Array(pools), Token::Array(pool_ids), Token::Array(directions), Token::Uint(U256::from(order.size))].as_slice()).unwrap();
                 let n = nonce_num.read().await;
                 let blk = block.read().await;
+                let approve_tx_request = Eip1559TransactionRequest {
+                    to: Some(NameOrAddress::Address(Address::from_str(&CHECKED_COIN.clone()).unwrap())),
+                    from: Some(signer_wallet_address),
+                    data: Some(ethers::types::Bytes::from(approve_tx_data)),
+                    chain_id: Some(U64::from(1)),
+                    max_priority_fee_per_gas: Some(U256::from(0)),
+                    max_fee_per_gas: Some(blk.base_fee_per_gas.unwrap_or(U256::from(0)).checked_mul(U256::from(2)).unwrap()),
+                    gas: Some(U256::from(250000)),
+                    nonce: Some(*n),
+                    value: None,
+                    access_list: AccessList::default(),
+                };
                 let tx_request = Eip1559TransactionRequest {
                     to: Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone())),
                     from: Some(signer_wallet_address),
                     data: Some(ethers::types::Bytes::from(tx_data)),
                     chain_id: Some(U64::from(1)),
                     max_priority_fee_per_gas: Some(U256::from(0)),
-                    max_fee_per_gas: Some(blk.base_fee_per_gas.unwrap_or(U256::from(0))),
+                    max_fee_per_gas: Some(blk.base_fee_per_gas.unwrap_or(U256::from(0)).checked_mul(U256::from(2)).unwrap()),
                     gas: Some(U256::from(250000)),
                     nonce: Some(*n),
                     value: None,
                     access_list: AccessList::default(),
                 };
                 drop(n);
+                let typed_approve_tx = TypedTransaction::Eip1559(approve_tx_request);
+                let approve_tx_sig = signer.sign_transaction(&typed_approve_tx).await.unwrap();
+                let approve_signed_tx = typed_approve_tx.rlp_signed(&approve_tx_sig);
+                
+                
                 let typed_tx = TypedTransaction::Eip1559(tx_request);
                 let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
                 let signed_tx = typed_tx.rlp_signed(&tx_sig);
                 
                 let mut bundle_request = BundleRequest::new();
+                let bundled_approve: BundleTransaction = approve_signed_tx.into();
                 let bundled: BundleTransaction = signed_tx.into();
                 
-                bundle_request = bundle_request.push_transaction(bundled).set_block(U64::from(blk.number.unwrap())).set_simulation_block(U64::from(blk.number.unwrap())).set_simulation_timestamp(0);
+                bundle_request =  bundle_request.push_transaction(bundled_approve).push_transaction(bundled).set_block(U64::from(blk.number.unwrap())).set_simulation_block(U64::from(blk.number.unwrap())).set_simulation_timestamp(0);
                 drop(blk);
                 
                 let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
