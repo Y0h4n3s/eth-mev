@@ -14,7 +14,7 @@ use ethers_providers::ProviderError::JsonRpcClientError;
 use byte_slice_cast::AsByteSlice;
 use ethers::prelude::builders::ContractCall;
 
-use crate::U256;
+use crate::{CHECKED_COIN, U256};
 abigen!(
     GetUniswapV3PoolDataBatchRequest,
     "src/abi/uniswap_v3/GetUniswapV3PoolDataBatchRequest.json";
@@ -58,12 +58,24 @@ pub async fn get_pool_data_batch_request(
             let token1_contract = IERC20::new(token1, provider.clone());
             let token_0_decimals_call = Box::pin(token0_contract.decimals());
             let token_1_decimals_call = Box::pin(token1_contract.decimals());
-            
-            let (token_0_decimals, token_1_decimals) : (u8, u8) = (
+            let token_0_balance_call = Box::pin(token0_contract.balance_of(pool.clone()));
+            let token_1_balance_call = Box::pin(token1_contract.balance_of(pool.clone()));
+            let (token_0_decimals, token_1_decimals, token_0_balance, token_1_balance) : (u8, u8, U256, U256) = (
                   token_0_decimals_call.call().await.map_err(|e|Error::msg(format!("No decimals for {}", hex_to_address_string(token0.encode_hex())))).unwrap(),
-                  token_1_decimals_call.call().await.map_err(|e|Error::msg(format!("No decimals for {}", hex_to_address_string(token1.encode_hex())))).unwrap()
+                  token_1_decimals_call.call().await.map_err(|e|Error::msg(format!("No decimals for {}", hex_to_address_string(token1.encode_hex())))).unwrap(),
+                  token_0_balance_call.call().await.map_err(|e|Error::msg(format!("No balance for {}", hex_to_address_string(token0.encode_hex())))).unwrap(),
+                  token_1_balance_call.call().await.map_err(|e|Error::msg(format!("No balance for {}", hex_to_address_string(token1.encode_hex())))).unwrap(),
                   );
-            
+            if hex_to_address_string(token0.encode_hex()) == CHECKED_COIN.clone() {
+                if token_0_balance.le(&U256::from(10_u128.pow(18))) {
+                    panic!("Low Liquidity for pool {}", hex_to_address_string(pool.encode_hex()))
+                }
+            }
+            if hex_to_address_string(token1.encode_hex()) == CHECKED_COIN.clone() {
+                if token_1_balance.le(&U256::from(10_u128.pow(18))) {
+                    panic!("Low Liquidity for pool {}", hex_to_address_string(pool.encode_hex()))
+                }
+            }
             UniSwapV3Pool {
                 id: hex_to_address_string(pool.encode_hex()),
                 fee,

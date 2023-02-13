@@ -70,7 +70,7 @@ pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
 
 pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
     std::env::var("ETH_MAX_SIZE")
-        .unwrap_or("0.2".to_string())
+        .unwrap_or("0.17".to_string())
         .parse()
         .unwrap()
 });

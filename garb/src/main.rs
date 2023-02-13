@@ -1,4 +1,7 @@
 mod abi;
+//Deployer: 0xef344B9eFcc133EB4e7FEfbd73a613E3b2D05e86
+// Deployed to: 0x5F416E55fdBbA8CC0D385907C534B57a08710c35
+// Transaction hash: 0x2f03f71cc6915fcc17afd71730f1fb6809cef88b102fcb3aa3e3dc60095d1aee
 
 use once_cell::sync::Lazy;
 use abi::Aggregator;
@@ -29,7 +32,7 @@ static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
 });
 
 static CONTRACT_ADDRESS: Lazy<Address> = Lazy::new(|| {
-    Address::from_str(&std::env::var("ETH_CONTRACT_ADDRESS").unwrap_or_else(|_| std::env::args().nth(6).unwrap_or("0x0BAf4DC78b4e437eB92855b43c305148a239ea31".to_string()))).unwrap()
+    Address::from_str(&std::env::var("ETH_CONTRACT_ADDRESS").unwrap_or_else(|_| std::env::args().nth(6).unwrap_or("0x5f416e55fdbba8cc0d385907c534b57a08710c35".to_string()))).unwrap()
 });
 
 static NODE_URL: Lazy<Url> = Lazy::new(|| {
@@ -271,7 +274,7 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
                     max_priority_fee_per_gas: Some(U256::from(0)),
                     max_fee_per_gas: Some(blk.base_fee_per_gas.unwrap_or(U256::from(0)).checked_mul(U256::from(2)).unwrap()),
                     gas: Some(U256::from(250000)),
-                    nonce: Some(*n),
+                    nonce: Some(n.clone().checked_add(U256::from(1)).unwrap()),
                     value: None,
                     access_list: AccessList::default(),
                 };
@@ -293,7 +296,16 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
                 drop(blk);
                 
                 let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
-                println!("{:?}", simulated_bundle);
+                match simulated_bundle {
+                    Ok(bundle) => {
+                        let ex_tx = bundle.transactions.get(1).unwrap();
+                        if ex_tx.error.is_none() {
+                            println!("{:?}", ex_tx);
+                        }
+                    }
+                    Err(e) =>
+                        println!("{:?}", e)
+                }
     
             }));
         }

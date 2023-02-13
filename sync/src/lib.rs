@@ -21,7 +21,11 @@ use std::str::FromStr;
 use bincode::error::IntegerType::U128;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-
+use once_cell::sync::Lazy;
+pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
+    std::env::var("ETH_CHECKED_COIN")
+          .unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
+});
 
 use nom::FindSubstring;
 #[async_trait]
