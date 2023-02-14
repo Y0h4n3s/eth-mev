@@ -9,12 +9,13 @@ use tokio::runtime::Runtime;
 use async_std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::{HashMap};
-use ethers::prelude::{Address, H160, LocalWallet, SignerMiddleware};
+use ethers::prelude::{Address, H160, LocalWallet, SignerMiddleware, StreamExt};
 use ethers::contract::Contract;
 use url::Url;
 use garb_sync_eth::{EventSource, LiquidityProviders, Pool, SyncConfig};
 use std::str::FromStr;
 use ethers::abi::{Function, ParamType, StateMutability, Token};
+use ethers::prelude::signer::SignerMiddlewareError::MiddlewareError;
 use ethers::signers::Signer;
 use ethers::types::{U256, Block, TxHash, TransactionRequest, BlockId, Eip1559TransactionRequest, BlockNumber, U64, NameOrAddress, transaction::eip2930::AccessList};
 use ethers::types::transaction::eip2718::TypedTransaction;
@@ -23,7 +24,9 @@ use ethers_providers::{Http, Middleware};
 use ethers_flashbots::{BundleRequest, FlashbotsMiddleware, BundleTransaction};
 use garb_graph_eth::{GraphConfig, Order, CHECKED_COIN};
 use rand::Rng;
-use ethers::utils::serialize;
+use ethers::utils::{parse_ether, serialize};
+use ethers_providers::HttpClientError::JsonRpcError;
+
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
     std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2".to_string()))
                                     .split(",")
@@ -36,7 +39,7 @@ static CONTRACT_ADDRESS: Lazy<Address> = Lazy::new(|| {
 });
 
 static NODE_URL: Lazy<Url> = Lazy::new(|| {
-    let url = std::env::var("ETH_NODE_URL").unwrap_or_else(|_| std::env::args().nth(7).unwrap_or("http://89.58.31.215:8545".to_string()));
+    let url = std::env::var("ETH_NODE_URL").unwrap_or_else(|_| std::env::args().nth(7).unwrap_or("http://65.21.198.115:8545".to_string()));
     Url::parse(&url).unwrap()
 });
 
@@ -178,21 +181,20 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
         signer.clone(),
     ));
     
+    
+    let sent = Arc::new(RwLock::new(false));
     let signer = Arc::new(signer);
     
     while let Ok(order) = routes.try_recv() {
         if let Some(order) = order {
-            println!("`````````````````````` Tried Route for profit {} $ETH ``````````````````````", order.profit  / 10_f64.powf(18.0));
-            for (i,pool) in order.route.iter().enumerate() {
-                println!("{}. {}", i + 1, pool);
-            }
-            println!("\n\n");
-            let signer_wallet_address = signer_wallet_address.clone();
-    
+            
             let nonce_num = nonce.clone();
             let block = block.clone();
             let signer = signer.clone();
             let flashbots_client = flashbots_client.clone();
+            let client = client.clone();
+            
+            let sent_v = sent.clone();
             join_handles.push(tokio::spawn(async move {
         
                 let mut directions = vec![];
@@ -203,25 +205,7 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
                     pools.push(Token::Address(pool.address.clone().parse::<H160>().unwrap()));
                     pool_ids.push(Token::Uint(U256::from(u8::from(pool.provider.clone()))));
                 }
-                let approve_function  = ethers::abi::Function {
-                    name: "approve".to_string(),
-                    inputs: vec![
-                        ethers::abi::Param {
-                            name: "spender".to_string(),
-                            kind: ParamType::Address,
-                            internal_type: None
-                        },
-                        ethers::abi::Param {
-                            name: "amount".to_string(),
-                            kind: ParamType::Uint(256),
-                            internal_type: None
-                        }
-                        
-                    ],
-                    outputs: vec![],
-                    constant: None,
-                    state_mutability: StateMutability::View
-                };
+
                 let call_function = ethers::abi::Function {
                     name: "tryRoute".to_string(),
                     inputs: vec![
@@ -250,71 +234,94 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
                     constant: None,
                     state_mutability: StateMutability::View
                 };
-                let approve_tx_data = approve_function.encode_input(vec![Token::Address(CONTRACT_ADDRESS.clone()), Token::Uint(U256::from(order.size))].as_slice()).unwrap();
-                let tx_data = call_function.encode_input(vec![Token::Array(pools), Token::Array(pool_ids), Token::Array(directions), Token::Uint(U256::from(order.size))].as_slice()).unwrap();
+                let tx_data = call_function.encode_input(vec![
+                    Token::Array(pools.clone()),
+                    Token::Array(pool_ids.clone()),
+                    Token::Array(directions.clone()),
+                    Token::Uint(U256::from(order.size))
+                ].as_slice()).unwrap();
                 let n = nonce_num.read().await;
                 let blk = block.read().await;
-                let approve_tx_request = Eip1559TransactionRequest {
-                    to: Some(NameOrAddress::Address(Address::from_str(&CHECKED_COIN.clone()).unwrap())),
-                    from: Some(signer_wallet_address),
-                    data: Some(ethers::types::Bytes::from(approve_tx_data)),
-                    chain_id: Some(U64::from(1)),
-                    max_priority_fee_per_gas: Some(U256::from(0)),
-                    max_fee_per_gas: Some(blk.base_fee_per_gas.unwrap_or(U256::from(0)).checked_mul(U256::from(2)).unwrap()),
-                    gas: Some(U256::from(250000)),
-                    nonce: Some(*n),
-                    value: None,
-                    access_list: AccessList::default(),
-                };
+                if blk.base_fee_per_gas.unwrap().checked_mul(U256::from(400000)).unwrap().gt(&U256::from(order.profit as u128)) {
+                    return
+                }
                 let tx_request = Eip1559TransactionRequest {
                     to: Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone())),
                     from: Some(signer_wallet_address),
                     data: Some(ethers::types::Bytes::from(tx_data)),
                     chain_id: Some(U64::from(1)),
                     max_priority_fee_per_gas: Some(U256::from(0)),
-                    max_fee_per_gas: Some(blk.base_fee_per_gas.unwrap_or(U256::from(0)).checked_mul(U256::from(2)).unwrap()),
-                    gas: Some(U256::from(250000)),
-                    nonce: Some(n.clone().checked_add(U256::from(1)).unwrap()),
+                    max_fee_per_gas: Some(blk.base_fee_per_gas.unwrap().checked_add(blk.base_fee_per_gas.unwrap().checked_div(U256::from(2)).unwrap()).unwrap_or(U256::from(0))),
+                    gas: Some(U256::from(1000000)),
+                    nonce: Some(n.clone().checked_add(U256::from(0)).unwrap()),
                     value: None,
                     access_list: AccessList::default(),
                 };
                 drop(n);
-                let typed_approve_tx = TypedTransaction::Eip1559(approve_tx_request);
-                let approve_tx_sig = signer.sign_transaction(&typed_approve_tx).await.unwrap();
-                let approve_signed_tx = typed_approve_tx.rlp_signed(&approve_tx_sig);
-                
-                
+
                 let typed_tx = TypedTransaction::Eip1559(tx_request);
                 let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
                 let signed_tx = typed_tx.rlp_signed(&tx_sig);
                 
                 let mut bundle_request = BundleRequest::new();
-                let bundled_approve: BundleTransaction = approve_signed_tx.into();
-                let bundled: BundleTransaction = signed_tx.into();
+                let bundled: BundleTransaction = signed_tx.clone().into();
                 
-                bundle_request =  bundle_request.push_transaction(bundled_approve).push_transaction(bundled).set_block(U64::from(blk.number.unwrap())).set_simulation_block(U64::from(blk.number.unwrap())).set_simulation_timestamp(0);
+                bundle_request =  bundle_request.push_transaction(bundled).set_block(U64::from(blk.number.unwrap())).set_simulation_block(U64::from(blk.number.unwrap())).set_simulation_timestamp(0);
                 drop(blk);
+                // let mut sent_val = sent_v.write().await;
+                // if !(*sent_val) {
                 
-                let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
-                match simulated_bundle {
-                    Ok(bundle) => {
-                        let ex_tx = bundle.transactions.get(1).unwrap();
-                        if ex_tx.error.is_none() {
-                            println!("{:?}", ex_tx);
+                //     // *sent_val = false;
+                    let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
+                let real_bundle = flashbots_client.inner().send_bundle(&bundle_request).await.unwrap().await;
+                match &simulated_bundle.as_ref().unwrap().transactions.get(0).unwrap().error {
+                    Some(e) => {
+                        eprintln!("{}", e)
+                    }
+                    None => {
+                        println!("`````````````````````` Tried Route for profit {} $ETH ``````````````````````", order.profit  / 10_f64.powf(18.0));
+                        for (i,pool) in order.route.iter().enumerate() {
+                            println!("{}. {}", i + 1, pool);
+                        }
+                        println!("\n\n");
+                        println!("{:?}", pools);
+                        println!("{:?}", pool_ids);
+                        println!("{:?}", directions);
+                        println!("{:?}", order.size);
+                        println!("{:?}", simulated_bundle);
+                        match real_bundle {
+                            Ok(res) => {
+                                println!("{:?}", res);
+                            }
+                            Err(e) => {
+                                println!("{:?}", e);
+                            }
                         }
                     }
-                    Err(e) =>
-                        println!("{:?}", e)
                 }
+                //     let real_bundle = flashbots_client.inner().send_bundle(&bundle_request).await.unwrap().await;
+                //     println!("{:?}", real_bundle);
+                
+                
+                // }
+                
+                // match simulated_bundle {
+                //     Ok(bundle) => {
+                //         let ex_tx = bundle.transactions.get(1).unwrap();
+                //         if ex_tx.error.is_none() {
+                //             println!("{:?}", ex_tx);
+                //         }
+                //     }
+                //     Err(e) =>
+                //         println!("{:?}", e)
+                // }
     
             }));
         }
-    
     }
     for task in join_handles {
         task.await.unwrap();
     }
-    
     Ok(())
     
     

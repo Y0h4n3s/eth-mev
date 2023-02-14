@@ -359,7 +359,7 @@ impl UniswapV3Metadata {
     }
 }
 
-const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 14369621;
+const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 12369621;
 
 pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
     120, 60, 202, 28, 4, 18, 221, 13, 105, 94, 120, 69, 104, 201, 109, 162, 233, 194, 47, 249, 137,
@@ -568,7 +568,7 @@ impl EventEmitter for UniSwapV3 {
                                     .from_block(latest_block)
                                     .address(ValueOrArray::Array(vec![pool.address.parse().unwrap()]));
     
-                        let mut stream = event.subscribe_with_meta().await.unwrap().take(2);
+                        let mut stream = event.subscribe_with_meta().await.unwrap();
     
                         while let Some(Ok((log, meta))) = stream.next().await {
                             if let Some(mut pool_meta) = match pool.clone().provider {

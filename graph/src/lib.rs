@@ -53,7 +53,7 @@ where
 
 #[derive(Clone)]
 pub struct Order {
-    pub size: u64,
+    pub size: u128,
     pub decimals: u64,
     pub route: Vec<Pool>,
     pub profit: f64,
@@ -70,7 +70,7 @@ pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
 
 pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
     std::env::var("ETH_MAX_SIZE")
-        .unwrap_or("0.17".to_string())
+        .unwrap_or("0.1".to_string())
         .parse()
         .unwrap()
 });
@@ -351,7 +351,7 @@ DETACH DELETE n",
         let task_set = tokio::task::LocalSet::new();
         task_set.block_on(&rt, async {
             while let Ok(updated_market_event) = updated_q.recv().await {
-                let updated_market = updated_market_event.get_event();
+                let mut updated_market = updated_market_event.get_event();
                 let path_lookup = path_lookup.clone();
                 let routes = routes.clone();
                 tokio::task::spawn_local(async move {
@@ -364,11 +364,11 @@ DETACH DELETE n",
                     });
                     if updated.is_some() {
                         let (pool, market_routes) = updated.unwrap();
-                        println!(
-                            "graph service> Found {} routes for updated market {}",
-                            market_routes.len(),
-                            updated_market
-                        );
+                        // println!(
+                        //     "graph service> Found {} routes for updated market {}",
+                        //     market_routes.len(),
+                        //     updated_market
+                        // );
                         let pool = pool.clone();
                         let market_routes = market_routes.clone();
                         std::mem::drop(read);
@@ -400,6 +400,7 @@ DETACH DELETE n",
                                         && p.provider == updated_market.provider
                                 })
                                 .unwrap();
+	                        updated_market.x_to_y = paths[pool_index].x_to_y;
                             paths[pool_index] = updated_market.clone();
                             new_market_routes.insert((_pool_addr, paths.clone()));
 
@@ -434,6 +435,8 @@ DETACH DELETE n",
 
                                 if i == 0 {
                                     best_route_profit == profit;
+	                                best_route_size = i_atomic;
+	
                                 }
                                 if profit > best_route_profit {
                                     best_route_profit = profit;
@@ -445,10 +448,9 @@ DETACH DELETE n",
                                 mid = (left + right) / 2.0;
                                 // println!("Step {}: {} new mid {} ({} - {}) {} {}", i, profit, mid ,left, right, in_, i_atomic);
                             }
-
                             if best_route_profit > 0 {
                                 let order = Order {
-                                    size: best_route_size as u64,
+                                    size: best_route_size as u128,
                                     decimals,
                                     route: paths.clone(),
                                     profit: best_route_profit as f64,
@@ -462,7 +464,7 @@ DETACH DELETE n",
 
                         w.insert(pool.clone(), new_market_routes);
                     } else {
-                        eprintln!("graph service> No routes found for {}", updated_market);
+                        // eprintln!("graph service> No routes found for {}", updated_market);
                     }
                 });
             }
