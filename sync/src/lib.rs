@@ -44,6 +44,11 @@ pub enum LiquidityProviders {
     UniswapV3(UniswapV3Metadata),
 }
 
+pub enum LiquidityProviderId {
+    UniswapV2,
+    UniswapV3
+}
+
 impl<T: Into<String>> From<T> for LiquidityProviders {
     fn from(value: T) -> Self {
         match value.into().as_str() {
@@ -109,6 +114,14 @@ impl LiquidityProviders {
                 Box::new(uniswap_v3::UniSwapV3::new(metadata))
             }
             _ => panic!("Invalid liquidity provider"),
+        }
+    }
+    
+    pub fn id(&self) -> LiquidityProviderId{
+        match self {
+            LiquidityProviders::UniswapV2(_) => LiquidityProviderId::UniswapV2,
+            LiquidityProviders::UniswapV3(_) => LiquidityProviderId::UniswapV3,
+            
         }
     }
 }
@@ -210,10 +223,30 @@ impl Calculator for CpmmCalculator {
         let denominator = ((swap_source_amount as u128) * 10000) + amount_in_with_fee;
         Ok((numerator / denominator) as u128)
     }
+    
+    fn calculate_in(&self, out_: u128, pool: &Pool) -> anyhow::Result<u128> {
+        let swap_source_amount = if pool.x_to_y {
+            pool.x_amount
+        } else {
+            pool.y_amount
+        };
+        let swap_destination_amount = if pool.x_to_y {
+            pool.y_amount
+        } else {
+            pool.x_amount
+        };
+        if out_ >= swap_destination_amount {
+            return Ok(swap_source_amount);
+        }
+        let numerator = swap_source_amount * out_ * 10000;
+        let denominator = (swap_destination_amount - out_) * ((10000 - pool.fee_bps) as u128);
+        Ok((numerator / denominator) as u128 + 1)
+    }
 }
 
 pub trait Calculator {
     fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128>;
+    fn calculate_in(&self, out_: u128, pool: &Pool) -> anyhow::Result<u128>;
 }
 pub struct CpmmCalculator {}
 
@@ -293,10 +326,25 @@ impl Calculator for UniswapV3Calculator {
             Ok(amount_out.as_u128())
         }
     
-
+    fn calculate_in(&self, out_: u128, pool: &Pool) -> anyhow::Result<u128> {
+        let sqrt_ratio_current_x_96 = U256::from_dec_str(&self.meta.sqrt_price).unwrap();
+        let zero_for_one = pool.x_to_y;
+        let  sqrt_ratio_target_x_96 = if pool.x_to_y {
+            U256::from(1)
+        } else {
+            sqrt_ratio_current_x_96.checked_mul(U256::from(2)).unwrap()
+        };
+        let mut amount_out = U256::zero();
+        let (sqrt_ratio_next_x_96, amount_in, amount_out, fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from(out_).checked_mul(I256::from(-1)).unwrap(), self.meta.fee).unwrap();
+        println!("{:?} {:?}", amount_in, amount_out);
+        Ok(amount_in.as_u128())
+    
+    }
     
     
-}
+    
+    
+    }
 pub trait Meta {}
 
 pub struct SyncConfig {
@@ -417,9 +465,11 @@ mod tests {
                   .unwrap(),
         );
         let calculator = pool.provider.build_calculator();
-        let out2 = meta.simulate_swap(H160::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(), U256::from(10_u128.pow(18)), eth_client).await;
-        let out = calculator.calculate_out(10_u128.pow(18) , &pool).unwrap();
-        assert_eq!(out, out2.unwrap().as_u128());
+        
+        let in_ = calculator.calculate_in(10_u128.pow(8) , &pool).unwrap();
+        let out_ = calculator.calculate_out(in_ , &pool).unwrap();
+        let out2 = meta.simulate_swap(H160::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(), U256::from(in_), eth_client).await;
+        assert_eq!(10_u128.pow(8), out_);
     }
     
     

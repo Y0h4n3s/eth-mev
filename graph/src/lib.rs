@@ -8,7 +8,7 @@ use bb8_bolt::{
 };
 use bolt_proto::value::{Node, Relationship};
 use bolt_proto::Message;
-use garb_sync_eth::{EventSource, LiquidityProviders, Pool};
+use garb_sync_eth::{EventSource, LiquidityProviderId, LiquidityProviders, Pool};
 use neo4rs::{query, Graph as NGraph};
 use once_cell::sync::Lazy;
 use petgraph::algo::all_simple_paths;
@@ -378,39 +378,68 @@ DETACH DELETE n",
 
                         let mut new_market_routes = HashSet::new();
                         for (_pool_addr, mut paths) in market_routes.into_iter() {
-                            if !(paths
-                                .iter()
-                                .find(|p| {
-                                    p.address == updated_market.address
-                                        && p.x_address == updated_market.x_address
-                                        && p.y_address == updated_market.y_address
-                                        && p.provider == updated_market.provider
-                                })
-                                .is_some())
-                            {
-                                new_market_routes.insert((_pool_addr, paths));
-                                continue;
-                            }
-                            let pool_index = paths
-                                .iter()
-                                .position(|p| {
-                                    p.address == updated_market.address
-                                        && p.x_address == updated_market.x_address
-                                        && p.y_address == updated_market.y_address
-                                        && p.provider == updated_market.provider
-                                })
-                                .unwrap();
+	                        if !(paths
+		                          .iter()
+		                          .find(|p| {
+			                          p.address == updated_market.address
+					                        && p.x_address == updated_market.x_address
+					                        && p.y_address == updated_market.y_address
+					                        && p.provider == updated_market.provider
+		                          })
+		                          .is_some())
+	                        {
+		                        new_market_routes.insert((_pool_addr, paths));
+		                        continue;
+	                        }
+	                        let pool_index = paths
+		                          .iter()
+		                          .position(|p| {
+			                          p.address == updated_market.address
+					                        && p.x_address == updated_market.x_address
+					                        && p.y_address == updated_market.y_address
+					                        && p.provider == updated_market.provider
+		                          })
+		                          .unwrap();
 	                        updated_market.x_to_y = paths[pool_index].x_to_y;
-                            paths[pool_index] = updated_market.clone();
-                            new_market_routes.insert((_pool_addr, paths.clone()));
+	                        paths[pool_index] = updated_market.clone();
+	                        new_market_routes.insert((_pool_addr, paths.clone()));
+	
+	                        let in_addr = if paths.first().unwrap().x_to_y {
+		                        paths.first().unwrap().x_address.clone()
+	                        } else {
+		                        paths.first().unwrap().y_address.clone()
+	                        };
+	                        let decimals = decimals(in_addr);
+	
+	                        if paths.last().unwrap().provider.id() == LiquidityProviderId::UniswapV3 {
+		                        let mut best_route_size = 0.0;
+		                        let mut best_route_profit = 0;
+		                        let mut mid = MAX_SIZE.clone() / 2.0;
+		                        let mut left = 0.0;
+		                        let mut right = MAX_SIZE.clone();
+	                        }
+	                        for i in 0..10 {
+		                        let o_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
+		                        let mut path = paths.clone();
+		                        path.reverse();
+		                        let mut debt_token = "".to_string();
+		                        let mut debt_amount = 0_u128;
+		                        for step in path {
+			                        let calculator = route.provider.build_calculator();
 
-                            let in_addr = if paths.first().unwrap().x_to_y {
-                                paths.first().unwrap().x_address.clone()
-                            } else {
-                                paths.first().unwrap().y_address.clone()
-                            };
-                            let decimals = decimals(in_addr);
-
+			                        if debt_token != "".to_string() {
+				                        if debt_token == step.x_address && step.x_to_y {
+					                        debt_token = step.y_address;
+					                        debt_amount = calculator.calculate_in(debt_amount, &step);
+				                        }
+			                        }
+			                        if !pool.x_to_y {
+				                        debt_token = pool.y_address;
+			                        }
+			                        debt_amount = calculator.calculate_in(o_atomic, &step);
+		                        }
+	                        }
+                        
                             let mut best_route_size = 0.0;
                             let mut best_route_profit = 0;
                             let mut mid = MAX_SIZE.clone() / 2.0;

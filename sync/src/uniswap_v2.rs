@@ -211,7 +211,7 @@ impl EventEmitter for UniSwapV2 {
                             pool.y_amount = log.reserve_1;
                             let mut subscribers = subscribers.write().await;
                             for subscriber in subscribers.iter_mut() {
-                                let res = subscriber.send(Box::new(pool.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV3 Send Error {:?}", e));
+                                let res = subscriber.send(Box::new(pool.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV2 Send Error {:?}", e));
                             }
                         }
                     }));
