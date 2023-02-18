@@ -4,28 +4,29 @@ mod abi;
 // Transaction hash: 0x2f03f71cc6915fcc17afd71730f1fb6809cef88b102fcb3aa3e3dc60095d1aee
 
 use once_cell::sync::Lazy;
-use abi::Aggregator;
+
 use tokio::runtime::Runtime;
 use async_std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::{HashMap};
-use ethers::prelude::{Address, H160, LocalWallet, SignerMiddleware, StreamExt};
-use ethers::contract::Contract;
+use ethers::prelude::{Address, H160, LocalWallet, SignerMiddleware};
+use ethers::prelude::StreamExt;
+
 use url::Url;
 use garb_sync_eth::{EventSource, LiquidityProviders, Pool, SyncConfig};
 use std::str::FromStr;
-use ethers::abi::{Function, ParamType, StateMutability, Token};
-use ethers::prelude::signer::SignerMiddlewareError::MiddlewareError;
+use ethers::abi::{ParamType, StateMutability, Token};
+
 use ethers::signers::Signer;
-use ethers::types::{U256, Block, TxHash, TransactionRequest, BlockId, Eip1559TransactionRequest, BlockNumber, U64, NameOrAddress, transaction::eip2930::AccessList};
+use ethers::types::{U256, Block, TxHash, BlockId, Eip1559TransactionRequest, BlockNumber, U64, NameOrAddress, transaction::eip2930::AccessList};
 use ethers::types::transaction::eip2718::TypedTransaction;
 use tokio::time::Duration;
 use ethers_providers::{Http, Middleware};
 use ethers_flashbots::{BundleRequest, FlashbotsMiddleware, BundleTransaction};
-use garb_graph_eth::{GraphConfig, Order, CHECKED_COIN};
+use garb_graph_eth::{GraphConfig, Order};
 use rand::Rng;
-use ethers::utils::{parse_ether, serialize};
-use ethers_providers::HttpClientError::JsonRpcError;
+
+
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
     std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2".to_string()))
@@ -79,14 +80,14 @@ pub async fn async_main() -> anyhow::Result<()> {
         
         rt.block_on(async move {
             
-            garb_graph_eth::start(pools.clone(), update_q_receiver, Arc::new(RwLock::new(graph_routes)), graph_conifg).await;
+            garb_graph_eth::start(pools.clone(), update_q_receiver, Arc::new(RwLock::new(graph_routes)), graph_conifg).await.unwrap();
             
         });
     }));
     joins.push(std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
         rt.block_on(async move {
-            transactor(&mut routes_receiver, routes_sender).await;
+            transactor(&mut routes_receiver, routes_sender).await.unwrap();
             
         });
     }));
@@ -129,7 +130,7 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
     Ok(new_base_fee + seed)
 }
 
-pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender: kanal::AsyncSender<Order>) -> anyhow::Result<()> {
+pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, _routes_sender: kanal::AsyncSender<Order>) -> anyhow::Result<()> {
     let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
     let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
     let provider = ethers_providers::Provider::<Http>::try_from(NODE_URL.clone().to_string()).unwrap();
@@ -137,7 +138,6 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
     
     
     let nonce = Arc::new(tokio::sync::RwLock::new(U256::from(0)));
-    let block_number = Arc::new(tokio::sync::RwLock::new(0_u64));
     let block = Arc::new(tokio::sync::RwLock::new(Block::default()));
     let mut join_handles = vec![];
     
@@ -155,7 +155,6 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     }));
-    let block_number_update = block_number.clone();
     let block_update = block.clone();
     let ap = client.clone();
     
@@ -192,9 +191,7 @@ pub async fn transactor(routes: &mut kanal::AsyncReceiver<Order>, routes_sender:
             let block = block.clone();
             let signer = signer.clone();
             let flashbots_client = flashbots_client.clone();
-            let client = client.clone();
             
-            let sent_v = sent.clone();
             join_handles.push(tokio::spawn(async move {
         
                 let mut directions = vec![];

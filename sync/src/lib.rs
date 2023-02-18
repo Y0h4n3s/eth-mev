@@ -135,6 +135,7 @@ pub enum Curve {
 pub trait PoolInfo {
     fn getX(&self) -> String;
     fn getY(&self) -> String;
+    fn supports_callback_payment(&self) -> bool;
 }
 
 #[derive(Decode, Encode, Debug, Clone, Eq)]
@@ -158,6 +159,13 @@ impl PoolInfo for Pool {
     
     fn getY(&self) -> String {
         self.y_address.clone()
+    }
+
+    fn supports_callback_payment(&self) -> bool {
+        match self.provider.id() {
+            LiquidityProviderId::UniswapV2 => false,
+            LiquidityProviderId::UniswapV3 => true,
+        }
     }
 }
 

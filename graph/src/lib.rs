@@ -202,7 +202,7 @@ DETACH DELETE n",
             bincode::decode_from_slice(&encoded[..], config).unwrap();
         *path_lookup = decoded;
     } else {
-        let max_intermidiate_nodes = 5;
+        let max_intermidiate_nodes = 4;
         let cores = num_cpus::get();
         let permits = Arc::new(Semaphore::new(2));
         let mut handles = vec![];
@@ -291,7 +291,22 @@ DETACH DELETE n",
 				    }
 			    }
 			    
-			    println!("Done {} step", i);
+                let mut total_paths = 0;
+                 for (_pool, paths) in path_lookup1.read().await.clone() {
+                    for path in paths {
+                        total_paths += path.arrangements.len();
+
+                    }
+        // for (forf, path) in paths {
+        //     println!("`````````````````````` Tried Route ``````````````````````");
+        //     for (i, pool) in path.iter().enumerate() {
+        //         println!("{}. {}", i + 1, pool);
+        //     }
+        //     println!("\n\n");
+        // }
+                 }
+                println!("Done {} step {}", i, total_paths);
+
 			    drop(permit);
 			    Ok::<(), anyhow::Error>(())
 		    }));
