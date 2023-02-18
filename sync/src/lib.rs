@@ -132,6 +132,11 @@ pub enum Curve {
     Stable,
 }
 
+pub trait PoolInfo {
+    fn getX(&self) -> String;
+    fn getY(&self) -> String;
+}
+
 #[derive(Decode, Encode, Debug, Clone, Eq)]
 pub struct Pool {
     pub address: String,
@@ -144,6 +149,16 @@ pub struct Pool {
     pub y_amount: u128,
     pub x_to_y: bool,
     pub provider: LiquidityProviders,
+}
+
+impl PoolInfo for Pool {
+    fn getX(&self) -> String {
+        self.x_address.clone()
+    }
+    
+    fn getY(&self) -> String {
+        self.y_address.clone()
+    }
 }
 
 impl Hash for Pool {
@@ -361,7 +376,7 @@ pub async fn start(
     let mut markets_list = vec![];
     let all_coins = coingecko_client.coins_list(true).await?;
     let mut high_volume_tokens: Vec<String> = vec![];
-    for i in 1..10 {
+    for i in 1..3 {
         let coin_list = coingecko_client
             .coins_markets::<String>(
                 "usd",

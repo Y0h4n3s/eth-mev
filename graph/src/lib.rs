@@ -1,3 +1,4 @@
+pub mod mev_path;
 use async_std::sync::Arc;
 use bb8_bolt::bolt_client::Params;
 use bb8_bolt::{
@@ -24,6 +25,7 @@ use std::iter::from_fn;
 use tokio::runtime::Runtime;
 use tokio::sync::{RwLock, Semaphore};
 use tokio::time::Duration;
+use crate::mev_path::MevPath;
 
 static NEO4J_USER: Lazy<String> =
     Lazy::new(|| std::env::var("ETH_NEO4J_USER").unwrap_or("neo4j".to_string()));
@@ -159,6 +161,8 @@ DETACH DELETE n",
 
         let pull_meta = Metadata::from_iter(vec![("n", -1)]);
         let (records, response) = conn.pull(Some(pull_meta)).await?;
+
+	    // relationship between tokens as liquidity pool
         let res = conn
 		          .run(
 			          "MATCH (a:Token), (b:Token) WHERE a.address = $x_address  AND b.address = $y_address  MERGE (a)-[r:LP { pool: $pool_address, bn: $provider }]->(b) RETURN type(r)",
@@ -171,7 +175,8 @@ DETACH DELETE n",
 
         let pull_meta = Metadata::from_iter(vec![("n", -1)]);
         let (records, response) = conn.pull(Some(pull_meta)).await?;
-      
+
+
     }
     drop(pr);
 
@@ -183,7 +188,9 @@ DETACH DELETE n",
     let path_lookup = Arc::new(RwLock::new(
         HashMap::<Pool, HashSet<(String, Vec<Pool>)>>::new(),
     ));
-
+    let path_lookup1 = Arc::new(RwLock::new(
+            HashMap::<Pool, HashSet<MevPath>>::new(),
+    ));
     if config.from_file {
         println!("graph_service> Loading routes from file");
         let config = bincode::config::standard();
@@ -199,10 +206,11 @@ DETACH DELETE n",
         let cores = num_cpus::get();
         let permits = Arc::new(Semaphore::new(2));
         let mut handles = vec![];
-        for i in 1..max_intermidiate_nodes {
+        for i in 2..max_intermidiate_nodes {
             let permit = permits.clone().acquire_owned().await?;
             println!("graph service> Preparing {} step routes ", i);
             let path_lookup = path_lookup.clone();
+            let path_lookup1 = path_lookup1.clone();
             let pools = pools.clone();
             let pool = pool.clone();
             handles.push(tokio::spawn(async move {
@@ -243,34 +251,25 @@ DETACH DELETE n",
 								    if r.len() != rels.len() {
 									    None
 								    } else {
-									    Some(r)
+									    let path = MevPath::new(r.clone());
+									    Some(path)
 								    }
 								    
 							    }
 							    _ => None
 								 
 							 }
-						   }).collect::<Vec<Vec<Pool>>>();
+                        }).collect::<Vec<MevPath>>();
 					    for p in pools {
-						    let mut new_path = vec![];
 						    let mut in_ = CHECKED_COIN.clone();
-						    for pool in p {
-							    let mut new_pool = pool.clone();
-							    new_pool.x_to_y = new_pool.x_address == in_;
-							    in_ = if new_pool.x_to_y {
-								    new_pool.y_address.clone()
-							    } else {
-								    new_pool.x_address.clone()
-							    };
-							    new_path.push(new_pool);
-						    }
-						    for pool in new_path.iter() {
-							    let mut w = path_lookup.write().await;
+
+						    for pool in p.path.iter() {
+							    let mut w = path_lookup1.write().await;
 							    if let Some(mut existing) = w.get_mut(&pool) {
-								    existing.insert((pool.address.clone(), new_path.clone()));
+								    existing.insert( p.clone());
 							    } else {
 								    let mut set = HashSet::new();
-								    set.insert((pool.address.clone(), new_path.clone()));
+								    set.insert( p.clone());
 								    w.insert(pool.clone(), set);
 							    }
 						    }
@@ -320,8 +319,11 @@ DETACH DELETE n",
         }
     }
     let mut total_paths = 0;
-    for (_pool, paths) in path_lookup.read().await.clone() {
-        total_paths += paths.len();
+    for (_pool, paths) in path_lookup1.read().await.clone() {
+        for path in paths {
+        total_paths += path.arrangements.len();
+
+        }
         // for (forf, path) in paths {
         //     println!("`````````````````````` Tried Route ``````````````````````");
         //     for (i, pool) in path.iter().enumerate() {
@@ -331,7 +333,7 @@ DETACH DELETE n",
         // }
     }
     println!("graph service> Found {} routes", total_paths);
-
+	return Ok(());
     // println!("graph service> Registering Gas consumption for transactions");
     // for (_pool, paths) in path_lookup.read().await.clone() {
     //     for (in_addr, path) in paths {
@@ -410,36 +412,7 @@ DETACH DELETE n",
 		                        paths.first().unwrap().y_address.clone()
 	                        };
 	                        let decimals = decimals(in_addr);
-	
-	                        if paths.last().unwrap().provider.id() == LiquidityProviderId::UniswapV3 {
-		                        let mut best_route_size = 0.0;
-		                        let mut best_route_profit = 0;
-		                        let mut mid = MAX_SIZE.clone() / 2.0;
-		                        let mut left = 0.0;
-		                        let mut right = MAX_SIZE.clone();
-	                        }
-	                        for i in 0..10 {
-		                        let o_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
-		                        let mut path = paths.clone();
-		                        path.reverse();
-		                        let mut debt_token = "".to_string();
-		                        let mut debt_amount = 0_u128;
-		                        for step in path {
-			                        let calculator = route.provider.build_calculator();
 
-			                        if debt_token != "".to_string() {
-				                        if debt_token == step.x_address && step.x_to_y {
-					                        debt_token = step.y_address;
-					                        debt_amount = calculator.calculate_in(debt_amount, &step);
-				                        }
-			                        }
-			                        if !pool.x_to_y {
-				                        debt_token = pool.y_address;
-			                        }
-			                        debt_amount = calculator.calculate_in(o_atomic, &step);
-		                        }
-	                        }
-                        
                             let mut best_route_size = 0.0;
                             let mut best_route_profit = 0;
                             let mut mid = MAX_SIZE.clone() / 2.0;
