@@ -39,9 +39,7 @@ impl Scope<'_, Pool> for ExpandedPath {
     fn value(&'_ self, index: usize) -> Pool {
         self.path.get(index).unwrap().clone()
     }
-    fn is_empty(&self) -> bool {
-        false
-    }
+
 }
 
 impl Check<Pool> for ExpandedPath {
@@ -111,8 +109,13 @@ impl MevPath {
         let mut sats = solver.sat_iter();
         let mut arrangements = vec![];
         while let Some(nxt) = sats.next() {
+            println!("`````````````````````` Tried Route ``````````````````````");
+                        for (i, pool) in nxt.iter().enumerate() {
+                            println!("{}. {}", i + 1, pool);
+                        }
             arrangements.push(nxt);
         }
+        println!("\n\n\n\n")
         Self {
             path: pools,
             arrangements

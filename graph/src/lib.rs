@@ -321,7 +321,7 @@ DETACH DELETE n",
     let mut total_paths = 0;
     for (_pool, paths) in path_lookup1.read().await.clone() {
         for path in paths {
-        total_paths += path.arrangements.len();
+            total_paths += path.arrangements.len();
 
         }
         // for (forf, path) in paths {
