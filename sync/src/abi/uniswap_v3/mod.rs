@@ -13,6 +13,7 @@ use ethers::{
 use ethers_providers::ProviderError::JsonRpcClientError;
 use byte_slice_cast::AsByteSlice;
 use ethers::prelude::builders::ContractCall;
+use tokio::task::JoinHandle;
 
 use crate::{CHECKED_COIN, U256};
 abigen!(
@@ -35,7 +36,7 @@ pub async fn get_pool_data_batch_request(
         target_addresses.push(Token::Address(pool.clone()));
     }
     
-    let mut handles = vec![];
+    let mut handles: Vec<JoinHandle<anyhow::Result<UniSwapV3Pool>>> = vec![];
     for pool in pools {
         let provider = middleware.clone();
         handles.push(tokio::spawn(async move {
@@ -45,38 +46,48 @@ pub async fn get_pool_data_batch_request(
             let liquidity_call = Box::pin(contract.liquidity());
             let fee_call = Box::pin(contract.fee());
             let slot_0_call = Box::pin(contract.slot_0());
-            let (token0, token1, liquidity, fee, sqrt_price): (H160, H160, u128, u32, U256) =
+            let (token0r, token1r, liquidityr, feer, sqrt_pricer) =
                   (
-                      token0_call.call().await.map_err(|e| Error::msg(format!("Missing function token_0() for {}", hex_to_address_string(pool.encode_hex())))).unwrap(),
-                      token1_call.call().await.map_err(|e| Error::msg(format!("Missing function token_1() for {}", hex_to_address_string(pool.encode_hex())))).unwrap(),
-                      liquidity_call.call().await.map_err(|e| Error::msg(format!("Missing function liquidity() for {}", hex_to_address_string(pool.encode_hex())))).unwrap(),
-                      fee_call.call().await.map_err(|e| Error::msg(format!("Missing function fee() for {}", hex_to_address_string(pool.encode_hex())))).unwrap(),
-                      slot_0_call.call().await.map_err(|e| Error::msg(format!("Missing function slot_0() for {}", hex_to_address_string(pool.encode_hex())))).unwrap().0
+                      token0_call.call().await.map_err(|e| Error::msg(format!("Missing function token_0() for {}", hex_to_address_string(pool.encode_hex())))),
+                      token1_call.call().await.map_err(|e| Error::msg(format!("Missing function token_1() for {}", hex_to_address_string(pool.encode_hex())))),
+                      liquidity_call.call().await.map_err(|e| Error::msg(format!("Missing function liquidity() for {}", hex_to_address_string(pool.encode_hex())))),
+                      fee_call.call().await.map_err(|e| Error::msg(format!("Missing function fee() for {}", hex_to_address_string(pool.encode_hex())))),
+                      slot_0_call.call().await.map_err(|e| Error::msg(format!("Missing function slot_0() for {}", hex_to_address_string(pool.encode_hex()))))
                   );
-            
+
+            if token0r.is_err() || token1r.is_err() || liquidityr.is_err() || feer.is_err() || sqrt_pricer.is_err() {
+                return Err(Error::msg("Faild to load"))
+            }
+            let (token0, token1, liquidity, fee, sqrt_price): (H160, H160, u128, u32, U256) = (token0r.unwrap(), token1r.unwrap(), liquidityr.unwrap(), feer.unwrap(), sqrt_pricer.unwrap().0);
             let token0_contract = IERC20::new(token0, provider.clone());
             let token1_contract = IERC20::new(token1, provider.clone());
             let token_0_decimals_call = Box::pin(token0_contract.decimals());
             let token_1_decimals_call = Box::pin(token1_contract.decimals());
             let token_0_balance_call = Box::pin(token0_contract.balance_of(pool.clone()));
             let token_1_balance_call = Box::pin(token1_contract.balance_of(pool.clone()));
-            let (token_0_decimals, token_1_decimals, token_0_balance, token_1_balance) : (u8, u8, U256, U256) = (
-                  token_0_decimals_call.call().await.map_err(|e|Error::msg(format!("No decimals for {}", hex_to_address_string(token0.encode_hex())))).unwrap(),
-                  token_1_decimals_call.call().await.map_err(|e|Error::msg(format!("No decimals for {}", hex_to_address_string(token1.encode_hex())))).unwrap(),
-                  token_0_balance_call.call().await.map_err(|e|Error::msg(format!("No balance for {}", hex_to_address_string(token0.encode_hex())))).unwrap(),
-                  token_1_balance_call.call().await.map_err(|e|Error::msg(format!("No balance for {}", hex_to_address_string(token1.encode_hex())))).unwrap(),
+            let (token_0_decimalsr, token_1_decimalsr, token_0_balancer, token_1_balancer)  = (
+                  token_0_decimals_call.call().await.map_err(|e|Error::msg(format!("No decimals for {}", hex_to_address_string(token0.encode_hex())))),
+                  token_1_decimals_call.call().await.map_err(|e|Error::msg(format!("No decimals for {}", hex_to_address_string(token1.encode_hex())))),
+                  token_0_balance_call.call().await.map_err(|e|Error::msg(format!("No balance for {}", hex_to_address_string(token0.encode_hex())))),
+                  token_1_balance_call.call().await.map_err(|e|Error::msg(format!("No balance for {}", hex_to_address_string(token1.encode_hex())))),
                   );
+
+            if token_0_decimalsr.is_err() || token_1_decimalsr.is_err() || token_0_balancer.is_err() || token_1_balancer.is_err() {
+                return Err(Error::msg("Faild to load"))
+
+            }
+            let (token_0_decimals, token_1_decimals, token_0_balance, token_1_balance) : (u8, u8, U256, U256) = (token_0_decimalsr.unwrap(), token_1_decimalsr.unwrap(), token_0_balancer.unwrap(), token_1_balancer.unwrap());
             if hex_to_address_string(token0.encode_hex()) == CHECKED_COIN.clone() {
                 if token_0_balance.le(&U256::from(10_u128.pow(18))) {
-                    panic!("Low Liquidity for pool {}", hex_to_address_string(pool.encode_hex()))
+                    return Err(Error::msg(format!("Low Liquidity for pool {}", hex_to_address_string(pool.encode_hex()))))
                 }
             }
             if hex_to_address_string(token1.encode_hex()) == CHECKED_COIN.clone() {
                 if token_1_balance.le(&U256::from(10_u128.pow(18))) {
-                    panic!("Low Liquidity for pool {}", hex_to_address_string(pool.encode_hex()))
+                    return Err(Error::msg(format!("Low Liquidity for pool {}", hex_to_address_string(pool.encode_hex()))))
                 }
             }
-            UniSwapV3Pool {
+            Ok(UniSwapV3Pool {
                 id: hex_to_address_string(pool.encode_hex()),
                 fee,
                 token0: UniSwapV3Token {
@@ -92,14 +103,19 @@ pub async fn get_pool_data_batch_request(
                 token0_decimals: token_0_decimals,
                 token1_decimals: token_1_decimals,
                 ..Default::default()
-            }
+            })
         }));
     }
     return Ok(futures::future::join_all(handles).await.into_iter().filter_map(|p| {
         if p.is_err() {
             None
         } else {
-            Some(p.unwrap())
+            if p.as_ref().unwrap().is_err() {
+                None
+            } else {
+                Some(p.unwrap().as_ref().unwrap().clone())
+
+            }
         }
     }).collect());
 

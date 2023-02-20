@@ -53,6 +53,7 @@ where
     result
 }
 
+
 #[derive(Clone)]
 pub struct Order {
     pub size: u128,
@@ -67,7 +68,7 @@ pub struct GraphConfig {
 }
 pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
     std::env::var("ETH_CHECKED_COIN")
-        .unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
+        .unwrap_or("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string())
 });
 
 pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
@@ -114,9 +115,9 @@ pub async fn start(
         [V4_4, V4_3, 0, 0],
         Metadata::from_iter(vec![
             ("user_agent", "bolt-client/X.Y.Z"),
-            ("scheme", "basic"),
-            ("principal", &NEO4J_USER),
-            ("credentials", &NEO4J_PASS),
+            ("scheme", "none"),
+//            ("principal", &NEO4J_USER),
+//            ("credentials", &NEO4J_PASS),
         ]),
     )
     .await?;
@@ -216,7 +217,7 @@ DETACH DELETE n",
             handles.push(tokio::spawn(async move {
 			    let mut conn = pool.get().await?;
 			
-			    let res = conn.run(format!("match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle", CHECKED_COIN.clone(), i, i,CHECKED_COIN.clone()), None, None).await?;
+			    let res = conn.run(format!("match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)", CHECKED_COIN.clone(), i, i,CHECKED_COIN.clone()), None, None).await?;
 			    let pull_meta = Metadata::from_iter(vec![("n", 1000)]);
 			    let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
 			    loop {
@@ -244,16 +245,32 @@ DETACH DELETE n",
 												    _ => ()
 											    }
 										    }
-										    _ => ()
+
+                                            _ => ()
 									    }
 									    
 								    }
-								    if r.len() != rels.len() {
-									    None
-								    } else {
-									    let path = MevPath::new(r.clone());
-									    Some(path)
-								    }
+                                    let mut seen_count = 0;
+                                    r.iter().for_each(|p| {
+                                        if p.x_address == CHECKED_COIN.clone() {
+                                            seen_count = seen_count + 1;
+                                        }
+                                        if p.y_address == CHECKED_COIN.clone() {
+                                            seen_count = seen_count + 1;
+                                        }
+                                    });
+
+                                    if seen_count != 2 {
+                                        None
+                                    } else {
+                                        if r.len() != rels.len() {
+                                            None
+                                        } else {
+                                            let path = MevPath::new(&r, &CHECKED_COIN.clone());
+                                            Some(path)
+                                        }
+                                    }
+
 								    
 							    }
 							    _ => None
@@ -263,7 +280,7 @@ DETACH DELETE n",
 					    for p in pools {
 						    let mut in_ = CHECKED_COIN.clone();
 
-						    for pool in p.path.iter() {
+						    for pool in p.pools.iter() {
 							    let mut w = path_lookup1.write().await;
 							    if let Some(mut existing) = w.get_mut(&pool) {
 								    existing.insert( p.clone());
@@ -294,7 +311,7 @@ DETACH DELETE n",
                 let mut total_paths = 0;
                  for (_pool, paths) in path_lookup1.read().await.clone() {
                     for path in paths {
-                        total_paths += path.arrangements.len();
+                        total_paths += path.paths.len();
 
                     }
         // for (forf, path) in paths {
@@ -335,10 +352,11 @@ DETACH DELETE n",
     }
     let mut total_paths = 0;
     for (_pool, paths) in path_lookup1.read().await.clone() {
-        for path in paths {
-            total_paths += path.arrangements.len();
+           for path in paths {
+                        total_paths += path.paths.len();
 
-        }
+           }
+
         // for (forf, path) in paths {
         //     println!("`````````````````````` Tried Route ``````````````````````");
         //     for (i, pool) in path.iter().enumerate() {
@@ -348,7 +366,7 @@ DETACH DELETE n",
         // }
     }
     println!("graph service> Found {} routes", total_paths);
-	return Ok(());
+//	return Ok(());
     // println!("graph service> Registering Gas consumption for transactions");
     // for (_pool, paths) in path_lookup.read().await.clone() {
     //     for (in_addr, path) in paths {
@@ -369,7 +387,7 @@ DETACH DELETE n",
         task_set.block_on(&rt, async {
             while let Ok(updated_market_event) = updated_q.recv().await {
                 let mut updated_market = updated_market_event.get_event();
-                let path_lookup = path_lookup.clone();
+                let path_lookup = path_lookup1.clone();
                 let routes = routes.clone();
                 tokio::task::spawn_local(async move {
                     let read = path_lookup.read().await;
@@ -381,11 +399,11 @@ DETACH DELETE n",
                     });
                     if updated.is_some() {
                         let (pool, market_routes) = updated.unwrap();
-                        // println!(
-                        //     "graph service> Found {} routes for updated market {}",
-                        //     market_routes.len(),
-                        //     updated_market
-                        // );
+                         println!(
+                             "graph service> Found {} routes for updated market {}",
+                             market_routes.len(),
+                             updated_market
+                         );
                         let pool = pool.clone();
                         let market_routes = market_routes.clone();
                         std::mem::drop(read);
@@ -393,95 +411,13 @@ DETACH DELETE n",
                             return;
                         }
 
-                        let mut new_market_routes = HashSet::new();
-                        for (_pool_addr, mut paths) in market_routes.into_iter() {
-	                        if !(paths
-		                          .iter()
-		                          .find(|p| {
-			                          p.address == updated_market.address
-					                        && p.x_address == updated_market.x_address
-					                        && p.y_address == updated_market.y_address
-					                        && p.provider == updated_market.provider
-		                          })
-		                          .is_some())
-	                        {
-		                        new_market_routes.insert((_pool_addr, paths));
-		                        continue;
-	                        }
-	                        let pool_index = paths
-		                          .iter()
-		                          .position(|p| {
-			                          p.address == updated_market.address
-					                        && p.x_address == updated_market.x_address
-					                        && p.y_address == updated_market.y_address
-					                        && p.provider == updated_market.provider
-		                          })
-		                          .unwrap();
-	                        updated_market.x_to_y = paths[pool_index].x_to_y;
-	                        paths[pool_index] = updated_market.clone();
-	                        new_market_routes.insert((_pool_addr, paths.clone()));
-	
-	                        let in_addr = if paths.first().unwrap().x_to_y {
-		                        paths.first().unwrap().x_address.clone()
-	                        } else {
-		                        paths.first().unwrap().y_address.clone()
-	                        };
-	                        let decimals = decimals(in_addr);
-
-                            let mut best_route_size = 0.0;
-                            let mut best_route_profit = 0;
-                            let mut mid = MAX_SIZE.clone() / 2.0;
-                            let mut left = 0.0;
-                            let mut right = MAX_SIZE.clone();
-                            // binary search for 10 steps
-                            // println!("`````````````````````` Tried Route ``````````````````````");
-                            // for (i,pool) in paths.iter().enumerate() {
-                            //     println!("{}. {}", i + 1, pool);
-                            // }
-                            // println!("\n\n");
-                            for i in 0..10 {
-                                let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
-                                let mut in_ = i_atomic as u128;
-                                for route in &paths {
-                                    let calculator = route.provider.build_calculator();
-                                    in_ = calculator.calculate_out(in_, route).unwrap();
-                                    // println!("{} {} {}", in_, route.x_amount, route.y_amount);
-                                }
-
-                                let profit = (in_ as i128 - i_atomic as i128);
-
-                                if i == 0 {
-                                    best_route_profit == profit;
-	                                best_route_size = i_atomic;
-	
-                                }
-                                if profit > best_route_profit {
-                                    best_route_profit = profit;
-                                    best_route_size = i_atomic;
-                                    left = mid;
-                                } else {
-                                    right = mid;
-                                }
-                                mid = (left + right) / 2.0;
-                                // println!("Step {}: {} new mid {} ({} - {}) {} {}", i, profit, mid ,left, right, in_, i_atomic);
-                            }
-                            if best_route_profit > 0 {
-                                let order = Order {
-                                    size: best_route_size as u128,
-                                    decimals,
-                                    route: paths.clone(),
-                                    profit: best_route_profit as f64,
-                                };
-
-                                let r = routes.write().await;
-                                r.try_send(order).unwrap();
-                            }
+                        for mut route in market_routes {
+                            route.update(pool.clone());
                         }
-                        let mut w = path_lookup.write().await;
 
-                        w.insert(pool.clone(), new_market_routes);
+
                     } else {
-                        // eprintln!("graph service> No routes found for {}", updated_market);
+                         eprintln!("graph service> No routes found for {}", updated_market);
                     }
                 });
             }
@@ -492,7 +428,7 @@ DETACH DELETE n",
 
     Ok(())
 }
-fn decimals(coin: String) -> u64 {
+pub fn decimals(coin: String) -> u64 {
     match coin.as_str() {
         "0x1::aptos_coin::AptosCoin" => 18,
         _ => 18,

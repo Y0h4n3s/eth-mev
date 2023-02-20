@@ -9,7 +9,7 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
 
 use crate::types::UniSwapV2Pair;
-use crate::Meta;
+use crate::{CpmmCalculator, LiquidityProviderId, Meta};
 use crate::{Curve, LiquidityProvider, LiquidityProviders};
 use crate::{EventEmitter, EventSource, Pool};
 use async_std::sync::Arc;
@@ -162,13 +162,13 @@ impl LiquidityProvider for UniSwapV2 {
             }
             println!(
                 "{:?} Pools: {}",
-                LiquidityProviders::UniswapV2(Default::default()),
+                LiquidityProviderId::UniswapV2,
                 pools.read().await.len()
             );
         })
     }
-    fn get_id(&self) -> LiquidityProviders {
-        LiquidityProviders::UniswapV2(Default::default())
+    fn get_id(&self) -> LiquidityProviderId {
+        LiquidityProviderId::UniswapV2
     }
 }
 

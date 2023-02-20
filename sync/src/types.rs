@@ -13,7 +13,7 @@ pub struct UniSwapV2Token {
     pub __typename: String,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default, Clone)]
 pub struct UniSwapV3Token {
     pub id: String,
     pub symbol: String,
@@ -34,7 +34,7 @@ pub struct UniSwapV2Pair {
     pub token1_decimals: u8,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default, Clone)]
 pub struct UniSwapV3Pool {
     pub id: String,
     pub feeTier: String,

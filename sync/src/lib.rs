@@ -1,8 +1,8 @@
 mod abi;
 mod events;
-mod types;
-mod uniswap_v2;
-mod uniswap_v3;
+pub mod types;
+pub mod uniswap_v2;
+pub mod uniswap_v3;
 
 use crate::events::EventEmitter;
 use crate::uniswap_v2::UniswapV2Metadata;
@@ -34,7 +34,7 @@ pub trait LiquidityProvider: EventEmitter {
     fn get_metadata(&self) -> Self::Metadata;
     async fn get_pools(&self) -> HashMap<String, Pool>;
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()>;
-    fn get_id(&self) -> LiquidityProviders;
+    fn get_id(&self) -> LiquidityProviderId;
 }
 
 #[derive(Deserialize, Serialize, Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
@@ -44,6 +44,7 @@ pub enum LiquidityProviders {
     UniswapV3(UniswapV3Metadata),
 }
 
+#[derive(Deserialize, Serialize, Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
 pub enum LiquidityProviderId {
     UniswapV2,
     UniswapV3

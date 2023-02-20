@@ -1,7 +1,7 @@
 use crate::abi::{uniswap_v3::SwapFilter,IERC20};
 use crate::types::UniSwapV3Pool;
 use crate::types::UniSwapV3Token;
-use crate::Meta;
+use crate::{LiquidityProviderId, Meta, UniswapV3Calculator};
 use crate::{Curve, LiquidityProvider, LiquidityProviders};
 use crate::{EventEmitter, EventSource, Pool};
 use async_std::sync::Arc;
@@ -499,6 +499,15 @@ impl LiquidityProvider for UniSwapV3 {
                 {
                     continue;
                 }
+                let meta = UniswapV3Metadata {
+                    token_a: pair.token0.id.clone(),
+                    token_b: pair.token1.id.clone(),
+                    token_a_decimals: pair.token0_decimals,
+                    token_b_decimals: pair.token1_decimals,
+                    sqrt_price: pair.sqrt_price.clone(),
+                    liquidity: pair.liquidity,
+                    ..Default::default()
+                };
                 let pool = Pool {
                     address: pair.id.clone(),
                     x_address: pair.token0.id.clone(),
@@ -509,28 +518,20 @@ impl LiquidityProvider for UniSwapV3 {
                     x_amount: 0,
                     y_amount: 0,
                     x_to_y: true,
-                    provider: LiquidityProviders::UniswapV3(UniswapV3Metadata {
-                        token_a: pair.token0.id.clone(),
-                        token_b: pair.token1.id.clone(),
-                        token_a_decimals: pair.token0_decimals,
-                        token_b_decimals: pair.token1_decimals,
-                        sqrt_price: pair.sqrt_price.clone(),
-                        liquidity: pair.liquidity,
-                        ..Default::default()
-                    }),
+                    provider: LiquidityProviders::UniswapV3(meta),
                 };
                 let mut w = pools.write().await;
                 w.insert(pool.address.clone(), pool);
             }
             println!(
                 "{:?} Pools: {}",
-                LiquidityProviders::UniswapV3(Default::default()),
+                LiquidityProviderId::UniswapV3,
                 pools.read().await.len()
             );
         })
     }
-    fn get_id(&self) -> LiquidityProviders {
-        LiquidityProviders::UniswapV3(Default::default())
+    fn get_id(&self) -> LiquidityProviderId {
+        LiquidityProviderId::UniswapV3
     }
 }
 
