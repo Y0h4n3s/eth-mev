@@ -189,18 +189,43 @@ contract Aggregator {
     function uniswapV3ExactOutPayToSender_A729BB(bytes calldata data) public  {
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
+
+        address pool;
+        int amount;
+        assembly {
+            pool := shr(96, calldataload(add(myData.offset, 4)))
+            amount := shr(sub(256, mul(8, sub(dataLen, 24))), calldataload(add(myData.offset, 24)))
+        }
+        emit acc(pool);
+        emit bali(amount);
+
+        IUniswapV3Pool pair = IUniswapV3Pool(pool);
+        (int amount0, int amount1) = pair.swap(msg.sender, stepXtoY, amount < 0 ? amount : - amount, sqrtRatio(stepXtoY), data);
+
         if (nextFunction == 0x00000000) {
             return;
         }
         function(bytes calldata) next = nextFunctionPointer(nextFunction);
         next(data[dataLen:]);
-        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        //        (int amount0, int amount1) = pair.swap(msg.sender, stepXtoY, amountOut < 0 ? amountOut : - amountOut, sqrtRatio(stepXtoY), data);
-    }
+                }
     //000000d0
     function uniswapV3ExactInPayToSender_1993B5C(bytes calldata data) public  {
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
+
+        address pool;
+        int amount;
+        assembly {
+            pool := shr(96, calldataload(add(myData.offset, 4)))
+            amount := shr(sub(256, mul(8, sub(dataLen, 24))), calldataload(add(myData.offset, 24)))
+        }
+        emit acc(pool);
+        emit bali(amount);
+
+        IUniswapV3Pool pair = IUniswapV3Pool(pool);
+        (int amount0, int amount1) = pair.swap(msg.sender, stepXtoY, amount < 0 ? -amount : amount, sqrtRatio(stepXtoY), data);
+
+
         if (nextFunction == 0x00000000) {
             return;
         }
@@ -388,16 +413,12 @@ contract Aggregator {
         amount0Delta > 0 ? (amount0Delta, amount1Delta) : (amount1Delta, amount0Delta);
         emit imessage("amountToPay:", amountToPay);
         emit imessage("amountOut:", amountOut);
-        emit by4(stepNextFunction);
-        if (stepNextFunction == profitCheckpointFunction) {
-            profitCheckpoint();
-        } else {
-            function(bytes calldata) next = nextFunctionPointer(stepNextFunction);
-            next(data);
-            if (stepNextFunction == profitCheckpointFunction) {
-                profitCheckpoint();
-            }
+        bytes4 nextFunction;
+        assembly {
+            nextFunction := calldataload(data.offset)
         }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data);
 
     }
 
@@ -435,7 +456,7 @@ contract Aggregator {
         } else if (hash == 0x00000081) {
             return payAddress_1A718EA;
         } else {
-            return uniswapV3ExactOutPayToSelf_1377F03
+            return uniswapV3ExactOutPayToSelf_1377F03;
         }
 
     }
