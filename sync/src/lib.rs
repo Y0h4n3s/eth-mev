@@ -18,6 +18,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::hash::*;
 use std::str::FromStr;
+use anyhow::Error;
 use bincode::error::IntegerType::U128;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -262,9 +263,14 @@ impl Calculator for CpmmCalculator {
         if out_ >= swap_destination_amount {
             return Ok(swap_source_amount);
         }
-        let numerator = swap_source_amount * out_ * 10000;
-        let denominator = (swap_destination_amount - out_) * ((10000 - pool.fee_bps) as u128);
-        Ok((numerator / denominator) as u128 + 1)
+        if let Some(numerator) = swap_source_amount.checked_mul( out_ * 100) {
+            let denominator = (swap_destination_amount - out_) * ((97) as u128);
+            Ok((numerator / denominator) as u128 + 1)
+
+        } else {
+            Err(Error::msg("Multiplication Overflow"))
+        }
+
     }
 }
 
@@ -360,7 +366,6 @@ impl Calculator for UniswapV3Calculator {
         };
         let mut amount_out = U256::zero();
         let (sqrt_ratio_next_x_96, amount_in, amount_out, fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from(out_).checked_mul(I256::from(-1)).unwrap(), self.meta.fee).unwrap();
-        println!("{:?} {:?}", amount_in, amount_out);
         Ok(amount_in.as_u128())
     
     }
@@ -385,7 +390,7 @@ pub async fn start(
     let mut markets_list = vec![];
     let all_coins = coingecko_client.coins_list(true).await?;
     let mut high_volume_tokens: Vec<String> = vec![];
-    for i in 1..3 {
+    for i in 1..2 {
         let coin_list = coingecko_client
             .coins_markets::<String>(
                 "usd",

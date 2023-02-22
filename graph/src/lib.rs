@@ -68,7 +68,7 @@ pub struct GraphConfig {
 }
 pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
     std::env::var("ETH_CHECKED_COIN")
-        .unwrap_or("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string())
+        .unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
 });
 
 pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
@@ -115,12 +115,13 @@ pub async fn start(
         [V4_4, V4_3, 0, 0],
         Metadata::from_iter(vec![
             ("user_agent", "bolt-client/X.Y.Z"),
-            ("scheme", "none"),
-//            ("principal", &NEO4J_USER),
-//            ("credentials", &NEO4J_PASS),
+            ("scheme", "basic"),
+           ("principal", &NEO4J_USER),
+           ("credentials", &NEO4J_PASS),
         ]),
     )
     .await?;
+    println!("{:?} {}", NEO4J_PASS.clone(), NEO4J_USER.clone());
     // Create a connection pool. This should be shared across your application.
     let pool = Arc::new(BPool::builder().build(manager).await?);
 
@@ -136,7 +137,7 @@ DETACH DELETE n",
         .await?;
     let pull_meta = Metadata::from_iter(vec![("n", 1)]);
     let (records, response) = conn.pull(Some(pull_meta)).await?;
-
+    println!("{:?}", response);
     for (_, pool) in pr.iter() {
         let res = conn
             .run(
@@ -203,26 +204,31 @@ DETACH DELETE n",
             bincode::decode_from_slice(&encoded[..], config).unwrap();
         *path_lookup = decoded;
     } else {
-        let max_intermidiate_nodes = 4;
-        let cores = num_cpus::get();
-        let permits = Arc::new(Semaphore::new(2));
-        let mut handles = vec![];
+        let max_intermidiate_nodes = 5;
+
         for i in 2..max_intermidiate_nodes {
-            let permit = permits.clone().acquire_owned().await?;
             println!("graph service> Preparing {} step routes ", i);
             let path_lookup = path_lookup.clone();
-            let path_lookup1 = path_lookup1.clone();
-            let pools = pools.clone();
             let pool = pool.clone();
-            handles.push(tokio::spawn(async move {
 			    let mut conn = pool.get().await?;
-			
+                let cores = num_cpus::get();
+                let permits = Arc::new(Semaphore::new(40));
 			    let res = conn.run(format!("match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)", CHECKED_COIN.clone(), i, i,CHECKED_COIN.clone()), None, None).await?;
 			    let pull_meta = Metadata::from_iter(vec![("n", 1000)]);
 			    let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
+
 			    loop {
+
+
+                    let mut handles = vec![];
+
 				    // populate path_lookup with this batch
-				    for record in &records {
+				    for record in records {
+                        let permit = permits.clone().acquire_owned().await?;
+                        let path_lookup1 = path_lookup1.clone();
+                        let pools = pools.clone();
+                        handles.push(tokio::spawn(async move {
+
 					    let ps = pools.read().await;
 					    let mut pools = record.fields().iter().filter_map(|val|  {
 						
@@ -291,9 +297,16 @@ DETACH DELETE n",
 							    }
 						    }
 					    }
-					    
+                            drop(permit);
+
+                        }));
+
 				    }
-				    
+                    for handle in handles {
+                        handle.await?;
+                    }
+
+
 				    // query next batch from stream
 				    match &response {
 					    
@@ -306,7 +319,9 @@ DETACH DELETE n",
 					    }
 					    _ => break
 				    }
+
 			    }
+
 			    
                 let mut total_paths = 0;
                  for (_pool, paths) in path_lookup1.read().await.clone() {
@@ -324,22 +339,9 @@ DETACH DELETE n",
                  }
                 println!("Done {} step {}", i, total_paths);
 
-			    drop(permit);
-			    Ok::<(), anyhow::Error>(())
-		    }));
 
-            loop {
-                if permits.available_permits() <= 0 {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
-                } else {
-                    break;
-                }
-            }
         }
-        for handle in handles {
-            handle.await?;
-        }
+
 
         if config.save_only {
             let config = bincode::config::standard();
@@ -417,7 +419,7 @@ DETACH DELETE n",
 
 
                     } else {
-                         eprintln!("graph service> No routes found for {}", updated_market);
+                         // eprintln!("graph service> No routes found for {}", updated_market);
                     }
                 });
             }
