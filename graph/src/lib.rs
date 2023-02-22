@@ -212,7 +212,7 @@ DETACH DELETE n",
             let pool = pool.clone();
 			    let mut conn = pool.get().await?;
                 let cores = num_cpus::get();
-                let permits = Arc::new(Semaphore::new(40));
+                let permits = Arc::new(Semaphore::new(cores));
 			    let res = conn.run(format!("match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)", CHECKED_COIN.clone(), i, i,CHECKED_COIN.clone()), None, None).await?;
 			    let pull_meta = Metadata::from_iter(vec![("n", 1000)]);
 			    let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
@@ -272,7 +272,10 @@ DETACH DELETE n",
                                         if r.len() != rels.len() {
                                             None
                                         } else {
-                                            let path = MevPath::new(&r, &CHECKED_COIN.clone());
+                                            let mut path = MevPath::new(&r, &CHECKED_COIN.clone());
+                                            for pool in r {
+                                                path.update(pool);
+                                            }
                                             Some(path)
                                         }
                                     }
@@ -369,19 +372,16 @@ DETACH DELETE n",
     }
     println!("graph service> Found {} routes", total_paths);
 //	return Ok(());
-    // println!("graph service> Registering Gas consumption for transactions");
-    // for (_pool, paths) in path_lookup.read().await.clone() {
-    //     for (in_addr, path) in paths {
-    //         let order = Order {
-    //             size: MAX_SIZE.clone(),
-    //             decimals: decimals(in_addr),
-    //             route: path.clone()
-    //         };
-    //         let r = routes.write().await;
-    //         r.try_send(order).unwrap();
-    //     }
-    //     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    // }
+//     println!("graph service> Registering Gas consumption for transactions");
+//     for (_pool, paths) in path_lookup1.read().await.clone() {
+//         for mut route in paths.iter() {
+//             let mut r = route.clone();
+//             for pool in route.pools.iter() {
+//                r.update(pool.clone());
+//             }
+//         }
+//         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+//     }
     println!("graph service> Starting Listener thread");
     std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();

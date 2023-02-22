@@ -129,10 +129,10 @@ contract Aggregator {
 
     function decodeArbMetadata(bytes calldata _bytes) internal pure returns (uint128 preBalance, address token) {
         assembly {
-            preBalance :=shr(128,calldataload(_bytes.offset))
-//            arbAmount := calldataload(add(_bytes.offset, 32))
+            preBalance := shr(128, calldataload(_bytes.offset))
+        //            arbAmount := calldataload(add(_bytes.offset, 32))
             token := shr(96, calldataload(add(_bytes.offset, 16)))
-//            ethDenomination := shr(0, calldataload(add(_bytes.offset, 84)))
+        //            ethDenomination := shr(0, calldataload(add(_bytes.offset, 84)))
         }
     }
 
@@ -156,6 +156,18 @@ contract Aggregator {
         }
     }
 
+    function getMeta(bytes calldata data) internal returns (uint8 dataLen, bytes4 nextFunction) {
+        uint8 dataLen;
+        assembly {
+            dataLen := shr(248, calldataload(data.offset))
+        }
+        bytes4 nextFunction;
+        assembly {
+            nextFunction := calldataload(add(data.offset, add(div(dataLen, 2), 2)))
+        }
+            return (dataLen/2 + 1, nextFunction);
+    }
+
     function poolAtIndex(uint8 index, bytes calldata data) internal pure returns (address) {
         return address(bytes20(data[index * DATA_FRAME_SIZE + 1 : index * DATA_FRAME_SIZE + 21]));
     }
@@ -172,87 +184,199 @@ contract Aggregator {
     // assetToken = stepXtoY ? Y : X
     // debtToken = !assetToken
     // Get exact output send it to message sender
-    function uniswapV3ExactOutPayToSender(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(msg.sender, stepXtoY, amountOut < 0 ? amountOut : - amountOut, sqrtRatio(stepXtoY), data);
-    }
-    function uniswapV3ExactOutPayToSenderR(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(msg.sender, stepXtoY, amountIn < 0 ? amountIn : - amountIn, sqrtRatio(stepXtoY), data);
-    }
-    function uniswapV3ExactOutPayToSelf(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(address(this), stepXtoY, amountOut < 0 ? amountOut : - amountOut, sqrtRatio(stepXtoY), data);
-    }
-    function uniswapV3ExactOutPayToSelfR(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(address(this), stepXtoY, amountIn < 0 ? amountIn : - amountIn, sqrtRatio(stepXtoY), data);
-    }
-    function uniswapV3ExactOutPayToIndex(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(poolAtIndex(stepPayToIndex, data), stepXtoY, amountOut < 0 ? amountOut : - amountOut, sqrtRatio(stepXtoY), data);
-    }
-    function uniswapV3ExactOutPayToIndexR(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(poolAtIndex(stepPayToIndex, data), stepXtoY, amountIn < 0 ? amountIn : - amountIn, sqrtRatio(stepXtoY), data);
 
-    }
-    function uniswapV3ExactInPayToSender(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(msg.sender, stepXtoY, amountIn < 0 ? - amountIn : amountIn, sqrtRatio(stepXtoY), data);
-    }
-    function uniswapV3ExactInPayToSenderR(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(msg.sender, stepXtoY, amountOut < 0 ? - amountOut : amountOut, sqrtRatio(stepXtoY), data);
-    }
-    function uniswapV3ExactInPayToIndex(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(poolAtIndex(stepPayToIndex, data), stepXtoY, amountIn < 0 ? - amountIn : amountIn, sqrtRatio(stepXtoY), data);
-    }
-    function uniswapV3ExactInPayToSelf(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(address(this), stepXtoY, amountIn < 0 ? - amountIn : amountIn, sqrtRatio(stepXtoY), data);
-    }
-    function uniswapV3ExactInPayToSelfR(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(address(this), stepXtoY, amountOut < 0 ? - amountOut : amountOut, sqrtRatio(stepXtoY), data);
-    }
-    function uniswapV3ExactInPayToIndexR(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
-        (int amount0, int amount1) = pair.swap(poolAtIndex(stepPayToIndex, data), stepXtoY, amountOut < 0 ? - amountOut : amountOut, sqrtRatio(stepXtoY), data);
-    }
-
-
-    function uniswapV2ExactOutPayToSender(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
-        uint amount0Out = 0;
-        uint amount1Out = amountOut;
-
-        if (!stepXtoY) {
-            amount1Out = 0;
-            amount0Out = amountOut;
+    //0000004b
+    function uniswapV3ExactOutPayToSender_A729BB(bytes calldata data) public  {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        bytes calldata myData = data[1 : dataLen];
+        if (nextFunction == 0x00000000) {
+            return;
         }
-
-        IUniswapV2Pair pair = IUniswapV2Pair(stepPool);
-        pair.swap(amount0Out, amount1Out, msg.sender);
-        if (stepNextFunction == profitCheckpointFunction) {
-            profitCheckpoint();
-        } else {
-            function(int256, int256, bytes calldata) next = nextFunctionPointer(stepNextFunction);
-            next(amountOut, amountToPay, data);
-            if (stepNextFunction == profitCheckpointFunction) {
-                profitCheckpoint();
-            }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(msg.sender, stepXtoY, amountOut < 0 ? amountOut : - amountOut, sqrtRatio(stepXtoY), data);
+    }
+    //000000d0
+    function uniswapV3ExactInPayToSender_1993B5C(bytes calldata data) public  {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        bytes calldata myData = data[1 : dataLen];
+        if (nextFunction == 0x00000000) {
+            return;
         }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(msg.sender, stepXtoY, amountIn < 0 ? - amountIn : amountIn, sqrtRatio(stepXtoY), data);
+    }
+
+    //000000fc
+    function uniswapV3ExactInPayToSelf_A9C0BD(bytes calldata data) public {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        bytes calldata myData = data[1 : dataLen];
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(address(this), stepXtoY, amountIn < 0 ? - amountIn : amountIn, sqrtRatio(stepXtoY), data);
+    }
+    //000000e1
+    function uniswapV3ExactOutPayToSelf_1377F03(bytes calldata data) public {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        bytes calldata myData = data[1 : dataLen];
+
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(address(this), stepXtoY, amountOut < 0 ? amountOut : - amountOut, sqrtRatio(stepXtoY), data);
+    }
+
+    //000000c9
+    function uniswapV3ExactOutPayToAddress_37EB331(bytes calldata data) public  {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+
+        bytes calldata myData = data[1 : dataLen];
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(poolAtIndex(stepPayToIndex, data), stepXtoY, amountOut < 0 ? amountOut : - amountOut, sqrtRatio(stepXtoY), data);
+    }
+    //00000091
+    function uniswapV3ExactInPayToAddress_8F71A6(bytes calldata data) public  {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+
+        bytes calldata myData = data[1 : dataLen];
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(poolAtIndex(stepPayToIndex, data), stepXtoY, amountIn < 0 ? - amountIn : amountIn, sqrtRatio(stepXtoY), data);
+    }
+
+    //00000015
+    function uniswapV2ExactOutPayToSender_31D5F3(bytes calldata data) public {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+
+        bytes calldata myData = data[1 : dataLen];
+
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(msg.sender, stepXtoY, amountOut < 0 ? amountOut : - amountOut, sqrtRatio(stepXtoY), data);
+    }
+    //000000cd
+    function uniswapV2ExactInPayToSender_120576(bytes calldata data) public  {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+
+        bytes calldata myData = data[1 : dataLen];
+
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(msg.sender, stepXtoY, amountIn < 0 ? - amountIn : amountIn, sqrtRatio(stepXtoY), data);
+    }
+
+    //0000003c
+    function uniswapV2ExactOutPayToSelf_12BAA3(bytes calldata data) public  {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+
+        bytes calldata myData = data[1 : dataLen];
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(address(this), stepXtoY, amountOut < 0 ? amountOut : - amountOut, sqrtRatio(stepXtoY), data);
+    }
+    //00000082
+    function uniswapV2ExactInPayToSelf_FDC770(bytes calldata data) public  {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+
+        bytes calldata myData = data[1 : dataLen];
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(address(this), stepXtoY, amountIn < 0 ? - amountIn : amountIn, sqrtRatio(stepXtoY), data);
+    }
+
+    //000000e5
+    function uniswapV2ExactOutPayToAddress_E0E335(bytes calldata data) public  {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+
+        bytes calldata myData = data[1 : dataLen];
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(stepNextFunction);
+        next(data[dataLen:]);
+        //        IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(poolAtIndex(stepPayToIndex, data), stepXtoY, amountOut < 0 ? amountOut : - amountOut, sqrtRatio(stepXtoY), data);
+    }
+    //00000059
+    function uniswapV2ExactInPayToAddress_35CB03(bytes calldata data) public  {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+
+        bytes calldata myData = data[1 : dataLen];
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+        //IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
+        //        (int amount0, int amount1) = pair.swap(poolAtIndex(stepPayToIndex, data), stepXtoY, amountIn < 0 ? - amountIn : amountIn, sqrtRatio(stepXtoY), data);
+    }
+
+    //000000ea
+    function paySender_7437EA(bytes calldata data) public {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+
+        bytes calldata myData = data[1 : dataLen];
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+    }
+    //00000081
+    function payAddress_1A718EA(bytes calldata data) public {
+        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        bytes calldata myData = data[1 : dataLen];
+
+        if (nextFunction == 0x00000000) {
+            return;
+        }
+        function(bytes calldata) next = nextFunctionPointer(nextFunction);
+        next(data[dataLen:]);
+
     }
 
 
-
-    function payUniswapV3AtIndex(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
+    function payUniswapV3AtIndex(int256 amountIn, int256 amountOut, bytes calldata data) public  {
         IUniswapV3Pool pair = IUniswapV3Pool(stepPool);
         IERC20(stepXtoY ? pair.token0() : pair.token1()).transfer(poolAtIndex(stepPayToIndex, data), amountOut < 0 ? uint256(- amountOut) : uint256(amountOut));
     }
 
-    function payUniswapV2AtIndex(int256 amountIn, int256 amountOut, bytes calldata data) public step(data) {
+    function payUniswapV2AtIndex(int256 amountIn, int256 amountOut, bytes calldata data) public  {
         IUniswapV2Pair pair = IUniswapV2Pair(stepPool);
         IERC20(stepXtoY ? pair.token0() : pair.token1()).transfer(poolAtIndex(stepPayToIndex, data), amountIn < 0 ? uint256(- amountIn) : uint256(amountIn));
     }
@@ -268,8 +392,8 @@ contract Aggregator {
         if (stepNextFunction == profitCheckpointFunction) {
             profitCheckpoint();
         } else {
-            function(int256, int256, bytes calldata) next = nextFunctionPointer(stepNextFunction);
-            next(amountOut, amountToPay, data);
+            function(bytes calldata) next = nextFunctionPointer(stepNextFunction);
+            next(data);
             if (stepNextFunction == profitCheckpointFunction) {
                 profitCheckpoint();
             }
@@ -277,25 +401,41 @@ contract Aggregator {
 
     }
 
-    function nextFunctionPointer(bytes4 hash) internal pure returns (function(int256, int256, bytes calldata)) {
-        if (hash == 0x5b16a784) {
-            return uniswapV3ExactOutPayToSender;
-        } else if (hash == 0x4e9a7c15) {
-            return uniswapV3ExactOutPayToIndex;
-        } else if (hash == 0x23d8a9db) {
-            return uniswapV3ExactInPayToSender;
-        }else if (hash == 0x77a56c2f) {
-            return uniswapV3ExactInPayToIndex;
-        }else if (hash == 0x4dfcfd17) {
-            return uniswapV3ExactInPayToIndexR;
-        } else if (hash == 0xc8bdd598) {
-            return uniswapV3ExactOutPayToSelf;
-        } else if (hash == 0x65216d26) {
-            return uniswapV3ExactOutPayToSelfR;
-        } else if (hash == 0x78632200) {
-            return payUniswapV3AtIndex;
+    function nextFunctionPointer(bytes4 hash) internal pure returns (function(bytes calldata)) {
+        if (hash == 0x000000e1) {
+            return uniswapV3ExactOutPayToSelf_1377F03;
+        } else if (hash == 0x000000fc) {
+            return uniswapV3ExactInPayToSelf_A9C0BD;
+        } else if (hash == 0x0000004b) {
+            return uniswapV3ExactOutPayToSender_A729BB;
+        } else if (hash == 0x000000d0) {
+            return uniswapV3ExactInPayToSender_1993B5C;
+        } else if (hash == 0x000000c9) {
+            return uniswapV3ExactOutPayToAddress_37EB331;
+        } else if (hash == 0x00000091) {
+            return uniswapV3ExactInPayToAddress_8F71A6;
+        }
+
+        else if (hash == 0x00000015) {
+            return uniswapV2ExactOutPayToSender_31D5F3;
+        }else if (hash == 0x000000cd) {
+            return uniswapV2ExactInPayToSender_120576;
+        } else if (hash == 0x0000003c) {
+            return uniswapV2ExactOutPayToSelf_12BAA3;
+        } else if (hash == 0x00000082) {
+            return uniswapV2ExactInPayToSelf_FDC770;
+        } else if (hash == 0x000000e5) {
+            return uniswapV2ExactOutPayToAddress_E0E335;
+        } else if (hash == 0x00000059) {
+            return uniswapV2ExactInPayToAddress_35CB03;
+        }
+
+        else if (hash == 0x000000ea) {
+            return paySender_7437EA;
+        } else if (hash == 0x00000081) {
+            return payAddress_1A718EA;
         } else {
-            return uniswapV3ExactOutPayToSender;
+            return uniswapV3ExactOutPayToSelf_1377F03
         }
 
     }
@@ -305,11 +445,11 @@ contract Aggregator {
         globalStep = 0;
         // avoid recursive calls from uniswapV3SwapCallback
         stepNextFunction = bytes4(0x11111111);
-        unchecked {
-            uint256 balance = IERC20(arbToken).balanceOf(address(this));
-            emit bal(balance);
-            require(balance >= arbPreBalance, "NP");
-        }
+    unchecked {
+        uint256 balance = IERC20(arbToken).balanceOf(address(this));
+        emit bal(balance);
+        require(balance >= arbPreBalance, "NP");
+    }
 
     }
 }

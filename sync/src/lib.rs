@@ -227,45 +227,45 @@ impl CpmmCalculator {
 }
 
 impl Calculator for CpmmCalculator {
-    fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128> {
+    fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let swap_source_amount = if pool.x_to_y {
-            pool.x_amount
+            U256::from(pool.x_amount)
         } else {
-            pool.y_amount
+            U256::from(pool.y_amount)
         };
         let swap_destination_amount = if pool.x_to_y {
-            pool.y_amount
+            U256::from(pool.y_amount)
         } else {
-            pool.x_amount
+            U256::from(pool.x_amount)
         };
         if in_ >= swap_source_amount {
             return Ok(swap_destination_amount);
         }
-        let amount_in_with_fee = (in_ as u128) * ((10000 - pool.fee_bps) as u128);
+        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - pool.fee_bps));
         let numerator = amount_in_with_fee
-            .checked_mul(swap_destination_amount as u128)
-            .unwrap_or(0);
-        let denominator = ((swap_source_amount as u128) * 10000) + amount_in_with_fee;
-        Ok((numerator / denominator) as u128)
+            .checked_mul(swap_destination_amount)
+            .unwrap_or(U256::from(0));
+        let denominator = ((swap_source_amount) * 10000) + amount_in_with_fee;
+        Ok((numerator / denominator))
     }
     
-    fn calculate_in(&self, out_: u128, pool: &Pool) -> anyhow::Result<u128> {
+    fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let swap_source_amount = if pool.x_to_y {
-            pool.x_amount
+            U256::from(pool.x_amount)
         } else {
-            pool.y_amount
+            U256::from(pool.y_amount)
         };
         let swap_destination_amount = if pool.x_to_y {
-            pool.y_amount
+            U256::from(pool.y_amount)
         } else {
-            pool.x_amount
+            U256::from(pool.x_amount)
         };
         if out_ >= swap_destination_amount {
             return Ok(swap_source_amount);
         }
         if let Some(numerator) = swap_source_amount.checked_mul( out_ * 100) {
-            let denominator = (swap_destination_amount - out_) * ((97) as u128);
-            Ok((numerator / denominator) as u128 + 1)
+            let denominator = (swap_destination_amount - out_) * U256::from((97) as u128);
+            Ok((numerator / denominator) + 1)
 
         } else {
             Err(Error::msg("Multiplication Overflow"))
@@ -275,8 +275,8 @@ impl Calculator for CpmmCalculator {
 }
 
 pub trait Calculator {
-    fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128>;
-    fn calculate_in(&self, out_: u128, pool: &Pool) -> anyhow::Result<u128>;
+    fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256>;
+    fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256>;
 }
 pub struct CpmmCalculator {}
 
@@ -342,7 +342,7 @@ impl UniswapV3Calculator {
 }
 #[async_trait]
 impl Calculator for UniswapV3Calculator {
-    fn calculate_out(&self, in_: u128, pool: &Pool) -> anyhow::Result<u128> {
+    fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let sqrt_ratio_current_x_96 = U256::from_dec_str(&self.meta.sqrt_price).unwrap();
         let zero_for_one = pool.x_to_y;
         let  sqrt_ratio_target_x_96 = if pool.x_to_y {
@@ -351,12 +351,13 @@ impl Calculator for UniswapV3Calculator {
             sqrt_ratio_current_x_96.checked_mul(U256::from(2)).unwrap()
         };
         let mut amount_out = U256::zero();
-        let (sqrt_ratio_next_x_96, amount_in, amount_out, fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from(in_).checked_mul(I256::from(1)).unwrap(), self.meta.fee).unwrap();
+        let (sqrt_ratio_next_x_96, amount_in, amount_out, fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from_dec_str(&in_.to_string()).unwrap().checked_mul(I256::from(1)).unwrap(), self.meta.fee).unwrap();
         
-            Ok(amount_out.as_u128())
+
+                Ok(amount_out)
         }
     
-    fn calculate_in(&self, out_: u128, pool: &Pool) -> anyhow::Result<u128> {
+    fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let sqrt_ratio_current_x_96 = U256::from_dec_str(&self.meta.sqrt_price).unwrap();
         let zero_for_one = pool.x_to_y;
         let  sqrt_ratio_target_x_96 = if pool.x_to_y {
@@ -365,8 +366,9 @@ impl Calculator for UniswapV3Calculator {
             sqrt_ratio_current_x_96.checked_mul(U256::from(2)).unwrap()
         };
         let mut amount_out = U256::zero();
-        let (sqrt_ratio_next_x_96, amount_in, amount_out, fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from(out_).checked_mul(I256::from(-1)).unwrap(), self.meta.fee).unwrap();
-        Ok(amount_in.as_u128())
+        let (sqrt_ratio_next_x_96, amount_in, amount_out, fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from_dec_str(&out_.to_string()).unwrap().checked_mul(I256::from(-1)).unwrap(), self.meta.fee).unwrap();
+
+            Ok(amount_in)
     
     }
     
