@@ -238,6 +238,9 @@ impl Calculator for CpmmCalculator {
         } else {
             U256::from(pool.x_amount)
         };
+        if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) {
+            return Err(Error::msg("Insufficient Liquidity"))
+        }
         if in_ >= swap_source_amount {
             return Ok(swap_destination_amount);
         }
@@ -263,6 +266,9 @@ impl Calculator for CpmmCalculator {
         if out_ >= swap_destination_amount {
             return Ok(swap_source_amount);
         }
+        if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) {
+            return Err(Error::msg("Insufficient Liquidity"))
+        }
         if let Some(numerator) = swap_source_amount.checked_mul( out_ * 100) {
             let denominator = (swap_destination_amount - out_) * U256::from((97) as u128);
             Ok((numerator / denominator) + 1)
@@ -285,6 +291,8 @@ pub struct UniswapV3Calculator {
 }
 
 impl UniswapV3Calculator {
+    pub const MAX_SQRT_RATIO: &str = "1461446703485210103287273052203988822378723970342";
+    pub const MIN_SQRT_RATIO: &str = "4295128739";
     pub fn new(meta: UniswapV3Metadata) -> Self {
         Self {
             meta,
@@ -344,14 +352,12 @@ impl UniswapV3Calculator {
 impl Calculator for UniswapV3Calculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let sqrt_ratio_current_x_96 = U256::from_dec_str(&self.meta.sqrt_price).unwrap();
-        let zero_for_one = pool.x_to_y;
         let  sqrt_ratio_target_x_96 = if pool.x_to_y {
-            U256::from(1)
+            U256::from_dec_str(UniswapV3Calculator::MIN_SQRT_RATIO).unwrap().saturating_add(U256::from(1))
         } else {
-            sqrt_ratio_current_x_96.checked_mul(U256::from(2)).unwrap()
+            U256::from_dec_str(UniswapV3Calculator::MAX_SQRT_RATIO).unwrap().saturating_sub(U256::from(1))
         };
-        let mut amount_out = U256::zero();
-        let (sqrt_ratio_next_x_96, amount_in, amount_out, fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from_dec_str(&in_.to_string()).unwrap().checked_mul(I256::from(1)).unwrap(), self.meta.fee).unwrap();
+        let (_sqrt_ratio_next_x_96, _amount_in, amount_out, _fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from_dec_str(&in_.to_string()).unwrap().checked_mul(I256::from(1)).unwrap(), self.meta.fee).unwrap();
         
 
                 Ok(amount_out)
@@ -359,14 +365,12 @@ impl Calculator for UniswapV3Calculator {
     
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let sqrt_ratio_current_x_96 = U256::from_dec_str(&self.meta.sqrt_price).unwrap();
-        let zero_for_one = pool.x_to_y;
         let  sqrt_ratio_target_x_96 = if pool.x_to_y {
-            U256::from(1)
+            U256::from_dec_str(UniswapV3Calculator::MIN_SQRT_RATIO).unwrap().saturating_add(U256::from(1))
         } else {
-            sqrt_ratio_current_x_96.checked_mul(U256::from(2)).unwrap()
+            U256::from_dec_str(UniswapV3Calculator::MAX_SQRT_RATIO).unwrap().saturating_sub(U256::from(1))
         };
-        let mut amount_out = U256::zero();
-        let (sqrt_ratio_next_x_96, amount_in, amount_out, fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from_dec_str(&out_.to_string()).unwrap().checked_mul(I256::from(-1)).unwrap(), self.meta.fee).unwrap();
+        let (_sqrt_ratio_next_x_96, amount_in, _amount_out, _fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from_dec_str(&out_.to_string()).unwrap().checked_mul(I256::from(-1)).unwrap(), self.meta.fee).unwrap();
 
             Ok(amount_in)
     

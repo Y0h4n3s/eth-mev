@@ -1,4 +1,5 @@
 pub mod mev_path;
+
 use async_std::sync::Arc;
 use bb8_bolt::bolt_client::Params;
 use bb8_bolt::{
@@ -35,8 +36,8 @@ static NEO4J_URL: Lazy<String> =
     Lazy::new(|| std::env::var("ETH_NEO4J_URL").unwrap_or("127.0.0.1:7687".to_string()));
 
 fn combinations<T>(v: &[T], k: usize) -> Vec<Vec<T>>
-where
-    T: Clone,
+    where
+        T: Clone,
 {
     if k == 0 {
         return vec![vec![]];
@@ -66,6 +67,7 @@ pub struct GraphConfig {
     pub from_file: bool,
     pub save_only: bool,
 }
+
 pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
     std::env::var("ETH_CHECKED_COIN")
         .unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
@@ -78,31 +80,9 @@ pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
         .unwrap()
 });
 
-pub fn all_simple_paths_non_circular<TargetColl>(
-    g: &Graph<String, Pool, Undirected>,
-    from: NodeIndex,
-    to: NodeIndex,
-    min_intermediate_nodes: usize,
-    max_intermediate_nodes: usize,
-) -> Vec<Vec<NodeIndex>> {
-    let mut dfs = Bfs::new(g, from);
-    let mut found_paths = vec![];
-    while let Some(nx) = dfs.next(g) {
-        if nx == to {
-            found_paths.push(Vec::from(dfs.stack.clone()));
-        } else {
-            // println!("len {}", dfs.stack.len());
-            if dfs.stack.len() > 10 {
-                dfs.stack.pop_front();
-            }
-        }
-    }
-    found_paths
-}
-
 pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
-    updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event = Pool>>>,
+    updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=Pool>>>,
     routes: Arc<RwLock<kanal::AsyncSender<Order>>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
@@ -116,11 +96,11 @@ pub async fn start(
         Metadata::from_iter(vec![
             ("user_agent", "bolt-client/X.Y.Z"),
             ("scheme", "basic"),
-           ("principal", &NEO4J_USER),
-           ("credentials", &NEO4J_PASS),
+            ("principal", &NEO4J_USER),
+            ("credentials", &NEO4J_PASS),
         ]),
     )
-    .await?;
+        .await?;
     println!("{:?} {}", NEO4J_PASS.clone(), NEO4J_USER.clone());
     // Create a connection pool. This should be shared across your application.
     let pool = Arc::new(BPool::builder().build(manager).await?);
@@ -137,7 +117,6 @@ DETACH DELETE n",
         .await?;
     let pull_meta = Metadata::from_iter(vec![("n", 1)]);
     let (records, response) = conn.pull(Some(pull_meta)).await?;
-    println!("{:?}", response);
     for (_, pool) in pr.iter() {
         let res = conn
             .run(
@@ -164,21 +143,101 @@ DETACH DELETE n",
         let pull_meta = Metadata::from_iter(vec![("n", -1)]);
         let (records, response) = conn.pull(Some(pull_meta)).await?;
 
-	    // relationship between tokens as liquidity pool
         let res = conn
-		          .run(
-			          "MATCH (a:Token), (b:Token) WHERE a.address = $x_address  AND b.address = $y_address  MERGE (a)-[r:LP { pool: $pool_address, bn: $provider }]->(b) RETURN type(r)",
-			          Some(Params::from_iter(vec![
-				          ("x_address", pool.x_address.clone()),
-				          ("y_address", pool.y_address.clone()),
-				          ("pool_address", pool.address.clone()),
-				          ("provider", serde_json::to_string(&pool.provider).unwrap())])),
-			          None).await?;
+            .run(
+                "MERGE (p:Pool {address: $address, x_to_y: $x_to_y, provider: $provider}) RETURN p",
+                Some(Params::from_iter(vec![
+                    ("address", pool.address.clone()),
+                    ("x_to_y", pool.x_to_y.to_string()),
+                    ("provider", serde_json::to_string(&pool.provider).unwrap()),
+                ])),
+                None,
+            )
+            .await?;
+
+        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+        let (records, response) = conn.pull(Some(pull_meta)).await?;
+
+        let res = conn
+            .run(
+                "MERGE (p:Pool {address: $address, x_to_y: $x_to_y, provider: $provider}) RETURN p",
+                Some(Params::from_iter(vec![
+                    ("address", pool.address.clone()),
+                    ("x_to_y", (!pool.x_to_y).to_string()),
+                    ("provider", serde_json::to_string(&pool.provider).unwrap()),
+                ])),
+                None,
+            )
+            .await?;
+
+        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+        let (records, response) = conn.pull(Some(pull_meta)).await?;
+
+        // relationship between tokens as liquidity pool
+        // let res = conn
+        //           .run(
+        // 	          "MATCH (a:Token), (b:Token) WHERE a.address = $x_address  AND b.address = $y_address  MERGE (a)-[r:LP { pool: $pool_address, bn: $provider }]->(b) RETURN type(r)",
+        // 	          Some(Params::from_iter(vec![
+        // 		          ("x_address", pool.x_address.clone()),
+        // 		          ("y_address", pool.y_address.clone()),
+        // 		          ("pool_address", pool.address.clone()),
+        // 		          ("provider", serde_json::to_string(&pool.provider).unwrap())])),
+        // 	          None).await?;
+        //
+        // let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+        // let (records, response) = conn.pull(Some(pull_meta)).await?;
+
+        let res = conn
+            .run(
+                "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $y_address  MERGE (a)-[r:ASSET]->(b) RETURN type(r)",
+                Some(Params::from_iter(vec![
+                    ("pool_address", pool.address.clone()),
+                    ("pool_x_to_y", true.to_string()),
+                    ("y_address", pool.y_address.clone()),
+                ])),
+                None).await?;
+
+        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+        let (records, response) = conn.pull(Some(pull_meta)).await?;
+        let res = conn
+            .run(
+                "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $x_address  MERGE (b)-[r:DEBT]->(a) RETURN type(r)",
+                Some(Params::from_iter(vec![
+                    ("pool_address", pool.address.clone()),
+                    ("pool_x_to_y", true.to_string()),
+                    ("x_address", pool.x_address.clone()),
+                ])),
+                None).await?;
 
         let pull_meta = Metadata::from_iter(vec![("n", -1)]);
         let (records, response) = conn.pull(Some(pull_meta)).await?;
 
 
+        let res = conn
+            .run(
+                "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $x_address  MERGE (a)-[r:ASSET]->(b) RETURN type(r)",
+                Some(Params::from_iter(vec![
+                    ("pool_address", pool.address.clone()),
+                    ("pool_x_to_y", false.to_string()),
+                    ("x_address", pool.x_address.clone()),
+                ])),
+                None).await?;
+
+        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+        let (records, response) = conn.pull(Some(pull_meta)).await?;
+
+        let res = conn
+            .run(
+                "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $y_address  MERGE (b)-[r:DEBT]->(a) RETURN type(r)",
+                Some(Params::from_iter(vec![
+                    ("pool_address", pool.address.clone()),
+                    ("pool_x_to_y", false.to_string()),
+                    ("y_address", pool.y_address.clone()),
+                ])),
+                None).await?;
+
+        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+        let (records, response) = conn.pull(Some(pull_meta)).await?;
     }
     drop(pr);
 
@@ -191,7 +250,7 @@ DETACH DELETE n",
         HashMap::<Pool, HashSet<(String, Vec<Pool>)>>::new(),
     ));
     let path_lookup1 = Arc::new(RwLock::new(
-            HashMap::<Pool, HashSet<MevPath>>::new(),
+        HashMap::<Pool, HashSet<MevPath>>::new(),
     ));
     if config.from_file {
         println!("graph_service> Loading routes from file");
@@ -204,58 +263,69 @@ DETACH DELETE n",
             bincode::decode_from_slice(&encoded[..], config).unwrap();
         *path_lookup = decoded;
     } else {
-        let max_intermidiate_nodes = 5;
+        let max_intermidiate_nodes = 9;
 
         for i in 2..max_intermidiate_nodes {
             println!("graph service> Preparing {} step routes ", i);
             let path_lookup = path_lookup.clone();
             let pool = pool.clone();
-			    let mut conn = pool.get().await?;
-                let cores = num_cpus::get();
-                let permits = Arc::new(Semaphore::new(cores));
-			    let res = conn.run(format!("match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)", CHECKED_COIN.clone(), i, i,CHECKED_COIN.clone()), None, None).await?;
-			    let pull_meta = Metadata::from_iter(vec![("n", 1000)]);
-			    let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
+            let mut conn = pool.get().await?;
+            let cores = num_cpus::get();
+            let permits = Arc::new(Semaphore::new(1));
+            // OLD MATCHER: match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)
+            let res = conn.run(format!("MATCH path=(t:Token{{address: '{}'}})-[r:DEBT]->()-[*{}..{}]->()-[r1:ASSET]->(t) return nodes(path) ", CHECKED_COIN.clone(), i, i), None, None).await?;
+            let pull_meta = Metadata::from_iter(vec![("n", 1000)]);
+            let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
+            loop {
+                let mut handles = vec![];
 
-			    loop {
-
-
-                    let mut handles = vec![];
-
-				    // populate path_lookup with this batch
-				    for record in records {
-                        let permit = permits.clone().acquire_owned().await?;
-                        let path_lookup1 = path_lookup1.clone();
-                        let pools = pools.clone();
-                        handles.push(tokio::spawn(async move {
-
-					    let ps = pools.read().await;
-					    let mut pools = record.fields().iter().filter_map(|val|  {
-						
-						    match val {
-							    Value::List(rels) => {
-								    let mut r = vec![];
-								    for rel in rels {
-									    match rel {
-										    Value::Relationship(rel) => {
-											    let address = match rel.properties().get("pool") {
-												    Some(Value::String(s)) => {s.clone()}
-												    _ => "0x0".to_string()
-											    };
-											    let provider = match rel.properties().get("bn") {
-												    Some(Value::String(provider)) => {LiquidityProviders::from(provider)}
-												    _ => LiquidityProviders::UniswapV2(Default::default())
-											    };
-											    match ps.iter().find(|(_, p)| p.address == address && p.provider == provider ) {
-												    Some((s, pool)) => r.push(pool.clone()),
-												    _ => ()
-											    }
-										    }
+                // populate path_lookup with this batch
+                for record in records {
+                    let permit = permits.clone().acquire_owned().await?;
+                    let path_lookup1 = path_lookup1.clone();
+                    let pools = pools.clone();
+                    handles.push(tokio::spawn(async move {
+                        let ps = pools.read().await;
+                        let mut pools = record.fields().iter().filter_map(|val| {
+                            match val {
+                                Value::List(rels) => {
+                                    let mut r = vec![];
+                                    for rel in rels {
+                                        match rel {
+                                            Value::Node(rel) => {
+                                                if let Some(is_pool) = rel.labels().iter().find(|p| *p == &"Pool".to_string()) {
+                                                    let address = match rel.properties().get("address") {
+                                                        Some(Value::String(s)) => { s.clone() }
+                                                        _ => "0x0".to_string()
+                                                    };
+                                                    let provider = match rel.properties().get("provider") {
+                                                        Some(Value::String(provider)) => { LiquidityProviders::from(provider) }
+                                                        _ => LiquidityProviders::UniswapV2(Default::default())
+                                                    };
+                                                    let x_to_y = match rel.properties().get("x_to_y") {
+                                                        Some(Value::String(x_to_y)) => {
+                                                            if x_to_y == &"true".to_string() {
+                                                                true
+                                                            } else {
+                                                                false
+                                                            }
+                                                        }
+                                                        _ => false
+                                                    };
+                                                    match ps.iter().find(|(_, p)| p.address == address && p.provider == provider) {
+                                                        Some((s, pool)) => {
+                                                            let mut new = pool.clone();
+                                                            new.x_to_y = x_to_y;
+                                                            r.push(new)
+                                                        }
+                                                        _ => ()
+                                                    }
+                                                }
+                                            }
 
                                             _ => ()
-									    }
-									    
-								    }
+                                        }
+                                    }
                                     let mut seen_count = 0;
                                     r.iter().for_each(|p| {
                                         if p.x_address == CHECKED_COIN.clone() {
@@ -269,80 +339,66 @@ DETACH DELETE n",
                                     if seen_count != 2 {
                                         None
                                     } else {
-                                        if r.len() != rels.len() {
-                                            None
-                                        } else {
-                                            let mut path = MevPath::new(&r, &CHECKED_COIN.clone());
-                                            for pool in r {
-                                                path.update(pool);
-                                            }
-                                            Some(path)
+                                        let mut path = MevPath::new(&r, &CHECKED_COIN.clone());
+                                        for pool in r {
+                                            path.update(pool);
                                         }
+                                        Some(path)
                                     }
-
-								    
-							    }
-							    _ => None
-								 
-							 }
+                                }
+                                _ => None
+                            }
                         }).collect::<Vec<MevPath>>();
-					    for p in pools {
-						    let mut in_ = CHECKED_COIN.clone();
+                        for p in pools {
+                            let mut in_ = CHECKED_COIN.clone();
 
-						    for pool in p.pools.iter() {
-							    let mut w = path_lookup1.write().await;
-							    if let Some(mut existing) = w.get_mut(&pool) {
-								    existing.insert( p.clone());
-							    } else {
-								    let mut set = HashSet::new();
-								    set.insert( p.clone());
-								    w.insert(pool.clone(), set);
-							    }
-						    }
-					    }
-                            drop(permit);
+                            for pool in p.pools.iter() {
+                                let mut w = path_lookup1.write().await;
+                                if let Some(mut existing) = w.get_mut(&pool) {
+                                    existing.insert(p.clone());
+                                } else {
+                                    let mut set = HashSet::new();
+                                    set.insert(p.clone());
+                                    w.insert(pool.clone(), set);
+                                }
+                            }
+                        }
+                        drop(permit);
+                    }));
+                }
+                for handle in handles {
+                    handle.await?;
+                }
 
-                        }));
 
-				    }
-                    for handle in handles {
-                        handle.await?;
+                // query next batch from stream
+                match &response {
+                    Message::Success(success) => {
+                        if let Some(has_more) = success.metadata().get("has_more") {
+                            (records, response) = conn.pull(Some(pull_meta.clone())).await?;
+                        } else {
+                            break;
+                        }
                     }
+                    _ => break
+                }
+            }
 
 
-				    // query next batch from stream
-				    match &response {
-					    
-					    Message::Success(success) => {
-						    if let Some(has_more) = success.metadata().get("has_more") {
-							    (records,  response) = conn.pull(Some(pull_meta.clone())).await?;
-						    } else {
-							    break
-						    }
-					    }
-					    _ => break
-				    }
-
-			    }
-
-			    
-                let mut total_paths = 0;
-                 for (_pool, paths) in path_lookup1.read().await.clone() {
-                    for path in paths {
-                        total_paths += path.paths.len();
-
-                    }
-        // for (forf, path) in paths {
-        //     println!("`````````````````````` Tried Route ``````````````````````");
-        //     for (i, pool) in path.iter().enumerate() {
-        //         println!("{}. {}", i + 1, pool);
-        //     }
-        //     println!("\n\n");
-        // }
-                 }
-                println!("Done {} step {}", i, total_paths);
-
-
+            let mut total_paths = 0;
+            for (_pool, paths) in path_lookup1.read().await.clone() {
+                for path in paths {
+                    total_paths += path.paths.len();
+                }
+                // for (forf, path) in paths {
+                //     println!("`````````````````````` Tried Route ``````````````````````");
+                //     for (i, pool) in path.iter().enumerate() {
+                //         println!("{}. {}", i + 1, pool);
+                //     }
+                //     println!("\n\n");
+                // }
+            }
+            println!("Done {} step {}", i, total_paths);
         }
 
 
@@ -357,10 +413,9 @@ DETACH DELETE n",
     }
     let mut total_paths = 0;
     for (_pool, paths) in path_lookup1.read().await.clone() {
-           for path in paths {
-                        total_paths += path.paths.len();
-
-           }
+        for path in paths {
+            total_paths += path.paths.len();
+        }
 
         // for (forf, path) in paths {
         //     println!("`````````````````````` Tried Route ``````````````````````");
@@ -401,11 +456,15 @@ DETACH DELETE n",
                     });
                     if updated.is_some() {
                         let (pool, market_routes) = updated.unwrap();
-                         println!(
-                             "graph service> Found {} routes for updated market {}",
-                             market_routes.len(),
-                             updated_market
-                         );
+                        let mut total_paths = 0;
+                        for path in market_routes {
+                            total_paths += path.paths.len();
+                        }
+                        println!(
+                            "graph service> Found {} routes for updated market {}",
+                            total_paths,
+                            updated_market
+                        );
                         let pool = pool.clone();
                         let market_routes = market_routes.clone();
                         std::mem::drop(read);
@@ -416,20 +475,19 @@ DETACH DELETE n",
                         for mut route in market_routes {
                             route.update(pool.clone());
                         }
-
-
                     } else {
-                         // eprintln!("graph service> No routes found for {}", updated_market);
+                        // eprintln!("graph service> No routes found for {}", updated_market);
                     }
                 });
             }
         });
     })
-    .join()
-    .unwrap();
+        .join()
+        .unwrap();
 
     Ok(())
 }
+
 pub fn decimals(coin: String) -> u64 {
     match coin.as_str() {
         "0x1::aptos_coin::AptosCoin" => 18,
