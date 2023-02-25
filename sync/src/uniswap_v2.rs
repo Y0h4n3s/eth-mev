@@ -89,7 +89,7 @@ impl LiquidityProvider for UniSwapV2 {
             let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
-            for i in (pairs_length.as_usize()-20000..pairs_length.as_usize()).step_by(step) {
+            for i in (0..pairs_length.as_usize()).step_by(step) {
                 let mut w = indices.lock().await;
                 w.push_back((i, i + step));
             }

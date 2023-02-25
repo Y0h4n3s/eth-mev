@@ -263,7 +263,7 @@ DETACH DELETE n",
             bincode::decode_from_slice(&encoded[..], config).unwrap();
         *path_lookup = decoded;
     } else {
-        let max_intermidiate_nodes = 9;
+        let max_intermidiate_nodes = 7;
 
         for i in 2..max_intermidiate_nodes {
             println!("graph service> Preparing {} step routes ", i);
@@ -271,10 +271,35 @@ DETACH DELETE n",
             let pool = pool.clone();
             let mut conn = pool.get().await?;
             let cores = num_cpus::get();
-            let permits = Arc::new(Semaphore::new(1));
+            let permits = Arc::new(Semaphore::new(cores));
             // OLD MATCHER: match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)
-            let res = conn.run(format!("MATCH path=(t:Token{{address: '{}'}})-[r:DEBT]->()-[*{}..{}]->()-[r1:ASSET]->(t) return nodes(path) ", CHECKED_COIN.clone(), i, i), None, None).await?;
-            let pull_meta = Metadata::from_iter(vec![("n", 1000)]);
+            let mut steps = "".to_string();
+            let mut where_clause = "1 = 1".to_string();
+            for j in 0..i {
+                steps = steps + &format!("-[:DEBT]-(p{}:Pool)-[:ASSET]", j);
+                if j != i - 1 {
+                    steps = steps + &format!("-(t{}:Token)", j);
+                    for k in 0..i-1 {
+                        if k == j {
+                            continue
+                        }
+                        where_clause += &format!(" AND t{}.address <> t{}.address", j, k)
+                    }
+                    for k in 0..i {
+                        if k == j {
+                            continue
+                        }
+                        where_clause += &format!(" AND p{}.address <> p{}.address", j, k)
+                    }
+                    where_clause += &format!(" AND t.address <> t{}.address", j)
+                }
+
+
+            }
+            let query= format!("MATCH path=(t:Token{{address: '{}'}}){}->(t) WHERE {} return nodes(path);", CHECKED_COIN.clone(), steps, where_clause);
+
+            let res = conn.run(query, None, None).await?;
+            let pull_meta = Metadata::from_iter(vec![("n", 10000)]);
             let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
             loop {
                 let mut handles = vec![];
@@ -374,8 +399,19 @@ DETACH DELETE n",
                 // query next batch from stream
                 match &response {
                     Message::Success(success) => {
+
                         if let Some(has_more) = success.metadata().get("has_more") {
-                            (records, response) = conn.pull(Some(pull_meta.clone())).await?;
+                            match has_more {
+                                Value::Boolean(val) => {
+                                    if *val {
+                                        (records, response) = conn.pull(Some(pull_meta.clone())).await?;
+
+                                    } else {
+                                        break
+                                    }
+                                }
+                                _ => break
+                            }
                         } else {
                             break;
                         }
