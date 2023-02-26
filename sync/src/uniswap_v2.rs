@@ -9,7 +9,7 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
 
 use crate::types::UniSwapV2Pair;
-use crate::{CpmmCalculator, LiquidityProviderId, Meta};
+use crate::{CpmmCalculator, LiquidityProviderId, Meta, PoolUpdateEvent};
 use crate::{Curve, LiquidityProvider, LiquidityProviders};
 use crate::{EventEmitter, EventSource, Pool};
 use async_std::sync::Arc;
@@ -22,7 +22,7 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 
 #[derive(Serialize, Deserialize,Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
@@ -35,7 +35,7 @@ impl Meta for UniswapV2Metadata {}
 pub struct UniSwapV2 {
     pub metadata: UniswapV2Metadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
-    subscribers: Arc<RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = Pool>>>>>>,
+    subscribers: Arc<RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
 }
 
 impl UniSwapV2 {
@@ -89,7 +89,7 @@ impl LiquidityProvider for UniSwapV2 {
             let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
-            for i in (0..pairs_length.as_usize()).step_by(step) {
+            for i in (pairs_length.as_usize()-20000..pairs_length.as_usize()).step_by(step) {
                 let mut w = indices.lock().await;
                 w.push_back((i, i + step));
             }
@@ -172,8 +172,10 @@ impl LiquidityProvider for UniSwapV2 {
     }
 }
 
+
+
 impl EventEmitter for UniSwapV2 {
-    type EventType = Box<dyn EventSource<Event = Pool>>;
+    type EventType = Box<dyn EventSource<Event = PoolUpdateEvent>>;
     fn get_subscribers(&self) -> Arc<RwLock<Vec<AsyncSender<Self::EventType>>>> {
         self.subscribers.clone()
     }
@@ -209,9 +211,14 @@ impl EventEmitter for UniSwapV2 {
                         while let Some(Ok((log, meta))) = stream.next().await {
                             pool.x_amount = log.reserve_0;
                             pool.y_amount = log.reserve_1;
+                            let event = PoolUpdateEvent {
+                                pool: pool.clone(),
+                                block_number: meta.block_number.as_u64(),
+                                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
+                            };
                             let mut subscribers = subscribers.write().await;
                             for subscriber in subscribers.iter_mut() {
-                                let res = subscriber.send(Box::new(pool.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV2 Send Error {:?}", e));
+                                let res = subscriber.send(Box::new(event.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV2 Send Error {:?}", e));
                             }
                         }
                     }));

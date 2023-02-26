@@ -13,7 +13,7 @@ use ethers::prelude::{Address, H160, LocalWallet, SignerMiddleware};
 use ethers::prelude::StreamExt;
 
 use url::Url;
-use garb_sync_eth::{EventSource, LiquidityProviders, Pool, SyncConfig};
+use garb_sync_eth::{EventSource, LiquidityProviders, Pool, PoolUpdateEvent, SyncConfig};
 use std::str::FromStr;
 use ethers::abi::{ParamType, StateMutability, Token};
 
@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn async_main() -> anyhow::Result<()> {
     let pools = Arc::new(RwLock::new(HashMap::<String, Pool>::new()));
-    let (update_q_sender, update_q_receiver) = kanal::bounded_async::<Box<dyn EventSource<Event = Pool>>>(1000);
+    let (update_q_sender, update_q_receiver) = kanal::bounded_async::<Box<dyn EventSource<Event = PoolUpdateEvent>>>(1000);
     // routes holds the routes that pass through an updated pool
     // this will be populated by the graph module when there is an updated pool
     let (routes_sender, mut routes_receiver) =

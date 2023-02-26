@@ -85,7 +85,7 @@ pub trait EventSource: Send {
     fn get_event(&self) -> Self::Event;
 }
 pub type BoxedLiquidityProvider = Box<
-    dyn LiquidityProvider<Metadata = Box<dyn Meta>, EventType = Box<dyn EventSource<Event = Pool>>>
+    dyn LiquidityProvider<Metadata = Box<dyn Meta>, EventType = Box<dyn EventSource<Event = PoolUpdateEvent>>>
         + Send,
 >;
 
@@ -138,6 +138,7 @@ pub trait PoolInfo {
     fn getX(&self) -> String;
     fn getY(&self) -> String;
     fn supports_callback_payment(&self) -> bool;
+    fn supports_pre_payment(&self) -> bool;
 }
 
 #[derive(Decode, Encode, Debug, Clone, Eq)]
@@ -169,6 +170,13 @@ impl PoolInfo for Pool {
             LiquidityProviderId::UniswapV3 => true,
         }
     }
+
+    fn supports_pre_payment(&self) -> bool {
+        match self.provider.id() {
+            LiquidityProviderId::UniswapV2 => true,
+            LiquidityProviderId::UniswapV3 => false,
+        }
+    }
 }
 
 impl Hash for Pool {
@@ -197,6 +205,19 @@ impl EventSource for Pool {
     }
 }
 
+#[derive(Decode, Encode, Debug, Clone, PartialEq,Eq)]
+pub struct PoolUpdateEvent {
+    pub pool: Pool,
+    pub block_number: u64,
+    pub timestamp: u128
+}
+
+impl EventSource for PoolUpdateEvent {
+    type Event = Self;
+    fn get_event(&self) -> Self::Event {
+        self.clone()
+    }
+}
 impl From<&Pool> for Pool {
     fn from(pool: &Pool) -> Self {
         Self {
@@ -388,7 +409,7 @@ pub struct SyncConfig {
 
 pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
-    updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = Pool>>>,
+    updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>,
     config: SyncConfig,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     // collect top tokens by market cap

@@ -10,7 +10,7 @@ use bb8_bolt::{
 };
 use bolt_proto::value::{Node, Relationship};
 use bolt_proto::Message;
-use garb_sync_eth::{EventSource, LiquidityProviderId, LiquidityProviders, Pool};
+use garb_sync_eth::{EventSource, LiquidityProviderId, LiquidityProviders, Pool, PoolUpdateEvent};
 use neo4rs::{query, Graph as NGraph};
 use once_cell::sync::Lazy;
 use petgraph::algo::all_simple_paths;
@@ -82,7 +82,7 @@ pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
 
 pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
-    updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=Pool>>>,
+    updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PoolUpdateEvent>>>,
     routes: Arc<RwLock<kanal::AsyncSender<Order>>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
@@ -193,7 +193,7 @@ DETACH DELETE n",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", true.to_string()),
-                    ("y_address", pool.y_address.clone()),
+                    ("y_address", pool.x_address.clone()),
                 ])),
                 None).await?;
 
@@ -205,7 +205,7 @@ DETACH DELETE n",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", true.to_string()),
-                    ("x_address", pool.x_address.clone()),
+                    ("x_address", pool.y_address.clone()),
                 ])),
                 None).await?;
 
@@ -219,7 +219,7 @@ DETACH DELETE n",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", false.to_string()),
-                    ("x_address", pool.x_address.clone()),
+                    ("x_address", pool.y_address.clone()),
                 ])),
                 None).await?;
 
@@ -232,7 +232,7 @@ DETACH DELETE n",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", false.to_string()),
-                    ("y_address", pool.y_address.clone()),
+                    ("y_address", pool.x_address.clone()),
                 ])),
                 None).await?;
 
@@ -263,7 +263,7 @@ DETACH DELETE n",
             bincode::decode_from_slice(&encoded[..], config).unwrap();
         *path_lookup = decoded;
     } else {
-        let max_intermidiate_nodes = 7;
+        let max_intermidiate_nodes = 3;
 
         for i in 2..max_intermidiate_nodes {
             println!("graph service> Preparing {} step routes ", i);
@@ -271,7 +271,7 @@ DETACH DELETE n",
             let pool = pool.clone();
             let mut conn = pool.get().await?;
             let cores = num_cpus::get();
-            let permits = Arc::new(Semaphore::new(cores));
+            let permits = Arc::new(Semaphore::new(1));
             // OLD MATCHER: match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)
             let mut steps = "".to_string();
             let mut where_clause = "1 = 1".to_string();
@@ -479,7 +479,8 @@ DETACH DELETE n",
         let task_set = tokio::task::LocalSet::new();
         task_set.block_on(&rt, async {
             while let Ok(updated_market_event) = updated_q.recv().await {
-                let mut updated_market = updated_market_event.get_event();
+                let event = updated_market_event.get_event();
+                let mut updated_market = event.pool;
                 let path_lookup = path_lookup1.clone();
                 let routes = routes.clone();
                 tokio::task::spawn_local(async move {

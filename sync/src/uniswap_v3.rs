@@ -1,7 +1,7 @@
 use crate::abi::{uniswap_v3::SwapFilter,IERC20};
 use crate::types::UniSwapV3Pool;
 use crate::types::UniSwapV3Token;
-use crate::{LiquidityProviderId, Meta, UniswapV3Calculator};
+use crate::{LiquidityProviderId, Meta, PoolUpdateEvent, UniswapV3Calculator};
 use crate::{Curve, LiquidityProvider, LiquidityProviders};
 use crate::{EventEmitter, EventSource, Pool};
 use async_std::sync::Arc;
@@ -25,7 +25,7 @@ use std::collections::VecDeque;
 use std::error::Error;
 use std::ops::Add;
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
@@ -359,7 +359,7 @@ impl UniswapV3Metadata {
     }
 }
 
-const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 12369621;
+const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 15969621;
 
 pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
     120, 60, 202, 28, 4, 18, 221, 13, 105, 94, 120, 69, 104, 201, 109, 162, 233, 194, 47, 249, 137,
@@ -368,7 +368,7 @@ pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
 pub struct UniSwapV3 {
     pub metadata: UniswapV3Metadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
-    subscribers: Arc<RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = Pool>>>>>>,
+    subscribers: Arc<RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
 }
 
 impl UniSwapV3 {
@@ -536,7 +536,7 @@ impl LiquidityProvider for UniSwapV3 {
 }
 
 impl EventEmitter for UniSwapV3 {
-    type EventType = Box<dyn EventSource<Event = Pool>>;
+    type EventType = Box<dyn EventSource<Event = PoolUpdateEvent>>;
     fn get_subscribers(&self) -> Arc<RwLock<Vec<AsyncSender<Self::EventType>>>> {
         self.subscribers.clone()
     }
@@ -580,10 +580,15 @@ impl EventEmitter for UniSwapV3 {
                                 pool_meta.liquidity = log.liquidity;
                                 pool.provider = LiquidityProviders::UniswapV3(pool_meta)
                             }
+                            let event = PoolUpdateEvent {
+                                pool: pool.clone(),
+                                block_number: meta.block_number.as_u64(),
+                                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
+                            };
     
                             let mut subscribers = subscribers.write().await;
                             for subscriber in subscribers.iter_mut() {
-                                let res = subscriber.send(Box::new(pool.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV3 Send Error {:?}", e));
+                                let res = subscriber.send(Box::new(event.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV3 Send Error {:?}", e));
                             }
                         }
                     }));
