@@ -1,3 +1,10 @@
+#![allow(unused_imports)]
+#![allow(dead_code)]
+#![allow(unused_must_use)]
+#![allow(non_snake_case)]
+#![allow(unreachable_patterns)]
+#![allow(unused)]
+
 mod abi;
 mod events;
 pub mod types;
@@ -237,7 +244,7 @@ impl From<&Pool> for Pool {
 
 impl Display for Pool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Pool {{ \n\tProvider: {:?}\n\taddress: {}\n\tx_address: {}\n\ty_address: {}\n\tis_x_to_y: {}\n\t", self.provider, self.address,self.x_address, self.y_address,  self.x_to_y)
+        write!(f, "Pool {{ \n\tProvider: {:?}\n\taddress: {}\n\tx_address: {}\n\ty_address: {}\n\tis_x_to_y: {}\n\t", self.provider.id(), self.address,self.x_address, self.y_address,  self.x_to_y)
     }
 }
 

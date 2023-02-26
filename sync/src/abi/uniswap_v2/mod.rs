@@ -95,7 +95,7 @@ pub async fn get_pool_data_batch_request<M: Middleware>(
                                 && !pool_data[2].to_owned().into_address().unwrap().is_zero()
                             {
                                 //Update the pool data
-                                if let pair_address = pairs.get(pool_idx).unwrap() {
+                                if let Some(pair_address) = pairs.get(pool_idx) {
                                     let u_pair = UniSwapV2Pair {
                                         id: hex_to_address_string(pair_address.encode_hex()),
                                         token0: UniSwapV2Token {

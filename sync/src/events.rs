@@ -1,3 +1,4 @@
+#![allow(where_clauses_object_safety)]
 use async_std::sync::Arc;
 use async_trait::async_trait;
 use kanal::{AsyncReceiver, AsyncSender};

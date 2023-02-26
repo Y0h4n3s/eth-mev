@@ -1,3 +1,11 @@
+#![allow(unused_imports)]
+#![allow(dead_code)]
+#![allow(unused_must_use)]
+#![allow(non_snake_case)]
+#![allow(unreachable_patterns)]
+#![allow(unused)]
+
+
 pub mod mev_path;
 
 use async_std::sync::Arc;
@@ -193,7 +201,7 @@ DETACH DELETE n",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", true.to_string()),
-                    ("y_address", pool.x_address.clone()),
+                    ("y_address", pool.y_address.clone()),
                 ])),
                 None).await?;
 
@@ -205,7 +213,7 @@ DETACH DELETE n",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", true.to_string()),
-                    ("x_address", pool.y_address.clone()),
+                    ("x_address", pool.x_address.clone()),
                 ])),
                 None).await?;
 
@@ -219,7 +227,7 @@ DETACH DELETE n",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", false.to_string()),
-                    ("x_address", pool.y_address.clone()),
+                    ("x_address", pool.x_address.clone()),
                 ])),
                 None).await?;
 
@@ -232,7 +240,7 @@ DETACH DELETE n",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", false.to_string()),
-                    ("y_address", pool.x_address.clone()),
+                    ("y_address", pool.y_address.clone()),
                 ])),
                 None).await?;
 
@@ -297,7 +305,7 @@ DETACH DELETE n",
 
             }
             let query= format!("MATCH path=(t:Token{{address: '{}'}}){}->(t) WHERE {} return nodes(path);", CHECKED_COIN.clone(), steps, where_clause);
-
+            println!("{}", query);
             let res = conn.run(query, None, None).await?;
             let pull_meta = Metadata::from_iter(vec![("n", 10000)]);
             let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
@@ -368,7 +376,12 @@ DETACH DELETE n",
                                         for pool in r {
                                             path.update(pool);
                                         }
-                                        Some(path)
+                                        if path.is_valid() {
+
+                                            Some(path)
+                                        } else {
+                                            None
+                                        }
                                     }
                                 }
                                 _ => None

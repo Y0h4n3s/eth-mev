@@ -1,3 +1,10 @@
+#![allow(unused_imports)]
+#![allow(dead_code)]
+#![allow(unused_must_use)]
+#![allow(non_snake_case)]
+#![allow(unreachable_patterns)]
+#![allow(unused)]
+
 use crate::abi::{uniswap_v3::SwapFilter,IERC20};
 use crate::types::UniSwapV3Pool;
 use crate::types::UniSwapV3Token;

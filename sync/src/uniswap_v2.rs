@@ -1,3 +1,9 @@
+#![allow(unused_imports)]
+#![allow(dead_code)]
+#![allow(unused_must_use)]
+#![allow(non_snake_case)]
+#![allow(unreachable_patterns)]
+#![allow(unused)]
 use crate::abi::IERC20;
 use crate::abi::{SyncFilter, UniswapV2Factory};
 use bincode::{Decode, Encode};

@@ -1,3 +1,11 @@
+#![allow(unused_imports)]
+#![allow(dead_code)]
+#![allow(unused_must_use)]
+#![allow(non_snake_case)]
+#![allow(unreachable_patterns)]
+#![allow(unused)]
+#![allow(deprecated)]
+
 mod abi;
 //Deployer: 0xef344B9eFcc133EB4e7FEfbd73a613E3b2D05e86
 // Deployed to: 0x5F416E55fdBbA8CC0D385907C534B57a08710c35
