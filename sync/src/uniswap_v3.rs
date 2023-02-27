@@ -366,7 +366,7 @@ impl UniswapV3Metadata {
     }
 }
 
-const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 15969621;
+const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 14969621;
 
 pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
     120, 60, 202, 28, 4, 18, 221, 13, 105, 94, 120, 69, 104, 201, 109, 162, 233, 194, 47, 249, 137,
@@ -505,6 +505,9 @@ impl LiquidityProvider for UniSwapV3 {
                     && filter_tokens.iter().any(|token| token == &pair.token1.id))
                 {
                     continue;
+                }
+                if pair.liquidity == 0 {
+                    continue
                 }
                 let meta = UniswapV3Metadata {
                     token_a: pair.token0.id.clone(),

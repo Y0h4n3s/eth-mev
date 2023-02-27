@@ -271,7 +271,7 @@ DETACH DELETE n",
             bincode::decode_from_slice(&encoded[..], config).unwrap();
         *path_lookup = decoded;
     } else {
-        let max_intermidiate_nodes = 3;
+        let max_intermidiate_nodes = 4;
 
         for i in 2..max_intermidiate_nodes {
             println!("graph service> Preparing {} step routes ", i);
@@ -524,6 +524,7 @@ DETACH DELETE n",
 
                         for mut route in market_routes {
                             route.update(pool.clone());
+                            route.is_valid();
                         }
                     } else {
                         // eprintln!("graph service> No routes found for {}", updated_market);

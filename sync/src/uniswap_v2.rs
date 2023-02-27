@@ -95,7 +95,7 @@ impl LiquidityProvider for UniSwapV2 {
             let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
-            for i in (pairs_length.as_usize()-20000..pairs_length.as_usize()).step_by(step) {
+            for i in (pairs_length.as_usize()-100000..pairs_length.as_usize()).step_by(step) {
                 let mut w = indices.lock().await;
                 w.push_back((i, i + step));
             }
@@ -163,6 +163,9 @@ impl LiquidityProvider for UniSwapV2 {
                     x_to_y: true,
                     provider: LiquidityProviders::UniswapV2(Default::default()),
                 };
+                if pool.x_amount == 0 || pool.y_amount == 0 {
+                    continue
+                }
                 let mut w = pools.write().await;
                 w.insert(pool.address.clone(), pool);
             }
