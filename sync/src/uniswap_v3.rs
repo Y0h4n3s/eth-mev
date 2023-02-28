@@ -254,7 +254,7 @@ impl UniswapV3Metadata {
                   middleware.clone(),
               )
               .await?;
-        
+
         let mut liquidity_net = self.liquidity_net;
         
         while current_state.amount_specified_remaining != I256::zero()
@@ -268,7 +268,7 @@ impl UniswapV3Metadata {
             
             let compressed = self.calculate_compressed(current_state.tick);
             let (word_pos, bit_pos) = self.calculate_word_pos_bit_pos(compressed);
-            
+
             if word_pos != current_state.word_pos {
                 current_state.word_pos = word_pos;
                 word = self
@@ -366,7 +366,7 @@ impl UniswapV3Metadata {
     }
 }
 
-const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 14969621;
+const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 15969621;
 
 pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
     120, 60, 202, 28, 4, 18, 221, 13, 105, 94, 120, 69, 104, 201, 109, 162, 233, 194, 47, 249, 137,
@@ -516,6 +516,7 @@ impl LiquidityProvider for UniSwapV3 {
                     token_b_decimals: pair.token1_decimals,
                     sqrt_price: pair.sqrt_price.clone(),
                     liquidity: pair.liquidity,
+                    fee: pair.fee,
                     ..Default::default()
                 };
                 let pool = Pool {
@@ -572,7 +573,7 @@ impl EventEmitter for UniSwapV3 {
                     let subscribers = subscribers.clone();
                     let mut pool = pool.clone();
                     let client = client.clone();
-    
+
                     joins.push(tokio::task::spawn_local(async move {
                         let event =
                               ethers::contract::Contract::event_of_type::<SwapFilter>(&client)
@@ -595,7 +596,7 @@ impl EventEmitter for UniSwapV3 {
                                 block_number: meta.block_number.as_u64(),
                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                             };
-    
+
                             let mut subscribers = subscribers.write().await;
                             for subscriber in subscribers.iter_mut() {
                                 let res = subscriber.send(Box::new(event.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV3 Send Error {:?}", e));

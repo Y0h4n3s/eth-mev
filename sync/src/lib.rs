@@ -10,7 +10,7 @@ mod events;
 pub mod types;
 pub mod uniswap_v2;
 pub mod uniswap_v3;
-
+pub mod sushiswap;
 use crate::events::EventEmitter;
 use crate::uniswap_v2::UniswapV2Metadata;
 use crate::uniswap_v3::UniswapV3Metadata;
@@ -36,6 +36,8 @@ pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
 });
 
 use nom::FindSubstring;
+use crate::sushiswap::SushiSwapMetadata;
+
 #[async_trait]
 pub trait LiquidityProvider: EventEmitter {
     type Metadata;
@@ -50,12 +52,14 @@ pub trait LiquidityProvider: EventEmitter {
 pub enum LiquidityProviders {
     UniswapV2(UniswapV2Metadata),
     UniswapV3(UniswapV3Metadata),
+    SushiSwap(SushiSwapMetadata)
 }
 
 #[derive(Deserialize, Serialize, Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
 pub enum LiquidityProviderId {
     UniswapV2,
-    UniswapV3
+    UniswapV3,
+    SushiSwap
 }
 
 impl<T: Into<String>> From<T> for LiquidityProviders {
@@ -66,12 +70,18 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
                 sqrt_price: "0".to_string(),
                 ..Default::default()
             }),
+            "3" => LiquidityProviders::SushiSwap(Default::default()),
             val => match val.find_substring("UniswapV2") {
                 Some(v) => serde_json::from_str(val).unwrap(),
                 None => {
                     match val.find_substring("UniswapV3") {
                         Some(v) => serde_json::from_str(val).unwrap(),
-                        None => panic!("Invalid Liquidity Provider {}", val),
+                        None => {
+                            match val.find_substring("SushiSwap") {
+                                Some(v) => serde_json::from_str(val).unwrap(),
+                                None => panic!("Invalid Liquidity Provider {}", val)
+                            }
+                        },
                     }
                 }
             },
@@ -84,6 +94,7 @@ impl From<LiquidityProviders> for u8 {
         match value {
             LiquidityProviders::UniswapV2(_) => 1,
             LiquidityProviders::UniswapV3(_) => 2,
+            LiquidityProviders::SushiSwap(_) => 3,
         }
     }
 }
@@ -103,6 +114,8 @@ impl LiquidityProviders {
             LiquidityProviders::UniswapV3(meta) => {
                 Box::new(UniswapV3Calculator::new(meta.clone()))
             }
+            LiquidityProviders::SushiSwap(meta) => Box::new(CpmmCalculator::new()),
+
             _ => panic!("Invalid liquidity provider"),
         }
     }
@@ -122,6 +135,13 @@ impl LiquidityProviders {
                 };
                 Box::new(uniswap_v3::UniSwapV3::new(metadata))
             }
+            LiquidityProviders::SushiSwap(meta) => {
+                let metadata = SushiSwapMetadata {
+                    factory_address: "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(sushiswap::SushiSwap::new(metadata))
+            }
             _ => panic!("Invalid liquidity provider"),
         }
     }
@@ -130,6 +150,8 @@ impl LiquidityProviders {
         match self {
             LiquidityProviders::UniswapV2(_) => LiquidityProviderId::UniswapV2,
             LiquidityProviders::UniswapV3(_) => LiquidityProviderId::UniswapV3,
+            LiquidityProviders::SushiSwap(_) => LiquidityProviderId::SushiSwap,
+
             
         }
     }
@@ -175,6 +197,7 @@ impl PoolInfo for Pool {
         match self.provider.id() {
             LiquidityProviderId::UniswapV2 => false,
             LiquidityProviderId::UniswapV3 => true,
+            LiquidityProviderId::SushiSwap=> false,
         }
     }
 
@@ -182,6 +205,7 @@ impl PoolInfo for Pool {
         match self.provider.id() {
             LiquidityProviderId::UniswapV2 => true,
             LiquidityProviderId::UniswapV3 => false,
+            LiquidityProviderId::SushiSwap => false,
         }
     }
 }
@@ -385,7 +409,14 @@ impl Calculator for UniswapV3Calculator {
         } else {
             U256::from_dec_str(UniswapV3Calculator::MAX_SQRT_RATIO).unwrap().saturating_sub(U256::from(1))
         };
-        let (_sqrt_ratio_next_x_96, _amount_in, amount_out, _fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from_dec_str(&in_.to_string()).unwrap().checked_mul(I256::from(1)).unwrap(), self.meta.fee).unwrap();
+        let (_sqrt_ratio_next_x_96, _amount_in, amount_out, _fee_amount) =
+            uniswap_v3_math::swap_math::compute_swap_step(
+                sqrt_ratio_current_x_96,
+                sqrt_ratio_target_x_96,
+                self.meta.liquidity,
+                I256::from_dec_str(&in_.to_string()).unwrap().checked_mul(I256::from(1)).unwrap(),
+                self.meta.fee
+            ).unwrap();
         
 
                 Ok(amount_out)

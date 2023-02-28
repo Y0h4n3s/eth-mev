@@ -271,7 +271,7 @@ DETACH DELETE n",
             bincode::decode_from_slice(&encoded[..], config).unwrap();
         *path_lookup = decoded;
     } else {
-        let max_intermidiate_nodes = 4;
+        let max_intermidiate_nodes = 3;
 
         for i in 2..max_intermidiate_nodes {
             println!("graph service> Preparing {} step routes ", i);
@@ -511,9 +511,10 @@ DETACH DELETE n",
                             total_paths += path.paths.len();
                         }
                         println!(
-                            "graph service> Found {} routes for updated market {}",
+                            "graph service> Found {} routes for updated market {} on block {}",
                             total_paths,
-                            updated_market
+                            updated_market,
+                            event.block_number
                         );
                         let pool = pool.clone();
                         let market_routes = market_routes.clone();

@@ -56,6 +56,7 @@ contract Aggregator {
     event accBal(address, uint, address);
     event imessage(string, int);
     event message(string, uint);
+    event s(string);
 
     function getAmountOut(uint amountIn, uint reserveIn, uint reserveOut) internal pure returns (uint amountOut) {
     unchecked {
@@ -108,10 +109,9 @@ contract Aggregator {
 
     //0000004b
     function uniswapV3ExactOutPayToSender_A729BB(bytes calldata data) public beforeEachStep {
-
+        emit s("uniswapV3ExactOutPayToSender_A729BB");
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
-        emit by(myData);
 
         bool isXToY;
         address pool;
@@ -135,6 +135,8 @@ contract Aggregator {
     }
     //000000d0
     function uniswapV3ExactInPayToSender_1993B5C(bytes calldata data) public beforeEachStep {
+        emit s("uniswapV3ExactInPayToSender_1993B5C");
+
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
 
@@ -162,7 +164,9 @@ contract Aggregator {
 
     //000000fc
     function uniswapV3ExactInPayToSelf_A9C0BD(bytes calldata data) public beforeEachStep {
-        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        emit s("uniswapV3ExactInPayToSelf_A9C0BD");
+
+    (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
         bool isXToY;
 
@@ -188,6 +192,7 @@ contract Aggregator {
     }
     //000000e1
     function uniswapV3ExactOutPayToSelf_1377F03(bytes calldata data) public beforeEachStep {
+        emit s("uniswapV3ExactOutPayToSelf_1377F03");
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
         bool isXToY;
@@ -214,6 +219,7 @@ contract Aggregator {
 
     //000000c9
     function uniswapV3ExactOutPayToAddress_37EB331(bytes calldata data) public beforeEachStep {
+        emit s("uniswapV3ExactOutPayToAddress_37EB331");
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
@@ -242,6 +248,7 @@ contract Aggregator {
     }
     //00000091
     function uniswapV3ExactInPayToAddress_8F71A6(bytes calldata data) public beforeEachStep {
+        emit s("uniswapV3ExactInPayToAddress_8F71A6");
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
@@ -270,7 +277,9 @@ contract Aggregator {
     
     //00000015
     function uniswapV2ExactOutPayToSender_31D5F3(bytes calldata data) public beforeEachStep {
-        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        emit s("uniswapV2ExactOutPayToSender_31D5F3");
+
+    (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
 
@@ -308,6 +317,7 @@ contract Aggregator {
     }
     //000000cd
     function uniswapV2ExactInPayToSender_120576(bytes calldata data) public beforeEachStep {
+        emit s("uniswapV2ExactInPayToSender_120576");
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
@@ -345,7 +355,9 @@ contract Aggregator {
 
     //0000003c
     function uniswapV2ExactOutPayToSelf_12BAA3(bytes calldata data) public beforeEachStep {
-        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        emit s("uniswapV2ExactOutPayToSelf_12BAA3");
+
+    (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
 
@@ -383,7 +395,9 @@ contract Aggregator {
     }
     //00000082
     function uniswapV2ExactInPayToSelf_FDC770(bytes calldata data) public beforeEachStep {
-        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        emit s("uniswapV2ExactInPayToSelf_FDC770");
+
+    (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
         bool isXToY;
@@ -420,7 +434,9 @@ contract Aggregator {
 
     //000000e5
     function uniswapV2ExactOutPayToAddress_E0E335(bytes calldata data) public beforeEachStep {
-        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        emit s("uniswapV2ExactOutPayToAddress_E0E335");
+
+    (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
         bool isXToY;
@@ -450,7 +466,9 @@ contract Aggregator {
     }
     //00000059
     function uniswapV2ExactInPayToAddress_35CB03(bytes calldata data) public beforeEachStep {
-        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        emit s("uniswapV2ExactInPayToAddress_35CB03");
+
+    (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
         bool isXToY;
@@ -482,7 +500,9 @@ contract Aggregator {
 
     //000000ea
     function paySender_7437EA(bytes calldata data) public beforeEachStep {
-        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        emit s("paySender_7437EA");
+
+    (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
         uint amount = toByte32Uint(myData[24 :]);
@@ -491,7 +511,7 @@ contract Aggregator {
             token := shr(96, calldataload(add(myData.offset, 4)))
         }
         emit bal(amount);
-        emit bal(IERC20(token).balanceOf(address(this)));
+        emit message("WalletBalance", IERC20(token).balanceOf(address(this)));
         emit acc(token);
         IERC20(token).transfer(msg.sender, amount);
         if (nextFunction == 0x00000000) {
@@ -503,7 +523,9 @@ contract Aggregator {
     }
     //00000081
     function payAddress_1A718EA(bytes calldata data) public beforeEachStep {
-        (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
+        emit s("payAddress_1A718EA");
+
+    (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
         address receiver;
         address token;
@@ -513,6 +535,7 @@ contract Aggregator {
             receiver := shr(96, calldataload(add(myData.offset, 24)))
         }
         emit acc(receiver);
+        emit message("WalletBalance", IERC20(token).balanceOf(address(this)));
         emit bal(amount);
         IERC20(token).transfer(receiver, amount);
 
