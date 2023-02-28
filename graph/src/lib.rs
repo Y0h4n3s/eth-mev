@@ -271,7 +271,7 @@ DETACH DELETE n",
             bincode::decode_from_slice(&encoded[..], config).unwrap();
         *path_lookup = decoded;
     } else {
-        let max_intermidiate_nodes = 3;
+        let max_intermidiate_nodes = 4;
 
         for i in 2..max_intermidiate_nodes {
             println!("graph service> Preparing {} step routes ", i);
@@ -279,7 +279,7 @@ DETACH DELETE n",
             let pool = pool.clone();
             let mut conn = pool.get().await?;
             let cores = num_cpus::get();
-            let permits = Arc::new(Semaphore::new(1));
+            let permits = Arc::new(Semaphore::new(cores));
             // OLD MATCHER: match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)
             let mut steps = "".to_string();
             let mut where_clause = "1 = 1".to_string();
@@ -525,7 +525,7 @@ DETACH DELETE n",
 
                         for mut route in market_routes {
                             route.update(pool.clone());
-                            route.is_valid();
+                            route.get_transactions();
                         }
                     } else {
                         // eprintln!("graph service> No routes found for {}", updated_market);

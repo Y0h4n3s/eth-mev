@@ -2,12 +2,9 @@ pragma solidity ^0.8.13;
 // extra gas spent: 113320
 // uniswapv3 avg gas: 104522
 // uniswapv2 avg gas: 119421
-import "./interfaces/ISwapRouter.sol";
 import "./interfaces/IUniswapV3Pool.sol";
 import "./interfaces/IUniswapV2Pair.sol";
-import "./interfaces/IUniswapV2Router02.sol";
 import {SafeCast} from '@uniswap3/contracts/libraries/SafeCast.sol';
-import "./SafeMath.sol";
 
 contract Aggregator {
     using SafeCast for uint;
@@ -47,33 +44,18 @@ contract Aggregator {
         IERC20(token).transferFrom(address(this), to, amount);
     }
 
-    event bal(uint);
-    event bali(int);
-    event by(bytes);
-    event by3(bytes32);
-    event by4(bytes4);
-    event acc(address);
-    event accBal(address, uint, address);
-    event imessage(string, int);
-    event message(string, uint);
-    event s(string);
+//    event bal(uint);
+//    event bali(int);
+//    event by(bytes);
+//    event by3(bytes32);
+//    event by4(bytes4);
+//    event acc(address);
+//    event accBal(address, uint, address);
+//    event imessage(string, int);
+//    event message(string, uint);
+//    event s(string);
 
-    function getAmountOut(uint amountIn, uint reserveIn, uint reserveOut) internal pure returns (uint amountOut) {
-    unchecked {
-        uint amountInWithFee = amountIn * 997;
-        uint numerator = amountInWithFee * reserveOut;
-        uint denominator = reserveIn * 1000 + amountInWithFee;
-        return numerator / denominator;
-    }
-    }
 
-    function getAmountIn(uint amountOut, uint reserveIn, uint reserveOut) internal pure returns (uint amountIn) {
-    unchecked {
-        uint numerator = reserveIn * amountOut * 1000;
-        uint denominator = reserveOut - amountOut * 997;
-        return (numerator / denominator) + 1;
-    }
-    }
 
     function sqrtRatio(bool xToy) internal pure returns (uint160) {
     unchecked {
@@ -109,7 +91,7 @@ contract Aggregator {
 
     //0000004b
     function uniswapV3ExactOutPayToSender_A729BB(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV3ExactOutPayToSender_A729BB");
+        //emit s("uniswapV3ExactOutPayToSender_A729BB");
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
 
@@ -135,7 +117,7 @@ contract Aggregator {
     }
     //000000d0
     function uniswapV3ExactInPayToSender_1993B5C(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV3ExactInPayToSender_1993B5C");
+        //emit s("uniswapV3ExactInPayToSender_1993B5C");
 
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
@@ -164,7 +146,7 @@ contract Aggregator {
 
     //000000fc
     function uniswapV3ExactInPayToSelf_A9C0BD(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV3ExactInPayToSelf_A9C0BD");
+        //emit s("uniswapV3ExactInPayToSelf_A9C0BD");
 
     (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
@@ -172,6 +154,7 @@ contract Aggregator {
 
         address pool;
         int amount = toByte32Uint(myData[25 :]).toInt256();
+        //emit bali(amount);
         assembly {
             isXToY := shr(248, calldataload(add(myData.offset, 4)))
             pool := shr(96, calldataload(add(myData.offset, 5)))
@@ -192,7 +175,7 @@ contract Aggregator {
     }
     //000000e1
     function uniswapV3ExactOutPayToSelf_1377F03(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV3ExactOutPayToSelf_1377F03");
+        //emit s("uniswapV3ExactOutPayToSelf_1377F03");
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
         bool isXToY;
@@ -219,7 +202,7 @@ contract Aggregator {
 
     //000000c9
     function uniswapV3ExactOutPayToAddress_37EB331(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV3ExactOutPayToAddress_37EB331");
+        //emit s("uniswapV3ExactOutPayToAddress_37EB331");
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
@@ -248,7 +231,7 @@ contract Aggregator {
     }
     //00000091
     function uniswapV3ExactInPayToAddress_8F71A6(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV3ExactInPayToAddress_8F71A6");
+        //emit s("uniswapV3ExactInPayToAddress_8F71A6");
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
@@ -277,7 +260,7 @@ contract Aggregator {
     
     //00000015
     function uniswapV2ExactOutPayToSender_31D5F3(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV2ExactOutPayToSender_31D5F3");
+        //emit s("uniswapV2ExactOutPayToSender_31D5F3");
 
     (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
@@ -285,28 +268,27 @@ contract Aggregator {
 
         bool isXToY;
         address pool;
+        address token;
         uint8 assetDataLen;
         assembly {
             isXToY := shr(248, calldataload(add(myData.offset, 4)))
             pool := shr(96, calldataload(add(myData.offset, 5)))
-            assetDataLen := shr(248, calldataload(add(myData.offset, 25)))
+            token := shr(96, calldataload(add(myData.offset, 25)))
+            assetDataLen := shr(248, calldataload(add(myData.offset, 45)))
         }
         assetDataLen = assetDataLen / 2;
-
-        uint amountAsset = toByte32Uint(myData[26:26+assetDataLen]);
-        uint amountDebt = toByte32Uint(myData[26+assetDataLen:]);
+        uint amountAsset = toByte32Uint(myData[46:46+assetDataLen]);
+        uint amountDebt = toByte32Uint(myData[46+assetDataLen:]);
         IUniswapV2Pair pair = IUniswapV2Pair(pool);
-        emit message("Asset:", amountAsset);
-        emit message("Debt:", amountDebt);
+        //emit message("Asset:", amountAsset);
+        //emit message("Debt:", amountDebt);
         uint amount0Out = amountAsset;
         uint amount1Out = 0;
         if (isXToY) {
             amount0Out = 0;
             amount1Out = amountAsset;
-            IERC20(pair.token0()).transfer(pool, amountDebt);
-        } else {
-            IERC20(pair.token1()).transfer(pool, amountDebt);
         }
+        IERC20(token).transfer(pool, amountDebt);
         pair.swap(amount0Out, amount1Out, msg.sender, "");
         if (nextFunction == 0x00000000) {
             done = true;
@@ -317,33 +299,33 @@ contract Aggregator {
     }
     //000000cd
     function uniswapV2ExactInPayToSender_120576(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV2ExactInPayToSender_120576");
+        //emit s("uniswapV2ExactInPayToSender_120576");
         (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
         bool isXToY;
         address pool;
+        address token;
         uint8 assetDataLen;
         assembly {
             isXToY := shr(248, calldataload(add(myData.offset, 4)))
             pool := shr(96, calldataload(add(myData.offset, 5)))
-            assetDataLen := shr(248, calldataload(add(myData.offset, 25)))
+            token := shr(96, calldataload(add(myData.offset, 25)))
+            assetDataLen := shr(248, calldataload(add(myData.offset, 45)))
         }
         assetDataLen = assetDataLen / 2;
-        uint amountAsset = toByte32Uint(myData[26:26+assetDataLen]);
-        uint amountDebt = toByte32Uint(myData[26+assetDataLen:]);
+        uint amountAsset = toByte32Uint(myData[46:46+assetDataLen]);
+        uint amountDebt = toByte32Uint(myData[46+assetDataLen:]);
         IUniswapV2Pair pair = IUniswapV2Pair(pool);
-        emit message("Asset:", amountAsset);
-        emit message("Debt:", amountDebt);
+        //emit message("Asset:", amountAsset);
+        //emit message("Debt:", amountDebt);
         uint amount0Out = amountAsset;
         uint amount1Out = 0;
         if (isXToY) {
             amount0Out = 0;
             amount1Out = amountAsset;
-            IERC20(pair.token0()).transfer(pool, amountDebt);
-        } else {
-            IERC20(pair.token1()).transfer(pool, amountDebt);
         }
+        IERC20(token).transfer(pool, amountDebt);
         pair.swap(amount0Out, amount1Out, msg.sender, "");
         if (nextFunction == 0x00000000) {
             done = true;
@@ -355,7 +337,7 @@ contract Aggregator {
 
     //0000003c
     function uniswapV2ExactOutPayToSelf_12BAA3(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV2ExactOutPayToSelf_12BAA3");
+        //emit s("uniswapV2ExactOutPayToSelf_12BAA3");
 
     (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
@@ -363,28 +345,27 @@ contract Aggregator {
 
         bool isXToY;
         address pool;
+        address token;
         uint8 assetDataLen;
         assembly {
             isXToY := shr(248, calldataload(add(myData.offset, 4)))
             pool := shr(96, calldataload(add(myData.offset, 5)))
-            assetDataLen := shr(248, calldataload(add(myData.offset, 25)))
+            token := shr(96, calldataload(add(myData.offset, 25)))
+            assetDataLen := shr(248, calldataload(add(myData.offset, 45)))
         }
         assetDataLen = assetDataLen / 2;
-
-        uint amountAsset = toByte32Uint(myData[26:26+assetDataLen]);
-        uint amountDebt = toByte32Uint(myData[26+assetDataLen:]);
+        uint amountAsset = toByte32Uint(myData[46:46+assetDataLen]);
+        uint amountDebt = toByte32Uint(myData[46+assetDataLen:]);
         IUniswapV2Pair pair = IUniswapV2Pair(pool);
-        emit message("Asset:", amountAsset);
-        emit message("Debt:", amountDebt);
+        //emit message("Asset:", amountAsset);
+        //emit message("Debt:", amountDebt);
         uint amount0Out = amountAsset;
         uint amount1Out = 0;
         if (isXToY) {
             amount0Out = 0;
             amount1Out = amountAsset;
-            IERC20(pair.token0()).transfer(pool, amountDebt);
-        } else {
-            IERC20(pair.token1()).transfer(pool, amountDebt);
         }
+        IERC20(token).transfer(pool, amountDebt);
         pair.swap(amount0Out, amount1Out, address(this), "");
         if (nextFunction == 0x00000000) {
             done = true;
@@ -395,34 +376,34 @@ contract Aggregator {
     }
     //00000082
     function uniswapV2ExactInPayToSelf_FDC770(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV2ExactInPayToSelf_FDC770");
+        //emit s("uniswapV2ExactInPayToSelf_FDC770");
 
     (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
         bool isXToY;
         address pool;
+        address token;
         uint8 assetDataLen;
         assembly {
             isXToY := shr(248, calldataload(add(myData.offset, 4)))
             pool := shr(96, calldataload(add(myData.offset, 5)))
-            assetDataLen := shr(248, calldataload(add(myData.offset, 25)))
+            token := shr(96, calldataload(add(myData.offset, 25)))
+            assetDataLen := shr(248, calldataload(add(myData.offset, 45)))
         }
         assetDataLen = assetDataLen / 2;
-        uint amountAsset = toByte32Uint(myData[26:26+assetDataLen]);
-        uint amountDebt = toByte32Uint(myData[26+assetDataLen:]);
+        uint amountAsset = toByte32Uint(myData[46:46+assetDataLen]);
+        uint amountDebt = toByte32Uint(myData[46+assetDataLen:]);
         IUniswapV2Pair pair = IUniswapV2Pair(pool);
-        emit message("Asset:", amountAsset);
-        emit message("Debt:", amountDebt);
+        //emit message("Asset:", amountAsset);
+        //emit message("Debt:", amountDebt);
         uint amount0Out = amountAsset;
         uint amount1Out = 0;
         if (isXToY) {
             amount0Out = 0;
             amount1Out = amountAsset;
-            IERC20(pair.token0()).transfer(pool, amountDebt);
-        } else {
-            IERC20(pair.token1()).transfer(pool, amountDebt);
         }
+        IERC20(token).transfer(pool, amountDebt);
         pair.swap(amount0Out, amount1Out, address(this), "");
         if (nextFunction == 0x00000000) {
             done = true;
@@ -434,27 +415,36 @@ contract Aggregator {
 
     //000000e5
     function uniswapV2ExactOutPayToAddress_E0E335(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV2ExactOutPayToAddress_E0E335");
+        //emit s("uniswapV2ExactOutPayToAddress_E0E335");
 
     (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
         bool isXToY;
         address pool;
+        address token;
         uint amount = toByte32Uint(myData[25 :]);
         address receiver;
+        uint8 assetDataLen;
+
         assembly {
             isXToY := shr(248, calldataload(add(myData.offset, 4)))
             pool := shr(96, calldataload(add(myData.offset, 5)))
-            receiver := shr(96, calldataload(add(myData.offset, 25)))
-        }
+            token := shr(96, calldataload(add(myData.offset, 25)))
+            receiver := shr(96, calldataload(add(myData.offset, 45)))
+            assetDataLen := shr(248, calldataload(add(myData.offset, 45)))
 
-        uint amount0Out = amount;
-        uint amount1Out = 0;
-        if (!isXToY) {
-            amount0Out = 0;
-            amount1Out = amount;
         }
+        assetDataLen = assetDataLen / 2;
+        uint amountAsset = toByte32Uint(myData[46:46+assetDataLen]);
+        uint amountDebt = toByte32Uint(myData[46+assetDataLen:]);
+        uint amount0Out = amountAsset;
+        uint amount1Out = 0;
+        if (isXToY) {
+            amount0Out = 0;
+            amount1Out = amountAsset;
+        }
+        IERC20(token).transfer(pool, amountDebt);
         IUniswapV2Pair pair = IUniswapV2Pair(pool);
         pair.swap(amount0Out, amount1Out, receiver, "");
         if (nextFunction == 0x00000000) {
@@ -466,27 +456,36 @@ contract Aggregator {
     }
     //00000059
     function uniswapV2ExactInPayToAddress_35CB03(bytes calldata data) public beforeEachStep {
-        emit s("uniswapV2ExactInPayToAddress_35CB03");
+        //emit s("uniswapV2ExactInPayToAddress_35CB03");
 
     (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
         bytes calldata myData = data[1 : dataLen];
         bool isXToY;
         address pool;
+        address token;
         uint amount = toByte32Uint(myData[25 :]);
         address receiver;
+        uint8 assetDataLen;
+
         assembly {
             isXToY := shr(248, calldataload(add(myData.offset, 4)))
             pool := shr(96, calldataload(add(myData.offset, 5)))
-            receiver := shr(96, calldataload(add(myData.offset, 25)))
-        }
+            token := shr(96, calldataload(add(myData.offset, 25)))
+            receiver := shr(96, calldataload(add(myData.offset, 45)))
+            assetDataLen := shr(248, calldataload(add(myData.offset, 45)))
 
-        uint amount0Out = 0;
-        uint amount1Out = amount;
-        if (!isXToY) {
-            amount0Out = amount;
-            amount1Out = 0;
         }
+        assetDataLen = assetDataLen / 2;
+        uint amountAsset = toByte32Uint(myData[46:46+assetDataLen]);
+        uint amountDebt = toByte32Uint(myData[46+assetDataLen:]);
+        uint amount0Out = amountAsset;
+        uint amount1Out = 0;
+        if (isXToY) {
+            amount0Out = 0;
+            amount1Out = amountAsset;
+        }
+        IERC20(token).transfer(pool, amountDebt);
         IUniswapV2Pair pair = IUniswapV2Pair(pool);
         pair.swap(amount0Out, amount1Out, receiver, "");
         if (nextFunction == 0x00000000) {
@@ -500,7 +499,7 @@ contract Aggregator {
 
     //000000ea
     function paySender_7437EA(bytes calldata data) public beforeEachStep {
-        emit s("paySender_7437EA");
+        //emit s("paySender_7437EA");
 
     (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
 
@@ -510,9 +509,9 @@ contract Aggregator {
         assembly {
             token := shr(96, calldataload(add(myData.offset, 4)))
         }
-        emit bal(amount);
-        emit message("WalletBalance", IERC20(token).balanceOf(address(this)));
-        emit acc(token);
+        //emit bal(amount);
+        //emit message("WalletBalance", IERC20(token).balanceOf(address(this)));
+        //emit acc(token);
         IERC20(token).transfer(msg.sender, amount);
         if (nextFunction == 0x00000000) {
             done = true;
@@ -523,7 +522,7 @@ contract Aggregator {
     }
     //00000081
     function payAddress_1A718EA(bytes calldata data) public beforeEachStep {
-        emit s("payAddress_1A718EA");
+        //emit s("payAddress_1A718EA");
 
     (uint8 dataLen, bytes4 nextFunction) = getMeta(data);
         bytes calldata myData = data[1 : dataLen];
@@ -534,9 +533,9 @@ contract Aggregator {
             token := shr(96, calldataload(add(myData.offset, 4)))
             receiver := shr(96, calldataload(add(myData.offset, 24)))
         }
-        emit acc(receiver);
-        emit message("WalletBalance", IERC20(token).balanceOf(address(this)));
-        emit bal(amount);
+        //emit acc(receiver);
+        //emit message("WalletBalance", IERC20(token).balanceOf(address(this)));
+        //emit bal(amount);
         IERC20(token).transfer(receiver, amount);
 
         if (nextFunction == 0x00000000) {
@@ -554,8 +553,8 @@ contract Aggregator {
         // amountToPay == debt, amountOut == asset
         (int256 amountToPay, int256 amountOut) =
         amount0Delta > 0 ? (amount0Delta, amount1Delta) : (amount1Delta, amount0Delta);
-        emit imessage("amountToPay:", amountToPay);
-        emit imessage("amountOut:", amountOut);
+        //emit imessage("amountToPay:", amountToPay);
+        //emit imessage("amountOut:", amountOut);
         (uint8 dataLen,) = getMeta(data);
         bytes4 nextFunction;
         assembly {

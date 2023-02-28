@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::types::{UniSwapV3Pool, UniSwapV3Token};
 use anyhow::{Error, Result};
 use ethers::abi::AbiEncode;
-use ethers::types::H160;
+use ethers::types::{Address, H160};
 use ethers::{
     abi::{ParamType, Token},
     prelude::abigen,
@@ -14,13 +14,16 @@ use ethers_providers::ProviderError::JsonRpcClientError;
 use byte_slice_cast::AsByteSlice;
 use ethers::prelude::builders::ContractCall;
 use tokio::task::JoinHandle;
-
+use std::str::FromStr;
+use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
 use crate::{CHECKED_COIN, U256};
+use crate::uniswap_v3::UniswapV3Metadata;
 abigen!(
     GetUniswapV3PoolDataBatchRequest,
     "src/abi/uniswap_v3/GetUniswapV3PoolDataBatchRequest.json";
-    SyncUniswapV3PoolBatchRequest,
-    "src/abi/uniswap_v3/SyncUniswapV3PoolBatchRequest.json";
+    GetUniswapV3TickData,
+    "src/abi/uniswap_v3/GetUniswapV3TickData.json";
 );
 abigen!(UniswapV3Pool, "src/abi/IUniswapV3Pool.json");
 abigen!(IERC20, "src/abi/IERC20.json");
@@ -45,20 +48,23 @@ pub async fn get_pool_data_batch_request(
             let token1_call = Box::pin(contract.token_1());
             let liquidity_call = Box::pin(contract.liquidity());
             let fee_call = Box::pin(contract.fee());
+            let tick_spacing_call = Box::pin(contract.fee());
             let slot_0_call = Box::pin(contract.slot_0());
-            let (token0r, token1r, liquidityr, feer, sqrt_pricer) =
+            let (token0r, token1r, liquidityr, feer, tick_spacing_r, sqrt_pricer) =
                   (
                       token0_call.call().await.map_err(|e| Error::msg(format!("Missing function token_0() for {}", hex_to_address_string(pool.encode_hex())))),
                       token1_call.call().await.map_err(|e| Error::msg(format!("Missing function token_1() for {}", hex_to_address_string(pool.encode_hex())))),
                       liquidity_call.call().await.map_err(|e| Error::msg(format!("Missing function liquidity() for {}", hex_to_address_string(pool.encode_hex())))),
                       fee_call.call().await.map_err(|e| Error::msg(format!("Missing function fee() for {}", hex_to_address_string(pool.encode_hex())))),
+                      tick_spacing_call.call().await.map_err(|e| Error::msg(format!("Missing function fee() for {}", hex_to_address_string(pool.encode_hex())))),
                       slot_0_call.call().await.map_err(|e| Error::msg(format!("Missing function slot_0() for {}", hex_to_address_string(pool.encode_hex()))))
                   );
 
-            if token0r.is_err() || token1r.is_err() || liquidityr.is_err() || feer.is_err() || sqrt_pricer.is_err() {
+            if token0r.is_err() || token1r.is_err() || liquidityr.is_err() || feer.is_err() || tick_spacing_r.is_err() || sqrt_pricer.is_err() {
                 return Err(Error::msg("Faild to load"))
             }
-            let (token0, token1, liquidity, fee, sqrt_price): (H160, H160, u128, u32, U256) = (token0r.unwrap(), token1r.unwrap(), liquidityr.unwrap(), feer.unwrap(), sqrt_pricer.unwrap().0);
+            let s = sqrt_pricer.unwrap();
+            let (token0, token1, liquidity, fee, tick_spacing, sqrt_price, tick): (H160, H160, u128, u32, u32, U256, i32) = (token0r.unwrap(), token1r.unwrap(), liquidityr.unwrap(), feer.unwrap(), tick_spacing_r.unwrap(), s.0, s.1);
             let token0_contract = IERC20::new(token0, provider.clone());
             let token1_contract = IERC20::new(token1, provider.clone());
             let token_0_decimals_call = Box::pin(token0_contract.decimals());
@@ -82,6 +88,8 @@ pub async fn get_pool_data_batch_request(
                     return Err(Error::msg(format!("Low Liquidity for pool {}", hex_to_address_string(pool.encode_hex()))))
                 }
             }
+
+
             if hex_to_address_string(token1.encode_hex()) == CHECKED_COIN.clone() {
                 if token_1_balance.le(&U256::from(10_u128.pow(18))) {
                     return Err(Error::msg(format!("Low Liquidity for pool {}", hex_to_address_string(pool.encode_hex()))))
@@ -90,6 +98,8 @@ pub async fn get_pool_data_batch_request(
             Ok(UniSwapV3Pool {
                 id: hex_to_address_string(pool.encode_hex()),
                 fee,
+                tick_spacing: tick_spacing as i32,
+                tick: tick,
                 token0: UniSwapV3Token {
                     id: hex_to_address_string(token0.encode_hex()),
                     ..Default::default()
@@ -119,6 +129,98 @@ pub async fn get_pool_data_batch_request(
         }
     }).collect());
 
+}
+
+
+#[derive(Serialize, Deserialize,Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
+pub struct UniswapV3TickData {
+    pub initialized: bool,
+    pub tick: i32,
+    pub liquidity_net: i128,
+}
+
+pub async fn get_uniswap_v3_tick_data_batch_request(
+    pool: &UniswapV3Metadata,
+    tick_start: i32,
+    zero_for_one: bool,
+    num_ticks: u16,
+    block_number: Option<u64>,
+    middleware: Arc<ethers_providers::Provider<ethers_providers::Ws>>,
+) -> Result<Vec<UniswapV3TickData>> {
+    let constructor_args = Token::Tuple(vec![
+        Token::Address(Address::from_str(&pool.address).unwrap()),
+        Token::Bool(zero_for_one),
+        Token::Int(I256::from(tick_start).into_raw()),
+        Token::Uint(U256::from(num_ticks)),
+        Token::Int(I256::from(pool.tick_spacing).into_raw()),
+    ]);
+
+    let deployer =
+        GetUniswapV3TickData::deploy(middleware.clone(), constructor_args).unwrap();
+
+    let return_data: Bytes = if block_number.is_some() {
+        deployer.block(block_number.unwrap()).call_raw().await?
+    } else {
+        deployer.call_raw().await?
+    };
+
+    let return_data_tokens = ethers::abi::decode(
+        &[
+            ParamType::Array(Box::new(ParamType::Tuple(vec![
+                ParamType::Bool,
+                ParamType::Int(24),
+                ParamType::Int(128),
+            ]))),
+            ParamType::Uint(32),
+        ],
+        &return_data,
+    )?;
+
+    //TODO: handle these errors instead of using expect
+    let tick_data_array = return_data_tokens[0]
+        .to_owned()
+        .into_array()
+        .expect("Failed to convert initialized_ticks from Vec<Token> to Vec<i128>");
+
+    let mut tick_data = vec![];
+
+    for tokens in tick_data_array {
+        if let Some(tick_data_tuple) = tokens.into_tuple() {
+            let initialized = tick_data_tuple[0]
+                .to_owned()
+                .into_bool()
+                .expect("Could not convert token to bool");
+
+            let initialized_tick = I256::from_raw(
+                tick_data_tuple[1]
+                    .to_owned()
+                    .into_int()
+                    .expect("Could not convert token to int"),
+            )
+                .as_i32();
+
+            let liquidity_net = I256::from_raw(
+                tick_data_tuple[2]
+                    .to_owned()
+                    .into_int()
+                    .expect("Could not convert token to int"),
+            )
+                .as_i128();
+
+            tick_data.push(UniswapV3TickData {
+                initialized,
+                tick: initialized_tick,
+                liquidity_net,
+            });
+        }
+    }
+
+    let block_number = return_data_tokens[1]
+        .to_owned()
+        .into_uint()
+        .expect("Failed to convert block_number from Token to U64");
+
+    Ok(tick_data)
 }
 
 fn hex_to_address_string(hex: String) -> String {

@@ -175,7 +175,7 @@ impl MevPath {
         re.reverse();
         let mut expanded = vec![];
 
-        for (index, pls) in [pools.clone(), re].iter().enumerate() {
+        for (index, pls) in [/*pools.clone(),*/ re].iter().enumerate() {
             for i in 0..2_u64.pow(pls.len() as u32) {
                 expanded.push(vec![]);
             }
@@ -203,8 +203,7 @@ impl MevPath {
                         }
                     }
                 }
-        }
-
+            }
         }
 
         let mut paths = vec![];
@@ -237,14 +236,19 @@ impl MevPath {
     fn estimate_gas_unit_cost(path: Vec<MevPathStep>) -> u64 {
         1
     }
-    fn validate_path(&self, mut path: Vec<MevPathStep>) -> anyhow::Result<bool> {
+    fn validate_path(&self, mut path: Vec<MevPathStep>) -> anyhow::Result<String> {
         // binary search for optimal input
         let mut best_route_size = 0.0;
         let mut best_route_profit = I256::from(0);
         let mut best_route_index = 0;
-        let mut mid = MAX_SIZE.clone() / 2.0;
+        let mut mid = if !path.first().unwrap().is_exact_in() && path.first().unwrap().get_pool().supports_callback_payment() {
+            MAX_SIZE.clone() / 2.0
+        } else {
+            MAX_SIZE.clone() / 2.0
+
+        };
         let mut left = 0.0;
-        let mut right = MAX_SIZE.clone();
+        let mut right = mid * 2.0;
         let decimals = crate::decimals(self.input_token.clone());
         let mut instructions = vec![];
 
@@ -263,7 +267,7 @@ impl MevPath {
                 }
             }).collect::<Vec<usize>>();
         debug!("\n\n\n");
-        'binary_search: for i in 0..20 {
+        'binary_search: for i in 0..1 {
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
 
             let mut balance: HashMap<String, HashMap<String, I256>> = HashMap::new();
@@ -348,7 +352,7 @@ impl MevPath {
                             let mut d: I256 = I256::from(0);
                             let mut a: I256 = I256::from(0);
 
-
+                            let dt = debt_token.clone();
                             if step.get_pool().supports_pre_payment() && *balance.get(&pool.address).unwrap().get(&debt_token).unwrap() > I256::from(0) {
                                 let mut debt = *balance.get(&pool.address).unwrap().get(&debt_token).unwrap();
                                 if debt < I256::from(0) {
@@ -589,12 +593,12 @@ impl MevPath {
                                     .insert(asset_token, bal + (asset));
                             }
                             else if asset_token == self.input_token && index == 0 {
-                                warn!("Unproccessable step");
+                                debug!("Unproccessable step");
                                 return Err(anyhow::Error::msg("Unproccessable Step"))
                             }
 
                             else {
-                                warn!("Can not process step");
+                                debug!("Can not process step");
                                 continue 'inner;
                             }
 
@@ -611,7 +615,16 @@ impl MevPath {
                                         };
                                         let packed_asset = Self::encode_packed(a);
                                         let packed_debt = Self::encode_packed(d);
-                                        instruction.push(function + if pool.x_to_y { "01" } else { "00" } + &pool.address[2..] + &pay_to + &(packed_debt.len() as u8).encode_hex()[64..] + &packed_debt + &packed_asset)
+                                        instruction.push(
+                                            function +
+                                                if pool.x_to_y { "01" } else { "00" } +
+                                                &pool.address[2..] +
+                                                &dt[2..] +
+                                                &pay_to +
+                                                &(packed_asset.len() as u8).encode_hex()[64..] +
+                                                &packed_asset +
+                                                &packed_debt
+                                        )
                                     }
                                     LiquidityProviderId::UniswapV3 => {
                                         // update with ...
@@ -622,7 +635,13 @@ impl MevPath {
                                         } else {
                                             (UNISWAP_V3_EXACT_IN_PAY_TO_SELF.to_string(), "".to_string())
                                         };
-                                        instruction.push(function + if pool.x_to_y { "01" } else { "00" } + &pool.address[2..] + &pay_to + &Self::encode_packed(d))
+                                        instruction.push(
+                                            function +
+                                                if pool.x_to_y { "01" } else { "00" } +
+                                                &pool.address[2..] +
+                                                &pay_to +
+                                                &Self::encode_packed(d)
+                                        )
                                     }
                                 }
                             } else {
@@ -638,7 +657,16 @@ impl MevPath {
                                         };
                                         let packed_asset = Self::encode_packed(a);
                                         let packed_debt = Self::encode_packed(d);
-                                        instruction.push(function + if pool.x_to_y { "01" } else { "00" } + &pool.address[2..] + &pay_to + &(packed_asset.len() as u8).encode_hex()[64..] + &packed_asset + &packed_debt)
+                                        instruction.push(
+                                            function +
+                                                if pool.x_to_y { "01" } else { "00" } +
+                                                &pool.address[2..] +
+                                                &dt[2..] +
+                                                &pay_to +
+                                                &(packed_asset.len() as u8).encode_hex()[64..] +
+                                                &packed_asset +
+                                                &packed_debt
+                                        )
                                     }
                                     LiquidityProviderId::UniswapV3 => {
                                         // update with ...
@@ -649,7 +677,13 @@ impl MevPath {
                                         } else {
                                             (UNISWAP_V3_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string())
                                         };
-                                        instruction.push(function + if pool.x_to_y { "01" } else { "00" } + &pool.address[2..] + &pay_to + &Self::encode_packed(a))
+                                        instruction.push(
+                                            function +
+                                                if pool.x_to_y { "01" } else { "00" } +
+                                                &pool.address[2..] +
+                                                &pay_to +
+                                                &Self::encode_packed(a)
+                                        )
                                     }
                                 }
                             }
@@ -765,18 +799,24 @@ impl MevPath {
             }
         }
 
-        info!("Profit: {}\n{} {}", best_route_profit.as_i128() as f64 / 10_f64.powf(18.0),path.len(),Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+        info!("Size: {} Profit: {}\n{} {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0),path.len(),Self::path_to_solidity_test(&path, &instructions[best_route_index]));
         for step in &path {
             info!("{} -> {}", step, step.get_output());
         }
         info!("\n\n\nDone path\n\n\n");
         if best_route_profit > I256::from(0) {
 
-            Ok(true)
+            let mut final_data = "".to_string();
+            for ix in instructions[best_route_index].clone() {
+                let end = ix.len() as u8;
+                final_data += &end.encode_hex()[64..];
+                final_data += &ix;
+            }
+            Ok(final_data)
         } else if best_route_profit == I256::from(0) {
             Err(anyhow::Error::msg("Inv Path"))
         } else {
-            Ok(false)
+            Ok("NO PROFIT".to_string())
         }
     }
 
@@ -861,10 +901,35 @@ impl MevPath {
             .collect::<Vec<(usize, &Vec<MevPathStep>)>>()
         {
             // TODO: use transaction builder
+
         }
 
         MevPathUpdateResult {
             transactions: vec![],
+        }
+    }
+    pub fn get_transactions(&self) {
+        for (index, path) in self
+            .paths
+            .iter()
+            .enumerate()
+            .collect::<Vec<(usize, &Vec<MevPathStep>)>>()
+        {
+            let is_good = self.validate_path(path.clone());
+            match &is_good {
+                Ok(data) => {
+                    if data == "NO PROFIT" {
+                        continue
+                    } else {
+                        println!("{}", data)
+                    }
+                },
+                Err(e) => {
+                    error!("{:?}", e);
+
+                }
+            }
+
         }
     }
 

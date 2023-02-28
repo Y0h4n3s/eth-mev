@@ -81,7 +81,7 @@ impl LiquidityProvider for UniSwapV2 {
         tokio::spawn(async move {
             let client = reqwest::Client::new();
             let eth_client = Arc::new(
-                Provider::<Ws>::connect("ws://65.21.198.115:8546")
+                Provider::<Ws>::connect("ws://89.58.31.215:8546")
                     .await
                     .unwrap(),
             );
@@ -95,7 +95,7 @@ impl LiquidityProvider for UniSwapV2 {
             let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
-            for i in (pairs_length.as_usize()-100000..pairs_length.as_usize()).step_by(step) {
+            for i in (pairs_length.as_usize()-20000..pairs_length.as_usize()).step_by(step) {
                 let mut w = indices.lock().await;
                 w.push_back((i, i + step));
             }

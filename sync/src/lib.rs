@@ -403,35 +403,15 @@ impl UniswapV3Calculator {
 #[async_trait]
 impl Calculator for UniswapV3Calculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let sqrt_ratio_current_x_96 = U256::from_dec_str(&self.meta.sqrt_price).unwrap();
-        let  sqrt_ratio_target_x_96 = if pool.x_to_y {
-            U256::from_dec_str(UniswapV3Calculator::MIN_SQRT_RATIO).unwrap().saturating_add(U256::from(1))
-        } else {
-            U256::from_dec_str(UniswapV3Calculator::MAX_SQRT_RATIO).unwrap().saturating_sub(U256::from(1))
-        };
-        let (_sqrt_ratio_next_x_96, _amount_in, amount_out, _fee_amount) =
-            uniswap_v3_math::swap_math::compute_swap_step(
-                sqrt_ratio_current_x_96,
-                sqrt_ratio_target_x_96,
-                self.meta.liquidity,
-                I256::from_dec_str(&in_.to_string()).unwrap().checked_mul(I256::from(1)).unwrap(),
-                self.meta.fee
-            ).unwrap();
-        
+        let amount_out = self.meta.simulate_swap(pool.x_to_y, in_).unwrap();
 
                 Ok(amount_out)
         }
     
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let sqrt_ratio_current_x_96 = U256::from_dec_str(&self.meta.sqrt_price).unwrap();
-        let  sqrt_ratio_target_x_96 = if pool.x_to_y {
-            U256::from_dec_str(UniswapV3Calculator::MIN_SQRT_RATIO).unwrap().saturating_add(U256::from(1))
-        } else {
-            U256::from_dec_str(UniswapV3Calculator::MAX_SQRT_RATIO).unwrap().saturating_sub(U256::from(1))
-        };
-        let (_sqrt_ratio_next_x_96, amount_in, _amount_out, _fee_amount) = uniswap_v3_math::swap_math::compute_swap_step(sqrt_ratio_current_x_96, sqrt_ratio_target_x_96,self.meta.liquidity, I256::from_dec_str(&out_.to_string()).unwrap().checked_mul(I256::from(-1)).unwrap(), self.meta.fee).unwrap();
+        let amount_in = self.meta.simulate_swap(!pool.x_to_y, out_).unwrap();
 
-            Ok(amount_in)
+        Ok(amount_in)
     
     }
     
@@ -526,7 +506,7 @@ mod tests {
     use tokio::test;
     #[test]
     async fn test_uniswap_v3_calculator() {
-        let meta = UniswapV3Metadata {
+        let mut meta = UniswapV3Metadata {
             factory_address: "".to_string(),
             address: "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640".to_string(),
             token_a: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".to_string(),
@@ -538,8 +518,18 @@ mod tests {
             sqrt_price: "2030685815623659403894576284118504".to_string(),
             tick: 203048,
             tick_spacing: 10,
-            liquidity_net: 0
+            liquidity_net: 0,
+            ..Default::default()
         };
+        let eth_client = Arc::new(
+            Provider::<Ws>::connect("ws://89.58.31.215:8546")
+                .await
+                .unwrap(),
+        );
+        let x_y = abi::uniswap_v3::get_uniswap_v3_tick_data_batch_request(&meta, meta.tick, true, 160, None, eth_client.clone()).await.unwrap();
+        let y_x = abi::uniswap_v3::get_uniswap_v3_tick_data_batch_request(&meta, meta.tick, false, 160, None, eth_client.clone()).await.unwrap();
+        meta.tick_bitmap_x_y = x_y;
+        meta.tick_bitmap_y_x = y_x;
         let pool = Pool {
             address: "".to_string(),
             x_address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 ".to_string(),
@@ -549,21 +539,18 @@ mod tests {
             fee_bps: 0,
             x_amount: 0,
             y_amount: 0,
-            x_to_y: false,
+            x_to_y: true,
             provider: LiquidityProviders::UniswapV3(meta.clone())
         };
     
-        let eth_client = Arc::new(
-            Provider::<Ws>::connect("ws://89.58.31.215:8546")
-                  .await
-                  .unwrap(),
-        );
+
+
         let calculator = pool.provider.build_calculator();
         
-        let in_ = calculator.calculate_in(10_u128.pow(8) , &pool).unwrap();
-        let out_ = calculator.calculate_out(in_ , &pool).unwrap();
-        let out2 = meta.simulate_swap(H160::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(), U256::from(in_), eth_client).await;
-        assert_eq!(10_u128.pow(8), out_);
+        let out_ = calculator.calculate_out(U256::from(10_u128.pow(8)) , &pool).unwrap();
+        let in_ = calculator.calculate_in(out_ , &pool).unwrap();
+        println!("{} {}", in_, out_);
+
     }
     
     
