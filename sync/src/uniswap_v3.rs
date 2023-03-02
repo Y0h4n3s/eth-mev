@@ -15,7 +15,7 @@ use async_std::sync::Arc;
 use async_trait::async_trait;
 use bincode::{Decode, Encode};
 use coingecko::response::coins::CoinsMarketItem;
-use ethers::abi::{Address, Uint};
+use ethers::abi::{AbiEncode, Address, Uint};
 use ethers::abi::{ParamType, Token};
 use ethers::providers::{Http, Middleware, Provider,StreamExt};
 use ethers::types::BlockNumber;
@@ -328,7 +328,7 @@ impl UniswapV3Metadata {
                     }
 
                     current_state.liquidity = if liquidity_net < 0 {
-                        current_state.liquidity - (-liquidity_net as u128)
+                        current_state.liquidity.checked_sub((-liquidity_net as u128)).unwrap_or(0)
                     } else {
                         current_state.liquidity + (liquidity_net as u128)
                     };
@@ -353,7 +353,7 @@ impl UniswapV3Metadata {
     }
 }
 
-const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 15969621;
+const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 11969621;
 
 pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
     120, 60, 202, 28, 4, 18, 221, 13, 105, 94, 120, 69, 104, 201, 109, 162, 233, 194, 47, 249, 137,
@@ -385,6 +385,7 @@ struct ApiResponse<T> {
 }
 
 // try to load from api and if it fails, load from local cache
+// TODO: combine data and tick bitmap loader solidity script
 #[async_trait]
 impl LiquidityProvider for UniSwapV3 {
     type Metadata = Box<dyn Meta>;
@@ -435,6 +436,8 @@ impl LiquidityProvider for UniSwapV3 {
 
                 if let Some((from_block, to_block)) = span {
                     let eth_client = eth_client.clone();
+                    let filter_tokens = filter_tokens.clone();
+                    let pools = pools.clone();
                     handles.push(tokio::spawn(async move {
                         if let Ok(logs) = eth_client
                             .get_logs(
@@ -450,30 +453,58 @@ impl LiquidityProvider for UniSwapV3 {
                         {
                             for chunk in logs
                                 .iter()
-                                .map(|log| {
+                                .filter_map(|log| {
+
+                                    let token_a = hex_to_address_string(log.topics.get(1).unwrap().encode_hex());
+                                    let token_b = hex_to_address_string(log.topics.get(2).unwrap().encode_hex());
+                                    if !(filter_tokens.iter().any(|token| token == &token_a)
+                                        && filter_tokens.iter().any(|token| token == &token_b))
+                                    {
+                                        return None;
+                                    }
                                     let tokens = ethers::abi::decode(
                                         &[ParamType::Uint(32), ParamType::Address],
                                         &log.data,
                                     )
                                     .unwrap();
                                     match tokens.get(1).unwrap() {
-                                        Token::Address(addr) => addr.clone(),
+                                        Token::Address(addr) => Some(addr.clone()),
                                         _ => Default::default(),
                                     }
                                 })
                                 .collect::<Vec<H160>>()
                                 .as_slice()
-                                .chunks(76)
+                                .chunks(9)
                             {
                                 let pairs_data =
-                                    crate::abi::uniswap_v3::get_pool_data_batch_request(
+                                    crate::abi::uniswap_v3::get_complete_pool_data_batch_request(
                                         chunk.to_vec(),
                                         eth_client.clone(),
                                     )
                                     .await;
                                 if let Ok(mut pairs_data) = pairs_data {
-                                    let mut w = pairs.write().await;
-                                    w.append(&mut pairs_data);
+                                    for meta in pairs_data {
+                                        let pool = Pool {
+                                            address: meta.address.clone(),
+                                            x_address: meta.token_a.clone(),
+                                            fee_bps: meta.fee as u64,
+                                            y_address: meta.token_b.clone(),
+                                            curve: None,
+                                            curve_type: Curve::Uncorrelated,
+                                            x_amount: 0,
+                                            y_amount: 0,
+                                            x_to_y: true,
+                                            provider: LiquidityProviders::UniswapV3(meta),
+                                        };
+                                        if !(filter_tokens.iter().any(|token| token == &pool.x_address)
+                                            && filter_tokens.iter().any(|token| token == &pool.y_address))
+                                        {
+                                            continue;
+                                        }
+
+                                        let mut w = pools.write().await;
+                                        w.insert(pool.address.clone(), pool);
+                                    }
                                 } else {
                                     eprintln!("{:?}", pairs_data.unwrap_err())
                                 }
@@ -487,48 +518,7 @@ impl LiquidityProvider for UniSwapV3 {
                 handle.await;
             }
 
-            for pair in pairs.read().await.iter() {
-                if !(filter_tokens.iter().any(|token| token == &pair.token0.id)
-                    && filter_tokens.iter().any(|token| token == &pair.token1.id))
-                {
-                    continue;
-                }
-                if pair.liquidity == 0 {
-                    continue
-                }
-                let mut meta = UniswapV3Metadata {
-                    address: pair.id.clone(),
-                    token_a: pair.token0.id.clone(),
-                    token_b: pair.token1.id.clone(),
-                    token_a_decimals: pair.token0_decimals,
-                    token_b_decimals: pair.token1_decimals,
-                    sqrt_price: pair.sqrt_price.clone(),
-                    liquidity: pair.liquidity,
-                    fee: pair.fee,
-                    tick_spacing: pair.tick_spacing,
-                    tick: pair.tick,
-                    ..Default::default()
-                };
 
-                let x_y = get_uniswap_v3_tick_data_batch_request(&meta, meta.tick, true, 160, None, eth_client.clone()).await.unwrap();
-                let y_x = get_uniswap_v3_tick_data_batch_request(&meta, meta.tick, false, 160, None, eth_client.clone()).await.unwrap();
-                meta.tick_bitmap_x_y = x_y;
-                meta.tick_bitmap_y_x = y_x;
-                let pool = Pool {
-                    address: pair.id.clone(),
-                    x_address: pair.token0.id.clone(),
-                    fee_bps: 30,
-                    y_address: pair.token1.id.clone(),
-                    curve: None,
-                    curve_type: Curve::Uncorrelated,
-                    x_amount: 0,
-                    y_amount: 0,
-                    x_to_y: true,
-                    provider: LiquidityProviders::UniswapV3(meta),
-                };
-                let mut w = pools.write().await;
-                w.insert(pool.address.clone(), pool);
-            }
             println!(
                 "{:?} Pools: {}",
                 LiquidityProviderId::UniswapV3,
@@ -540,7 +530,9 @@ impl LiquidityProvider for UniSwapV3 {
         LiquidityProviderId::UniswapV3
     }
 }
-
+fn hex_to_address_string(hex: String) -> String {
+    ("0x".to_string() + hex.split_at(26).1).to_string()
+}
 impl EventEmitter for UniSwapV3 {
     type EventType = Box<dyn EventSource<Event = PoolUpdateEvent>>;
     fn get_subscribers(&self) -> Arc<RwLock<Vec<AsyncSender<Self::EventType>>>> {
@@ -576,12 +568,12 @@ impl EventEmitter for UniSwapV3 {
                                     .address(ValueOrArray::Array(vec![pool.address.parse().unwrap()]));
     
                         let mut stream = event.subscribe_with_meta().await.unwrap();
-    
                         while let Some(Ok((log, meta))) = stream.next().await {
                             if let Some(mut pool_meta) = match pool.clone().provider {
                                 LiquidityProviders::UniswapV3(pool_meta) => Some(pool_meta),
                                 _ => None
                             } {
+
                                 pool_meta.sqrt_price = log.sqrt_price_x96.to_string();
                                 pool_meta.liquidity = log.liquidity;
                                 pool_meta.tick = log.tick;

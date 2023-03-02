@@ -8,17 +8,18 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
-
-use ethers::types::{Eip1559TransactionRequest, U128};
+use std::str::FromStr;
+use ethers::types::{Eip1559TransactionRequest, U128, U64};
 use garb_sync_eth::{
     uniswap_v2::UniswapV2Metadata, uniswap_v3::UniswapV3Metadata, LiquidityProviderId,
     LiquidityProviders, Pool, PoolInfo, UniswapV3Calculator,
 };
 // helper trait to filter solutions of interest
 use crate::MAX_SIZE;
-use ethers::abi::AbiEncode;
+use ethers::abi::{AbiEncode, ParamType, StateMutability, Token};
 use itertools::Itertools;
 use ethers::types::{U256, I256};
+use ethers::types::transaction::eip2930::AccessList;
 use tracing::{warn, debug, error, info};
 const MINIMUM_PATH_LENGTH: usize = 2;
 const UNISWAP_V3_EXACT_OUT_PAY_TO_SENDER: &str = "0000004b";
@@ -39,11 +40,33 @@ const PAY_ADDRESS: &str = "00000081";
 const PAY_SENDER: &str = "000000ea";
 
 
+fn hash_to_function_name(hash: &String) -> String {
+    match hash.as_str() {
+        "0000004b" => "uniswapV3ExactOutPayToSender_A729BB".to_string(),
+        "000000d0" => "uniswapV3ExactInPayToSender_1993B5C".to_string(),
+        "000000e1" => "uniswapV3ExactOutPayToSelf_1377F03".to_string(),
+        "000000fc" => "uniswapV3ExactInPayToSelf_A9C0BD".to_string(),
+        "000000c9" => "uniswapV3ExactOutPayToAddress_37EB331".to_string(),
+        "00000091" => "uniswapV3ExactInPayToAddress_8F71A6".to_string(),
+
+        "00000015" => "uniswapV2ExactOutPayToSender_31D5F3".to_string(),
+        "000000cd" => "uniswapV2ExactInPayToSender_120576".to_string(),
+        "0000003c" => "uniswapV2ExactOutPayToSelf_12BAA3".to_string(),
+        "00000082" => "uniswapV2ExactInPayToSelf_FDC770".to_string(),
+        "000000e5" => "uniswapV2ExactOutPayToAddress_E0E335".to_string(),
+        "00000059" => "uniswapV2ExactInPayToAddress_35CB03".to_string(),
+
+        "00000081" => "payAddress_1A718EA".to_string(),
+        "000000ea" => "paySender_7437EA".to_string(),
+        _ => "".to_string()
+    }
+}
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Default)]
 pub struct MevPath {
     pub paths: Vec<Vec<MevPathStep>>,
     pub pools: Vec<Pool>,
     pub input_token: String,
+
 }
 
 
@@ -233,8 +256,15 @@ impl MevPath {
         }
         debug!("{}\n", fin);
     }
-    fn estimate_gas_unit_cost(path: Vec<MevPathStep>) -> u64 {
-        1
+    fn estimate_gas_cost(path: &Vec<MevPathStep>) -> u64 {
+        let mut gas = 0;
+        for p in path {
+            match p.get_pool().provider.id() {
+                LiquidityProviderId::SushiSwap | LiquidityProviderId::UniswapV2 => gas += 150000,
+                LiquidityProviderId::UniswapV3 => gas += 250000
+            }
+        }
+        gas
     }
     fn validate_path(&self, mut path: Vec<MevPathStep>) -> anyhow::Result<String> {
         // binary search for optimal input
@@ -247,6 +277,9 @@ impl MevPath {
             MAX_SIZE.clone() / 2.0
 
         };
+        if !path.first().unwrap().get_pool().supports_callback_payment() {
+            return Ok("NO PROFIT".to_string());
+        }
         let mut left = 0.0;
         let mut right = mid * 2.0;
         let decimals = crate::decimals(self.input_token.clone());
@@ -267,7 +300,7 @@ impl MevPath {
                 }
             }).collect::<Vec<usize>>();
         debug!("\n\n\n");
-        'binary_search: for i in 0..1 {
+        'binary_search: for i in 0..20 {
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
 
             let mut balance: HashMap<String, HashMap<String, I256>> = HashMap::new();
@@ -799,13 +832,16 @@ impl MevPath {
             }
         }
 
-        info!("Size: {} Profit: {}\n{} {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0),path.len(),Self::path_to_solidity_test(&path, &instructions[best_route_index]));
-        for step in &path {
-            info!("{} -> {}", step, step.get_output());
-        }
-        info!("\n\n\nDone path\n\n\n");
-        if best_route_profit > I256::from(0) {
 
+        if best_route_profit > I256::from(0) {
+            if best_route_profit.as_u128() > (0.3 * best_route_size) as u128 {
+                return Ok("NO PROFIT".to_string())
+            }
+            info!("Size: {} Profit: {}\n{} {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0),path.len(),Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+            for step in &path {
+                info!("{} -> {}", step, step.get_output());
+            }
+            info!("\n\n\nDone path\n\n\n");
             let mut final_data = "".to_string();
             for ix in instructions[best_route_index].clone() {
                 let end = ix.len() as u8;
@@ -908,7 +944,8 @@ impl MevPath {
             transactions: vec![],
         }
     }
-    pub fn get_transactions(&self) {
+    pub fn get_transactions(&self) -> Vec<Eip1559TransactionRequest> {
+        let mut transactions = vec![];
         for (index, path) in self
             .paths
             .iter()
@@ -921,16 +958,58 @@ impl MevPath {
                     if data == "NO PROFIT" {
                         continue
                     } else {
-                        println!("{}", data)
+                    let function_name = hash_to_function_name(&data[2..10].to_string());
+                    debug!("Entry function {}", function_name);
+                        let call_function = ethers::abi::Function {
+                                name: function_name,
+                                inputs: vec![
+                                    ethers::abi::Param {
+                                        name: "data".to_string(),
+                                        kind: ParamType::Bytes,
+                                        internal_type: None
+                                    },
+
+                                ],
+                                outputs: vec![],
+                                constant: None,
+                                state_mutability: StateMutability::View
+                            };
+
+
+                        let tx_data = ethers::contract::encode_function_data(&call_function, Token::Bytes(ethers::types::Bytes::from_str( data ).unwrap().to_vec())).unwrap();
+
+                            // gas * max_priority_fee_per_gas / 10 ^ 8 <= profit amount
+                    let gas =     U256::from(MevPath::estimate_gas_cost(path));
+
+                    let tx_request = Eip1559TransactionRequest {
+                                // update later
+                                to: None,
+                                // update later
+                                from: None,
+                                data: Some(tx_data),
+                                chain_id: Some(U64::from(1)),
+                                max_priority_fee_per_gas: Some(U256::from(0)),
+                                // update later
+                                max_fee_per_gas: Some(U256::from(0)),
+                                gas: Some(gas),
+                                // update later
+                                nonce: Some(U256::from(0)),
+                                value: None,
+                                access_list: AccessList::default(),
+                            };
+                        transactions.push(tx_request);
+                        debug!("Data: {}", data)
                     }
                 },
                 Err(e) => {
-                    error!("{:?}", e);
+                    warn!("{:?}", e);
 
                 }
             }
 
         }
+        transactions
+
     }
 
     pub fn is_valid(&self) -> bool {

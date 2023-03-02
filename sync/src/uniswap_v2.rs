@@ -95,7 +95,7 @@ impl LiquidityProvider for UniSwapV2 {
             let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
-            for i in (pairs_length.as_usize()-20000..pairs_length.as_usize()).step_by(step) {
+            for i in (0..pairs_length.as_usize()).step_by(step) {
                 let mut w = indices.lock().await;
                 w.push_back((i, i + step));
             }
@@ -215,8 +215,7 @@ impl EventEmitter for UniSwapV2 {
                                 .from_block(latest_block)
                                 .address(ValueOrArray::Array(vec![pool.address.parse().unwrap()]));
 
-                        let mut stream = event.subscribe_with_meta().await.unwrap().take(2);
-
+                        let mut stream = event.subscribe_with_meta().await.unwrap();
                         while let Some(Ok((log, meta))) = stream.next().await {
                             pool.x_amount = log.reserve_0;
                             pool.y_amount = log.reserve_1;

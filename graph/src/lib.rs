@@ -31,6 +31,7 @@ use petgraph::{
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::iter::from_fn;
+use ethers::types::{Eip1559TransactionRequest, U256};
 use tokio::runtime::Runtime;
 use tokio::sync::{RwLock, Semaphore};
 use tokio::time::Duration;
@@ -91,7 +92,7 @@ pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
 pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PoolUpdateEvent>>>,
-    routes: Arc<RwLock<kanal::AsyncSender<Order>>>,
+    routes: Arc<RwLock<kanal::AsyncSender<Eip1559TransactionRequest>>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
     Graph::<String, Pool, Undirected>::new_undirected();
@@ -525,7 +526,13 @@ DETACH DELETE n",
 
                         for mut route in market_routes {
                             route.update(pool.clone());
-                            route.get_transactions();
+                            let transactions = route.get_transactions();
+                            // println!("{:?}", transactions);
+                            for tx in transactions {
+                                let mut mut_tx = tx.clone();
+                                mut_tx.value = Some(U256::from(event.block_number));
+                                routes.write().await.send(mut_tx).await.unwrap()
+                            }
                         }
                     } else {
                         // eprintln!("graph service> No routes found for {}", updated_market);

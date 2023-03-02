@@ -16,6 +16,7 @@ use ethers::prelude::builders::ContractCall;
 use tokio::task::JoinHandle;
 use std::str::FromStr;
 use bincode::{Decode, Encode};
+use nom::character::complete::i128;
 use serde::{Deserialize, Serialize};
 use crate::{CHECKED_COIN, U256};
 use crate::uniswap_v3::UniswapV3Metadata;
@@ -24,6 +25,8 @@ abigen!(
     "src/abi/uniswap_v3/GetUniswapV3PoolDataBatchRequest.json";
     GetUniswapV3TickData,
     "src/abi/uniswap_v3/GetUniswapV3TickData.json";
+    UniswapV3DataAggregator,
+    "src/abi/uniswap_v3/UniswapV3DataAggregator.json";
 );
 abigen!(UniswapV3Pool, "src/abi/IUniswapV3Pool.json");
 abigen!(IERC20, "src/abi/IERC20.json");
@@ -130,6 +133,160 @@ pub async fn get_pool_data_batch_request(
     }).collect());
 
 }
+const MAX_TICK_SIZE: u64 = 887272;
+pub async fn get_complete_pool_data_batch_request<M: Middleware>(
+    pairs: Vec<H160>,
+    middleware: Arc<M>,
+) -> Result<Vec<UniswapV3Metadata>> {
+    let mut target_addresses = vec![];
+    for pair in pairs.iter() {
+        target_addresses.push(Token::Address(pair.clone()));
+    }
+
+
+    let mut final_pairs = vec![];
+    let constructor_args = Token::Tuple(vec![Token::Array(target_addresses)]);
+
+    let deployer =
+        UniswapV3DataAggregator::deploy(middleware.clone(), constructor_args).unwrap();
+
+    loop {
+        let call = deployer.call_raw().await;
+        if let Ok(return_data) = call {
+            let return_data_tokens = ethers::abi::decode(
+                &[ParamType::Array(Box::new(ParamType::Tuple(vec![
+                    ParamType::Address,   // token a
+                    ParamType::Uint(8),   // token a decimals
+                    ParamType::Address,   // token b
+                    ParamType::Uint(8),   // token b decimals
+                    ParamType::Uint(128), // liquidity
+                    ParamType::Uint(160), // sqrtPrice
+                    ParamType::Int(24),   // tick
+                    ParamType::Int(24),   // tickSpacing
+                    ParamType::Uint(24),  // fee
+                    ParamType::Int(128),  // liquidityNet
+                    ParamType::Array(Box::new(ParamType::Tuple(vec![
+                        ParamType::Bool,
+                        ParamType::Int(24),
+                        ParamType::Int(128)
+                    ]))),                  // tickBitmapXY
+                    ParamType::Array(Box::new(ParamType::Tuple(vec![
+                        ParamType::Bool,
+                        ParamType::Int(24),
+                        ParamType::Int(128)
+                    ])))                    // tickBitmapXY
+                ])))],
+                &return_data,
+            )?;
+
+            let mut pool_idx = 0;
+
+            for tokens in return_data_tokens {
+                if let Some(tokens_arr) = tokens.into_array() {
+                    for tup in tokens_arr {
+                        if let Some(pool_data) = tup.into_tuple() {
+                            if !pool_data[0].to_owned().into_address().unwrap().is_zero()
+                                && !pool_data[2].to_owned().into_address().unwrap().is_zero()
+                            {
+                                //Update the pool data
+                                if let Some(pair_address) = pairs.get(pool_idx) {
+
+                                    let u_pair = UniswapV3Metadata {
+                                        address: hex_to_address_string(pair_address.encode_hex()),
+                                        token_a: hex_to_address_string(
+                                                pool_data[0]
+                                                    .to_owned()
+                                                    .into_address()
+                                                    .unwrap()
+                                                    .encode_hex(),
+                                            ),
+                                        token_b: hex_to_address_string(
+                                                pool_data[2]
+                                                    .to_owned()
+                                                    .into_address()
+                                                    .unwrap()
+                                                    .encode_hex(),
+                                            ),
+                                        token_a_decimals: pool_data[1]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .as_u32() as u8,
+                                        token_b_decimals: pool_data[3]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .as_u32() as u8,
+                                        liquidity: pool_data[4]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .as_u128(),
+                                        sqrt_price: pool_data[5]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .to_string(),
+                                        tick: I256::from_raw(pool_data[6]
+                                            .to_owned()
+                                            .into_int()
+                                            .unwrap())
+                                            .as_i32(),
+                                        tick_spacing: pool_data[7]
+                                            .to_owned()
+                                            .into_int()
+                                            .unwrap()
+                                            .to_string()
+                                            .parse::<i32>()
+                                            .unwrap(),
+                                        fee: pool_data[8]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .as_u32(),
+                                        liquidity_net: I256::from_raw(pool_data[9]
+                                            .to_owned()
+                                            .into_int()
+                                            .unwrap())
+                                            .as_i128(),
+                                        tick_bitmap_x_y: pool_data[10]
+                                            .to_owned()
+                                            .into_array()
+                                            .unwrap()
+                                            .into_iter()
+                                            .map(|t| UniswapV3TickData::from_tokens(t.into_tuple().unwrap()))
+                                            .collect::<Vec<UniswapV3TickData>>(),
+                                        tick_bitmap_y_x: pool_data[11]
+                                            .to_owned()
+                                            .into_array()
+                                            .unwrap()
+                                            .into_iter()
+                                            .map(|t| UniswapV3TickData::from_tokens(t.into_tuple().unwrap()))
+                                            .collect::<Vec<UniswapV3TickData>>(),
+                                        ..Default::default()
+                                    };
+                                    final_pairs.push(u_pair);
+                                }
+                            }
+                            pool_idx += 1;
+                        }
+                    }
+                }
+            }
+            break;
+        } else {
+            match call.unwrap_err() {
+                JsonRpcClientError(err) => {
+                    // eprintln!("{:?}", err);
+                    continue;
+                }
+                _ => break,
+            }
+        }
+    }
+
+    Ok(final_pairs)
+}
 
 
 #[derive(Serialize, Deserialize,Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
@@ -137,6 +294,29 @@ pub struct UniswapV3TickData {
     pub initialized: bool,
     pub tick: i32,
     pub liquidity_net: i128,
+}
+
+impl UniswapV3TickData {
+    fn from_tokens(tokens: Vec<Token>) -> Self {
+
+        Self {
+            initialized: tokens[0]
+                .to_owned()
+                .into_bool()
+                .unwrap(),
+            tick: I256::from_raw(tokens[1]
+                .to_owned()
+                .into_int()
+                .unwrap()
+            ).as_i32(),
+            liquidity_net: I256::from_raw(tokens[2]
+                .to_owned()
+                .into_int()
+                .unwrap())
+                .as_i128(),
+
+        }
+    }
 }
 
 pub async fn get_uniswap_v3_tick_data_batch_request(

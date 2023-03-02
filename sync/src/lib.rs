@@ -403,13 +403,13 @@ impl UniswapV3Calculator {
 #[async_trait]
 impl Calculator for UniswapV3Calculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let amount_out = self.meta.simulate_swap(pool.x_to_y, in_).unwrap();
+        let amount_out = self.meta.simulate_swap(pool.x_to_y, in_)?;
 
                 Ok(amount_out)
         }
     
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let amount_in = self.meta.simulate_swap(!pool.x_to_y, out_).unwrap();
+        let amount_in = self.meta.simulate_swap(!pool.x_to_y, out_)?;
 
         Ok(amount_in)
     

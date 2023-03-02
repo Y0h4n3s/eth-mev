@@ -215,7 +215,7 @@ impl EventEmitter for SushiSwap {
                                 .from_block(latest_block)
                                 .address(ValueOrArray::Array(vec![pool.address.parse().unwrap()]));
 
-                        let mut stream = event.subscribe_with_meta().await.unwrap().take(2);
+                        let mut stream = event.subscribe_with_meta().await.unwrap();
 
                         while let Some(Ok((log, meta))) = stream.next().await {
                             pool.x_amount = log.reserve_0;
