@@ -435,7 +435,7 @@ pub async fn start(
     let mut markets_list = vec![];
     let all_coins = coingecko_client.coins_list(true).await?;
     let mut high_volume_tokens: Vec<String> = vec![];
-    for i in 1..5 {
+    for i in 1..8 {
         let coin_list = coingecko_client
             .coins_markets::<String>(
                 "usd",

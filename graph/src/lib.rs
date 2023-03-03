@@ -16,6 +16,8 @@ use bb8_bolt::{
     bolt_proto::{version::*, Value},
     Manager,
 };
+use tracing::{debug, info};
+use rayon::prelude::*;
 use bolt_proto::value::{Node, Relationship};
 use bolt_proto::Message;
 use garb_sync_eth::{EventSource, LiquidityProviderId, LiquidityProviders, Pool, PoolUpdateEvent};
@@ -92,7 +94,7 @@ pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
 pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PoolUpdateEvent>>>,
-    routes: Arc<RwLock<kanal::AsyncSender<Eip1559TransactionRequest>>>,
+    routes: Arc<RwLock<kanal::AsyncSender<Vec<Eip1559TransactionRequest>>>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
     Graph::<String, Pool, Undirected>::new_undirected();
@@ -110,7 +112,6 @@ pub async fn start(
         ]),
     )
         .await?;
-    println!("{:?} {}", NEO4J_PASS.clone(), NEO4J_USER.clone());
     // Create a connection pool. This should be shared across your application.
     let pool = Arc::new(BPool::builder().build(manager).await?);
 
@@ -280,7 +281,7 @@ DETACH DELETE n",
             let pool = pool.clone();
             let mut conn = pool.get().await?;
             let cores = num_cpus::get();
-            let permits = Arc::new(Semaphore::new(cores));
+            let permits = Arc::new(Semaphore::new(25));
             // OLD MATCHER: match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)
             let mut steps = "".to_string();
             let mut where_clause = "1 = 1".to_string();
@@ -488,61 +489,65 @@ DETACH DELETE n",
 //         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 //     }
     println!("graph service> Starting Listener thread");
-    std::thread::spawn(move || {
-        let rt = Runtime::new().unwrap();
-        let task_set = tokio::task::LocalSet::new();
-        task_set.block_on(&rt, async {
-            while let Ok(updated_market_event) = updated_q.recv().await {
-                let event = updated_market_event.get_event();
-                let mut updated_market = event.pool;
-                let path_lookup = path_lookup1.clone();
-                let routes = routes.clone();
-                tokio::task::spawn_local(async move {
-                    let read = path_lookup.read().await;
-                    let updated = read.iter().find(|(key, _value)| {
+    println!("graph service> Clearing {} cached events", updated_q.len());
+
+    while !updated_q.is_empty() {
+        drop(updated_q.recv().await);
+    }
+
+    let mut workers = vec![];
+    let cores = num_cpus::get();
+
+    for i in 0..cores {
+        let path_lookup = path_lookup1.read().await.clone();
+        let routes = routes.read().await.clone();
+        let updated_q = updated_q.clone();
+        workers.push(tokio::spawn(async move {
+                while let Ok(updated_market_event) = updated_q.recv().await {
+                    let event = updated_market_event.get_event();
+                    let mut updated_market = event.pool;
+                    let routes = routes.clone();
+                    if let Some((pool, market_routes)) = path_lookup.iter().find(|(key, _value)| {
                         updated_market.address == key.address
-                            && updated_market.x_address == key.x_address
-                            && updated_market.y_address == key.y_address
-                            && updated_market.provider == key.provider
-                    });
-                    if updated.is_some() {
-                        let (pool, market_routes) = updated.unwrap();
-                        let mut total_paths = 0;
-                        for path in market_routes {
-                            total_paths += path.paths.len();
-                        }
-                        println!(
-                            "graph service> Found {} routes for updated market {} on block {}",
-                            total_paths,
-                            updated_market,
-                            event.block_number
-                        );
+                    }) {
                         let pool = pool.clone();
                         let market_routes = market_routes.clone();
-                        std::mem::drop(read);
-                        if market_routes.len() <= 0 {
-                            return;
-                        }
 
-                        for mut route in market_routes {
-                            route.update(pool.clone());
-                            let transactions = route.get_transactions();
-                            // println!("{:?}", transactions);
-                            for tx in transactions {
-                                let mut mut_tx = tx.clone();
-                                mut_tx.value = Some(U256::from(event.block_number));
-                                routes.write().await.send(mut_tx).await.unwrap()
+                        // tokio::spawn(async move {
+                            info!(
+                                "graph service> Found {} routes for updated market {} on block {}",
+                                market_routes.len(),
+                                updated_market,
+                                event.block_number
+                            );
+                            if market_routes.len() <= 0 {
+                                return;
                             }
-                        }
+
+                            let mut updated = market_routes.into_par_iter().map(|mut route| {
+                                route.update(pool.clone());
+                                let transactions = route.get_transactions();
+                                let mut n = vec![];
+                                for tx in transactions {
+                                    let mut mut_tx = tx.clone();
+                                    mut_tx.value = Some(U256::from(event.block_number));
+                                    n.push(mut_tx);
+                                }
+                                n
+                            }).flatten().collect::<Vec<Eip1559TransactionRequest>>();
+
+                            debug!("{}. Sent {} on {}",i, updated.len(), event.block_number);
+                            routes.send(updated).await;
+                        // });
                     } else {
-                        // eprintln!("graph service> No routes found for {}", updated_market);
+                        info!("graph service> No routes found for {}", updated_market);
                     }
-                });
-            }
-        });
-    })
-        .join()
-        .unwrap();
+                }
+            }));
+    }
+    for worker in workers {
+        worker.await.unwrap();
+    }
 
     Ok(())
 }
