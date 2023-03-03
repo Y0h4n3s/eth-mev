@@ -211,7 +211,7 @@ impl EventEmitter for SushiSwap {
                     let client = client.clone();
                     joins.push(tokio::task::spawn_local(async move {
                         let event =
-                            ethers::contract::Contract::event_of_type::<SyncFilter>(&client)
+                            ethers::contract::Contract::event_of_type::<SyncFilter>(client)
                                 .from_block(latest_block)
                                 .address(ValueOrArray::Array(vec![pool.address.parse().unwrap()]));
 

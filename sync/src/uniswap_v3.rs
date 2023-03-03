@@ -563,7 +563,7 @@ impl EventEmitter for UniSwapV3 {
 
                     joins.push(tokio::task::spawn_local(async move {
                         let event =
-                              ethers::contract::Contract::event_of_type::<SwapFilter>(&client)
+                              ethers::contract::Contract::event_of_type::<SwapFilter>(client.clone())
                                     .from_block(latest_block)
                                     .address(ValueOrArray::Array(vec![pool.address.parse().unwrap()]));
     
