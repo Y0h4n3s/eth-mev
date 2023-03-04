@@ -807,7 +807,7 @@ impl MevPath {
             instructions.push(instruction);
             let asset_balances = balance.iter().map(|(p, b)| b.get(&self.input_token).unwrap()).map(|b| if *b < I256::from(0) { -*b } else { *b }).filter(|b| b != &I256::from(i_atomic as u128)).sorted().collect::<Vec<I256>>();
             if steps_done.len() != path.len() {
-                warn!("{} {}", steps_done.len(), path.len());
+                debug!("{} {}", steps_done.len(), path.len());
                 return Err(anyhow::Error::msg("Invalid Path: Not All Steps Done in Path"));
             } else {
                 let mut final_balance = *balance.get(&contract_address).unwrap().get(&self.input_token).unwrap();
@@ -1010,11 +1010,11 @@ impl MevPath {
                             access_list: AccessList::default(),
                         };
                         transactions.push(tx_request);
-                        debug!("Data: {:?}", data)
+                        info!("Data: {:?}", data)
                     }
                 }
                 Err(e) => {
-                    warn!("{:?}", e);
+                    debug!("{:?}", e);
                 }
             }
         }

@@ -404,15 +404,16 @@ impl UniswapV3Calculator {
 impl Calculator for UniswapV3Calculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let amount_out = self.meta.simulate_swap(pool.x_to_y, in_)?;
-
-                Ok(amount_out)
+        let ne_percent = U256::from(98).checked_mul(amount_out).unwrap().checked_div(U256::from(100)).unwrap();
+                Ok(ne_percent)
         }
     
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let amount_in = self.meta.simulate_swap(!pool.x_to_y, out_)?;
+        let two_percent = U256::from(2).checked_mul(amount_in).unwrap().checked_div(U256::from(100)).unwrap();
 
-        Ok(amount_in)
-    
+        Ok(amount_in + two_percent)
+
     }
     
     

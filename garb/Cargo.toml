@@ -21,3 +21,4 @@ ethers-flashbots = { git = "https://github.com/onbjerg/ethers-flashbots" }
 rand = "0.8.5"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
+reqwest = "0.11.14"

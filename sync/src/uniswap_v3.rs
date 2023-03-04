@@ -30,14 +30,16 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::error::Error;
-use std::ops::Add;
+use std::ops::{Add, Div};
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use ethers::core::k256::elliptic_curve::consts::{U2, U25};
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
+use uniswap_v3_math::sqrt_price_math::FIXED_POINT_96_RESOLUTION;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
-use crate::abi::uniswap_v3::{get_uniswap_v3_tick_data_batch_request, UniswapV3TickData};
+use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3TickData};
 
 // Todo: add word in here to update and remove middleware use in simulate_swap
 #[derive(Serialize, Deserialize,Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
@@ -46,6 +48,8 @@ pub struct UniswapV3Metadata {
     pub address: String,
     pub token_a: String,
     pub token_b: String,
+    pub token_a_amount: String,
+    pub token_b_amount: String,
     pub token_a_decimals: u8,
     pub token_b_decimals: u8,
     pub fee: u32,
@@ -230,6 +234,17 @@ impl UniswapV3Metadata {
         }
 
 
+        if zero_for_one {
+            if amount_in > U256::from_dec_str(&self.token_a_amount).unwrap() {
+                return Ok(U256::from_dec_str(&self.token_b_amount).unwrap().div(U256::from(2)))
+            }
+        } else {
+            if amount_in > U256::from_dec_str(&self.token_b_amount).unwrap() {
+                return Ok(U256::from_dec_str(&self.token_a_amount).unwrap().div(U256::from(2)))
+            }
+        }
+
+
         //TODO: make this a queue instead of vec and then an iterator FIXME::
         let mut tick_data = if zero_for_one {
             self.tick_bitmap_x_y.clone()
@@ -307,15 +322,15 @@ impl UniswapV3Metadata {
                 self.fee,
             )?;
 
-            //Decrement the amount remaining to be swapped and amount received from the step
-            current_state.amount_specified_remaining = current_state
-                .amount_specified_remaining
-                .overflowing_sub(I256::from_raw(
-                    step.amount_in.overflowing_add(step.fee_amount).0,
-                ))
-                .0;
+                current_state.amount_specified_remaining = current_state
+                    .amount_specified_remaining
+                    .overflowing_sub(I256::from_raw(
+                        step.amount_in.overflowing_add(step.fee_amount).0,
+                    ))
+                    .0;
 
-            current_state.amount_calculated -= I256::from_raw(step.amount_out);
+                current_state.amount_calculated -= I256::from_raw(step.amount_out);
+
 
             //If the price moved all the way to the next price, recompute the liquidity change for the next iteration
             if current_state.sqrt_price_x_96 == step.sqrt_price_next_x96 {
@@ -349,7 +364,9 @@ impl UniswapV3Metadata {
             }
         }
 
-        Ok((-current_state.amount_calculated).into_raw())
+        let amount = (-current_state.amount_calculated).into_raw();
+
+        Ok(amount)
     }
 }
 
@@ -574,14 +591,21 @@ impl EventEmitter for UniSwapV3 {
                                 _ => None
                             } {
 
-                                pool_meta.sqrt_price = log.sqrt_price_x96.to_string();
-                                pool_meta.liquidity = log.liquidity;
-                                pool_meta.tick = log.tick;
-                                let x_y = get_uniswap_v3_tick_data_batch_request(&pool_meta, pool_meta.tick, true, 160, None, client.clone()).await.unwrap();
-                                let y_x = get_uniswap_v3_tick_data_batch_request(&pool_meta, pool_meta.tick, false, 160, None, client.clone()).await.unwrap();
-                                pool_meta.tick_bitmap_x_y = x_y;
-                                pool_meta.tick_bitmap_y_x = y_x;
-                                pool.provider = LiquidityProviders::UniswapV3(pool_meta)
+                                // pool_meta.sqrt_price = log.sqrt_price_x96.to_string();
+                                // pool_meta.liquidity = log.liquidity;
+                                // pool_meta.tick = log.tick;
+                                let mut updated_meta = get_complete_pool_data_batch_request(vec![H160::from_str(&pool_meta.address).unwrap()], client.clone())
+                                    .await
+                                    .unwrap()
+                                    .first()
+                                    .unwrap()
+                                    .to_owned();
+                                updated_meta.factory_address = pool_meta.factory_address;
+                                // let x_y = get_uniswap_v3_tick_data_batch_request(&pool_meta, pool_meta.tick, true, 160, None, client.clone()).await.unwrap();
+                                // let y_x = get_uniswap_v3_tick_data_batch_request(&pool_meta, pool_meta.tick, false, 160, None, client.clone()).await.unwrap();
+                                // pool_meta.tick_bitmap_x_y = x_y;
+                                // pool_meta.tick_bitmap_y_x = y_x;
+                                pool.provider = LiquidityProviders::UniswapV3(updated_meta)
                             }
                             let event = PoolUpdateEvent {
                                 pool: pool.clone(),

@@ -514,14 +514,14 @@ DETACH DELETE n",
                         let market_routes = market_routes.clone();
 
                         // tokio::spawn(async move {
-                            info!(
+                            println!(
                                 "graph service> Found {} routes for updated market {} on block {}",
                                 market_routes.len(),
                                 updated_market,
                                 event.block_number
                             );
                             if market_routes.len() <= 0 {
-                                return;
+                                continue
                             }
 
                             let mut updated = market_routes.into_par_iter().map(|mut route| {
@@ -535,8 +535,10 @@ DETACH DELETE n",
                                 }
                                 n
                             }).flatten().collect::<Vec<Eip1559TransactionRequest>>();
-
-                            debug!("{}. Sent {} on {}",i, updated.len(), event.block_number);
+                            if updated.len() == 0 {
+                                continue
+                            }
+                            info!("{}. Sent {} on {}",i, updated.len(), event.block_number);
                             routes.send(updated).await;
                         // });
                     } else {

@@ -42,6 +42,7 @@ interface IUniswapV3Pool {
 
 interface IERC20 {
     function decimals() external view returns (uint8);
+    function balanceOf(address) external returns(uint256);
 }
 interface IUniswapV3PoolState {
     function ticks(int24 tick)
@@ -81,6 +82,8 @@ contract UniswapV3DataAggregator {
         int24 tickSpacing;
         uint24 fee;
         int128 liquidityNet;
+        uint256 tokenAAmount;
+        uint256 tokenBAmount;
         TickData[] tickBitmapXY;
         TickData[] tickBitmapYX;
     }
@@ -176,7 +179,8 @@ contract UniswapV3DataAggregator {
             poolData.liquidityNet = liquidityNet;
             poolData.tickBitmapXY = getTickBitmap(poolAddress, tick, true, poolData.tickSpacing);
             poolData.tickBitmapYX = getTickBitmap(poolAddress, tick, false, poolData.tickSpacing);
-
+            poolData.tokenAAmount = IERC20(poolData.tokenA).balanceOf(poolAddress);
+            poolData.tokenBAmount = IERC20(poolData.tokenB).balanceOf(poolAddress);
             allPoolData[i] = poolData;
         }
 

@@ -7,7 +7,8 @@
 #![allow(deprecated)]
 
 mod abi;
-use tracing::{debug, info};
+
+use tracing::{debug, error, info, warn};
 //Deployer: 0xef344B9eFcc133EB4e7FEfbd73a613E3b2D05e86
 // Deployed to: 0x5F416E55fdBbA8CC0D385907C534B57a08710c35
 // Transaction hash: 0x2f03f71cc6915fcc17afd71730f1fb6809cef88b102fcb3aa3e3dc60095d1aee
@@ -27,7 +28,7 @@ use ethers::prelude::StreamExt;
 use url::Url;
 use garb_sync_eth::{EventSource, LiquidityProviders, Pool, PoolUpdateEvent, SyncConfig};
 use std::str::FromStr;
-use ethers::abi::{ParamType, StateMutability, Token};
+use ethers::abi::{AbiEncode, ParamType, StateMutability, Token};
 use ethers::core::k256::elliptic_curve::consts::U25;
 use ethers::prelude::k256::elliptic_curve::consts::U2;
 
@@ -147,6 +148,8 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
     Ok(new_base_fee + seed)
 }
 
+
+
 pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionRequest>>, _routes_sender: kanal::AsyncSender<Vec<Eip1559TransactionRequest>>) -> anyhow::Result<()> {
     let mut workers = vec![];
     let cores = num_cpus::get();
@@ -154,7 +157,6 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
     for i in 0..cores {
         let routes = routes.clone();
         workers.push(std::thread::spawn(move || {
-
             let rt = Runtime::new().unwrap();
 
             rt.block_on(async move {
@@ -211,11 +213,10 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                 let signer = Arc::new(signer);
 
 
-
                 let sent = Arc::new(RwLock::new(false));
                 let signer = Arc::new(signer);
                 while let Ok(orders) = routes.recv().await {
-                    debug!("{}. Received {}",i, orders.len());
+                    info!("{}. Received {}",i, orders.len());
                     let mut handles = vec![];
                     for order in orders {
                         let nonce_num = nonce.clone();
@@ -229,12 +230,15 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                             tx_request.from = Some(signer_wallet_address);
                             let n = nonce_num.read().await;
                             let blk = block.read().await;
-                            let base_fee = blk.base_fee_per_gas.unwrap().checked_add(blk.base_fee_per_gas.unwrap().checked_div(U256::from(2)).unwrap()).unwrap_or(U256::from(0));
-                            tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().min(base_fee.checked_mul(U256::from(2)).unwrap()));
+                            let base_fee = blk.base_fee_per_gas.unwrap();
+                            tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee).min(base_fee.checked_mul(U256::from(2)).unwrap()));
                             tx_request.max_priority_fee_per_gas = Some(base_fee);
                             tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                             drop(n);
                             drop(blk);
+                            if tx_request.max_fee_per_gas.unwrap() == base_fee {
+                                tx_request.max_fee_per_gas = Some(base_fee.checked_mul(U256::from(2)).unwrap());
+                            }
                             let blk = tx_request.value.unwrap().as_u64();
                             tx_request.value = None;
                             //
@@ -254,11 +258,9 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                             // drop(n);
                             //
 
-                            debug!("{}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
-                            let typed_tx = TypedTransaction::Eip1559(tx_request);
+                            let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
                             let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
                             let signed_tx = typed_tx.rlp_signed(&tx_sig);
-
                             let mut bundle_request = BundleRequest::new();
                             let bundled: BundleTransaction = signed_tx.clone().into();
 
@@ -272,24 +274,32 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                             //
                             //     // let result = client.send_transaction(typed_tx, Some(BlockId::Number(BlockNumber::Number(U64::from(blk))))).await;
                             //     // println!("{:?}", result.unwrap());
-                            //     let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
-                            //     match simulated_bundle {
-                            //     Ok(res) => {
-                            //         let ex_tx = res.transactions.get(0).unwrap();
-                            //                 if ex_tx.error.is_none() {
-                            //                     println!("\n\n\n\n\n{:?}\n\n\n\n\n\n", ex_tx);
-                            //                 } else {
-                            //                     println!("{:?} {:?}", ex_tx.gas_used, ex_tx.revert)
-                            //                 }
-                            //
-                            //     }
-                            //     Err(_) => {}
-                            // }
-                            //
+                            info!("{}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
+
+                            let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
+
+                            match simulated_bundle {
+                                Ok(res) => {
+                                    let ex_tx = res.transactions.get(0).unwrap();
+                                    //                                 if ex_tx.gas_used < U256::from(270000) {
+                                    // let result = client.send_transaction(typed_tx, Some(BlockId::Number(BlockNumber::Number(U64::from(blk))))).await;
+                                    //                                         println!("{:?}", result.unwrap());
+                                    //                                 }
+                                    if ex_tx.error.is_none() {
+                                        println!("\n\n\n\n\n{:?}\n\n\n\n\n\n", ex_tx);
+                                    } else {
+                                        // println!("{:?} {:?}", ex_tx.gas_used, ex_tx.revert)
+                                    }
+                                }
+                                Err(err) => {
+                                    // error!("{:?}", err)
+                                }
+                            }
+
                             //
                             //                   }
-                            let real_bundle = flashbots_client.inner().send_bundle(&bundle_request).await.unwrap().await;
-                            println!("{:?}", real_bundle);
+                            // let real_bundle = flashbots_client.inner().send_bundle(&bundle_request).await.unwrap().await;
+                            // println!("{:?}", real_bundle);
 
                             // match simulated_bundle {
                             //     Ok(bundle) => {
@@ -301,9 +311,8 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                         }));
                     }
                     for task in handles {
-                        task.await;
+                        task.await.unwrap();
                     }
-
                 }
                 for task in join_handles {
                     task.await.unwrap();
@@ -316,6 +325,9 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
     }
 
 
-
     Ok(())
+}
+
+fn hex_to_address_string(hex: String) -> String {
+    ("0x".to_string() + hex.split_at(26).1).to_string()
 }
