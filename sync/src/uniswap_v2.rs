@@ -41,7 +41,7 @@ impl Meta for UniswapV2Metadata {}
 pub struct UniSwapV2 {
     pub metadata: UniswapV2Metadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
-    subscribers: Arc<RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
+    subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
 }
 
 impl UniSwapV2 {
@@ -49,7 +49,7 @@ impl UniSwapV2 {
         Self {
             metadata,
             pools: Arc::new(RwLock::new(HashMap::new())),
-            subscribers: Arc::new(RwLock::new(Vec::new())),
+            subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
         }
     }
 }
@@ -95,7 +95,7 @@ impl LiquidityProvider for UniSwapV2 {
             let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
-            for i in (0..pairs_length.as_usize()).step_by(step) {
+            for i in (pairs_length.as_usize()-50000..pairs_length.as_usize()).step_by(step) {
                 let mut w = indices.lock().await;
                 w.push_back((i, i + step));
             }
@@ -183,9 +183,8 @@ impl LiquidityProvider for UniSwapV2 {
 
 
 
-impl EventEmitter for UniSwapV2 {
-    type EventType = Box<dyn EventSource<Event = PoolUpdateEvent>>;
-    fn get_subscribers(&self) -> Arc<RwLock<Vec<AsyncSender<Self::EventType>>>> {
+impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV2 {
+    fn get_subscribers(&self) -> Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>> {
         self.subscribers.clone()
     }
     fn emit(&self) -> std::thread::JoinHandle<()> {
@@ -194,8 +193,7 @@ impl EventEmitter for UniSwapV2 {
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             let pools = pools.clone();
-            let tasks = LocalSet::new();
-            tasks.block_on(&mut rt, async move {
+            rt.block_on( async move {
                 let mut joins = vec![];
                 let client = Arc::new(
                     Provider::<Ws>::connect("ws://89.58.31.215:8546")
@@ -209,7 +207,11 @@ impl EventEmitter for UniSwapV2 {
                     let subscribers = subscribers.clone();
                     let mut pool = pool.clone();
                     let client = client.clone();
-                    joins.push(tokio::task::spawn_local(async move {
+                    let subscribers = subscribers.read().unwrap();
+                    let sub = subscribers.first().unwrap().clone();
+                    drop(subscribers);
+
+                    joins.push(tokio::runtime::Handle::current().spawn(async move {
                         let event =
                             ethers::contract::Contract::event_of_type::<SyncFilter>(client)
                                 .from_block(latest_block)
@@ -224,10 +226,7 @@ impl EventEmitter for UniSwapV2 {
                                 block_number: meta.block_number.as_u64(),
                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                             };
-                            let mut subscribers = subscribers.write().await;
-                            for subscriber in subscribers.iter_mut() {
-                                let res = subscriber.send(Box::new(event.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV2 Send Error {:?}", e));
-                            }
+                                let res = sub.send(Box::new(event.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
                         }
                     }));
                 }

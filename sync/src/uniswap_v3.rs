@@ -228,21 +228,20 @@ impl UniswapV3Metadata {
         &self,
         zero_for_one: bool,
         amount_in: U256,
+        exact_in: bool
     ) -> anyhow::Result<U256> {
         if amount_in.is_zero() {
             return Ok(U256::zero());
         }
 
+        let mut amount_in = I256::from_raw(amount_in);
 
-        if zero_for_one {
-            if amount_in > U256::from_dec_str(&self.token_a_amount).unwrap() {
-                return Ok(U256::from_dec_str(&self.token_b_amount).unwrap().div(U256::from(2)))
-            }
-        } else {
-            if amount_in > U256::from_dec_str(&self.token_b_amount).unwrap() {
-                return Ok(U256::from_dec_str(&self.token_a_amount).unwrap().div(U256::from(2)))
-            }
+        if !exact_in {
+            amount_in = -amount_in;
         }
+
+
+
 
 
         //TODO: make this a queue instead of vec and then an iterator FIXME::
@@ -265,7 +264,7 @@ impl UniswapV3Metadata {
         let mut current_state = CurrentState {
             sqrt_price_x_96: U256::from_dec_str(&self.sqrt_price).unwrap(), //Active price on the pool
             amount_calculated: I256::zero(),  //Amount of token_out that has been calculated
-            amount_specified_remaining: I256::from_raw(amount_in), //Amount of token_in that has not been swapped
+            amount_specified_remaining: amount_in, //Amount of token_in that has not been swapped
             tick: self.tick,                                       //Current i24 tick of the pool
             liquidity: self.liquidity, //Current available liquidity in the tick range
         };
@@ -321,7 +320,7 @@ impl UniswapV3Metadata {
                 current_state.amount_specified_remaining,
                 self.fee,
             )?;
-
+            if exact_in {
                 current_state.amount_specified_remaining = current_state
                     .amount_specified_remaining
                     .overflowing_sub(I256::from_raw(
@@ -330,7 +329,14 @@ impl UniswapV3Metadata {
                     .0;
 
                 current_state.amount_calculated -= I256::from_raw(step.amount_out);
-
+            } else {
+                current_state.amount_specified_remaining += I256::from_raw(step.amount_out);
+                current_state.amount_calculated = current_state
+                    .amount_calculated.overflowing_add(I256::from_raw(
+                    step.amount_in.overflowing_add(step.fee_amount).0,
+                ))
+                    .0;
+            }
 
             //If the price moved all the way to the next price, recompute the liquidity change for the next iteration
             if current_state.sqrt_price_x_96 == step.sqrt_price_next_x96 {
@@ -364,13 +370,17 @@ impl UniswapV3Metadata {
             }
         }
 
-        let amount = (-current_state.amount_calculated).into_raw();
+        let amount = if current_state.amount_calculated < I256::from(0) {
+            (-current_state.amount_calculated).into_raw()
+        } else {
+            current_state.amount_calculated.into_raw()
+        };
 
         Ok(amount)
     }
 }
 
-const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 11969621;
+const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 14969621;
 
 pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
     120, 60, 202, 28, 4, 18, 221, 13, 105, 94, 120, 69, 104, 201, 109, 162, 233, 194, 47, 249, 137,
@@ -379,7 +389,7 @@ pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
 pub struct UniSwapV3 {
     pub metadata: UniswapV3Metadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
-    subscribers: Arc<RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
+    subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
 }
 
 impl UniSwapV3 {
@@ -387,7 +397,7 @@ impl UniSwapV3 {
         Self {
             metadata,
             pools: Arc::new(RwLock::new(HashMap::new())),
-            subscribers: Arc::new(RwLock::new(Vec::new())),
+            subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
         }
     }
 }
@@ -550,9 +560,8 @@ impl LiquidityProvider for UniSwapV3 {
 fn hex_to_address_string(hex: String) -> String {
     ("0x".to_string() + hex.split_at(26).1).to_string()
 }
-impl EventEmitter for UniSwapV3 {
-    type EventType = Box<dyn EventSource<Event = PoolUpdateEvent>>;
-    fn get_subscribers(&self) -> Arc<RwLock<Vec<AsyncSender<Self::EventType>>>> {
+impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
+    fn get_subscribers(&self) -> Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>> {
         self.subscribers.clone()
     }
     fn emit(&self) -> std::thread::JoinHandle<()> {
@@ -561,8 +570,7 @@ impl EventEmitter for UniSwapV3 {
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             let pools = pools.clone();
-            let tasks = LocalSet::new();
-            tasks.block_on(&mut rt, async move {
+            rt.block_on( async move {
                 let mut joins = vec![];
                 let client = Arc::new(
                     Provider::<Ws>::connect("ws://89.58.31.215:8546")
@@ -577,8 +585,11 @@ impl EventEmitter for UniSwapV3 {
                     let subscribers = subscribers.clone();
                     let mut pool = pool.clone();
                     let client = client.clone();
+                    let subscribers = subscribers.read().unwrap();
+                    let sub = subscribers.first().unwrap().clone();
+                    drop(subscribers);
 
-                    joins.push(tokio::task::spawn_local(async move {
+                    joins.push(tokio::runtime::Handle::current().spawn(async move {
                         let event =
                               ethers::contract::Contract::event_of_type::<SwapFilter>(client.clone())
                                     .from_block(latest_block)
@@ -613,10 +624,7 @@ impl EventEmitter for UniSwapV3 {
                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                             };
 
-                            let mut subscribers = subscribers.write().await;
-                            for subscriber in subscribers.iter_mut() {
-                                let res = subscriber.send(Box::new(event.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV3 Send Error {:?}", e));
-                            }
+                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV3 Send Error {:?}", e));
                         }
                     }));
                 }
@@ -625,3 +633,4 @@ impl EventEmitter for UniSwapV3 {
         })
     }
 }
+

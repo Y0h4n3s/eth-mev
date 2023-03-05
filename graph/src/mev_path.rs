@@ -282,7 +282,7 @@ impl MevPath {
         let mut best_route_profit = I256::from(0);
         let mut best_route_index = 0;
         let mut mid = if !path.first().unwrap().is_exact_in() && path.first().unwrap().get_pool().supports_callback_payment() {
-            MAX_SIZE.clone() / 2.0
+           20.0
         } else {
             MAX_SIZE.clone() / 2.0
         };
@@ -412,29 +412,36 @@ impl MevPath {
 
                                     return Err(anyhow::Error::msg("Casting Error"));
                                 }
-                                let asset = I256::from_dec_str(&calculator.calculate_out(as_uint.unwrap(), pool)?.to_string()).unwrap();
-                                a = asset;
-                                d = debt;
-                                debug!("Type PrePaid > Asset {} Debt {}", a, d);
+                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
+                                    let asset = I256::from_dec_str(&out_.to_string()).unwrap();
+                                    a = asset;
+                                    d = debt;
+                                    debug!("Type PrePaid > Asset {} Debt {}", a, d);
 
-                                let bal = *balance
-                                    .get(&pool.address)
-                                    .unwrap()
-                                    .get(&debt_token)
-                                    .unwrap();
-                                balance
-                                    .get_mut(&pool.address)
-                                    .unwrap()
-                                    .insert(debt_token, sub_i256(bal, debt));
-                                let bal = *balance
-                                    .get(&asset_reciever)
-                                    .unwrap()
-                                    .get(&asset_token)
-                                    .unwrap();
-                                balance
-                                    .get_mut(&asset_reciever)
-                                    .unwrap()
-                                    .insert(asset_token, bal + (asset));
+                                    let bal = *balance
+                                        .get(&pool.address)
+                                        .unwrap()
+                                        .get(&debt_token)
+                                        .unwrap();
+                                    balance
+                                        .get_mut(&pool.address)
+                                        .unwrap()
+                                        .insert(debt_token, sub_i256(bal, debt));
+                                    let bal = *balance
+                                        .get(&asset_reciever)
+                                        .unwrap()
+                                        .get(&asset_token)
+                                        .unwrap();
+                                    balance
+                                        .get_mut(&asset_reciever)
+                                        .unwrap()
+                                        .insert(asset_token, bal + (asset));
+                                } else {
+                                    right = mid;
+                                    mid = (left + right) / 2.0;
+                                    continue 'binary_search;
+                                }
+
                             } else if let Some((from, b)) = balance.iter().find(|(p, b)| {
                                 if *p == &contract_address {
                                     return false;
@@ -458,52 +465,59 @@ impl MevPath {
                                     debug!("Casting Error: Cast To Uint {}", asset);
                                     return Err(anyhow::Error::msg("Casting Error"));
                                 }
-                                let debt = I256::from_dec_str(&calculator.calculate_in(as_uint.unwrap(), pool)?.to_string()).unwrap();
-                                a = asset;
-                                d = debt;
-                                debug!("Type AssetIsDebtedToOther > Asset {} Debt {}", a, d);
+                                if let Ok(in_) = calculator.calculate_in(as_uint.unwrap(), pool) {
+                                    let debt = I256::from_dec_str(&in_.to_string()).unwrap();
+                                    a = asset;
+                                    d = debt;
+                                    debug!("Type AssetIsDebtedToOther > Asset {} Debt {}", a, d);
 
-                                if !step.get_pool().supports_callback_payment() {
-                                    let contract_balance = *balance
-                                        .get(&contract_address)
-                                        .unwrap()
-                                        .get(&debt_token)
-                                        .unwrap();
-                                    if contract_balance <= I256::from(0) {
-                                        debug!("Unproccessable AssetIsDebtedToOther step");
-                                        return Err(anyhow::Error::msg("Unproccessable AssetIsDebtedToOther Step"));
+                                    if !step.get_pool().supports_callback_payment() {
+                                        let contract_balance = *balance
+                                            .get(&contract_address)
+                                            .unwrap()
+                                            .get(&debt_token)
+                                            .unwrap();
+                                        if contract_balance <= I256::from(0) {
+                                            debug!("Unproccessable AssetIsDebtedToOther step");
+                                            return Err(anyhow::Error::msg("Unproccessable AssetIsDebtedToOther Step"));
+                                        }
+
+                                        balance
+                                            .get_mut(&contract_address)
+                                            .unwrap()
+                                            .insert(debt_token.clone(), sub_i256(contract_balance, debt));
+                                        balance
+                                            .get_mut(&pool.address)
+                                            .unwrap()
+                                            .insert(debt_token, I256::from(0));
+                                    } else {
+                                        // update asset reciever balance
+                                        let bal = *balance
+                                            .get(&pool.address)
+                                            .unwrap()
+                                            .get(&debt_token)
+                                            .unwrap();
+                                        balance
+                                            .get_mut(&pool.address)
+                                            .unwrap()
+                                            .insert(debt_token, sub_i256(bal, debt));
                                     }
 
-                                    balance
-                                        .get_mut(&contract_address)
-                                        .unwrap()
-                                        .insert(debt_token.clone(), sub_i256(contract_balance, debt));
-                                    balance
-                                        .get_mut(&pool.address)
-                                        .unwrap()
-                                        .insert(debt_token, I256::from(0));
-                                } else {
-                                    // update asset reciever balance
                                     let bal = *balance
-                                        .get(&pool.address)
+                                        .get(&asset_reciever)
                                         .unwrap()
-                                        .get(&debt_token)
+                                        .get(&asset_token)
                                         .unwrap();
                                     balance
-                                        .get_mut(&pool.address)
+                                        .get_mut(&asset_reciever)
                                         .unwrap()
-                                        .insert(debt_token, sub_i256(bal, debt));
+                                        .insert(asset_token, bal + (asset));
+                                } else {
+                                    right = mid;
+                                    mid = (left + right) / 2.0;
+                                    continue 'binary_search;
                                 }
 
-                                let bal = *balance
-                                    .get(&asset_reciever)
-                                    .unwrap()
-                                    .get(&asset_token)
-                                    .unwrap();
-                                balance
-                                    .get_mut(&asset_reciever)
-                                    .unwrap()
-                                    .insert(asset_token, bal + (asset));
                             } else if let Some((from, b)) = balance.iter().find(|(p, b)| {
                                 if *p == &contract_address {
                                     return *b.get(&debt_token).unwrap() > I256::from(0);
@@ -528,29 +542,37 @@ impl MevPath {
                                     debug!("Casting Error: Cast To Uint {}", debt);
                                     return Err(anyhow::Error::msg("Casting Error"));
                                 }
-                                let asset = I256::from_dec_str(&calculator.calculate_out(as_uint.unwrap(), pool)?.to_string()).unwrap();
-                                a = asset;
-                                d = debt;
-                                debug!("Type DebtIsAssetOnSelf > Asset {} Debt {}", a, d);
 
-                                let bal = *balance
-                                    .get(&pool.address)
-                                    .unwrap()
-                                    .get(&debt_token)
-                                    .unwrap();
-                                balance
-                                    .get_mut(&pool.address)
-                                    .unwrap()
-                                    .insert(debt_token, sub_i256(bal, debt));
-                                let bal = *balance
-                                    .get(&asset_reciever)
-                                    .unwrap()
-                                    .get(&asset_token)
-                                    .unwrap();
-                                balance
-                                    .get_mut(&asset_reciever)
-                                    .unwrap()
-                                    .insert(asset_token, bal + (asset));
+                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
+                                    let asset = I256::from_dec_str(&out_.to_string()).unwrap();
+                                    a = asset;
+                                    d = debt;
+                                    debug!("Type DebtIsAssetOnSelf > Asset {} Debt {}", a, d);
+
+                                    let bal = *balance
+                                        .get(&pool.address)
+                                        .unwrap()
+                                        .get(&debt_token)
+                                        .unwrap();
+                                    balance
+                                        .get_mut(&pool.address)
+                                        .unwrap()
+                                        .insert(debt_token, sub_i256(bal, debt));
+                                    let bal = *balance
+                                        .get(&asset_reciever)
+                                        .unwrap()
+                                        .get(&asset_token)
+                                        .unwrap();
+                                    balance
+                                        .get_mut(&asset_reciever)
+                                        .unwrap()
+                                        .insert(asset_token, bal + (asset));
+                                } else {
+                                    right = mid;
+                                    mid = (left + right) / 2.0;
+                                    continue 'binary_search;
+                                }
+
                             } else if debt_token == self.input_token {
                                 let debt = I256::from(i_atomic as u128);
 
@@ -560,20 +582,63 @@ impl MevPath {
                                     debug!("Casting Error: Cast To Uint {}", debt);
                                     return Err(anyhow::Error::msg("Casting Error"));
                                 }
-                                let asset = I256::from_dec_str(&calculator.calculate_out(as_uint.unwrap(), pool)?.to_string()).unwrap();
-                                a = asset;
-                                d = debt;
-                                debug!("Type DebtIsInputToken > Asset {} Debt {}", a, d);
-                                if !step.get_pool().supports_callback_payment() {
-                                    balance
-                                        .get_mut(&contract_address)
+
+                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
+                                    let asset = I256::from_dec_str(&out_.to_string()).unwrap();
+                                    a = asset;
+                                    d = debt;
+                                    debug!("Type DebtIsInputToken > Asset {} Debt {}", a, d);
+                                    if !step.get_pool().supports_callback_payment() {
+                                        balance
+                                            .get_mut(&contract_address)
+                                            .unwrap()
+                                            .insert(debt_token.clone(), -debt);
+                                        balance
+                                            .get_mut(&pool.address)
+                                            .unwrap()
+                                            .insert(debt_token, I256::from(0));
+                                    } else {
+                                        // update asset reciever balance
+                                        let bal = *balance
+                                            .get(&pool.address)
+                                            .unwrap()
+                                            .get(&debt_token)
+                                            .unwrap();
+                                        balance
+                                            .get_mut(&pool.address)
+                                            .unwrap()
+                                            .insert(debt_token, sub_i256(bal, debt));
+                                    }
+
+                                    let bal = *balance
+                                        .get(&asset_reciever)
                                         .unwrap()
-                                        .insert(debt_token.clone(), -debt);
+                                        .get(&asset_token)
+                                        .unwrap();
                                     balance
-                                        .get_mut(&pool.address)
+                                        .get_mut(&asset_reciever)
                                         .unwrap()
-                                        .insert(debt_token, I256::from(0));
+                                        .insert(asset_token, bal + (asset));
                                 } else {
+                                    right = mid;
+                                    mid = (left + right) / 2.0;
+                                    continue 'binary_search;
+                                }
+
+                            } else if asset_token == self.input_token && step.get_pool().supports_callback_payment() {
+                                let asset = I256::from(i_atomic as u128);
+
+                                let as_uint = U256::from_dec_str(&asset.to_string());
+                                if as_uint.is_err() {
+                                    debug!("Casting Error: Cast To Uint {}", asset);
+                                    return Err(anyhow::Error::msg("Casting Error"));
+                                }
+                                if let Ok(in_) = calculator.calculate_in(as_uint.unwrap(), pool) {
+                                    let debt = I256::from_dec_str(&in_.to_string()).unwrap();
+                                    a = asset;
+                                    d = debt;
+                                    debug!("Type AssetIsInputToken > Asset {} Debt {}", a, d);
+
                                     // update asset reciever balance
                                     let bal = *balance
                                         .get(&pool.address)
@@ -584,49 +649,22 @@ impl MevPath {
                                         .get_mut(&pool.address)
                                         .unwrap()
                                         .insert(debt_token, sub_i256(bal, debt));
+                                    let bal = *balance
+                                        .get(&asset_reciever)
+                                        .unwrap()
+                                        .get(&asset_token)
+                                        .unwrap();
+                                    balance
+                                        .get_mut(&asset_reciever)
+                                        .unwrap()
+                                        .insert(asset_token, bal + (asset));
+                                }
+                                else {
+                                    right = mid;
+                                    mid = (left + right) / 2.0;
+                                    continue 'binary_search;
                                 }
 
-                                let bal = *balance
-                                    .get(&asset_reciever)
-                                    .unwrap()
-                                    .get(&asset_token)
-                                    .unwrap();
-                                balance
-                                    .get_mut(&asset_reciever)
-                                    .unwrap()
-                                    .insert(asset_token, bal + (asset));
-                            } else if asset_token == self.input_token && step.get_pool().supports_callback_payment() {
-                                let asset = I256::from(i_atomic as u128);
-
-                                let as_uint = U256::from_dec_str(&asset.to_string());
-                                if as_uint.is_err() {
-                                    debug!("Casting Error: Cast To Uint {}", asset);
-                                    return Err(anyhow::Error::msg("Casting Error"));
-                                }
-                                let debt = I256::from_dec_str(&calculator.calculate_in(as_uint.unwrap(), pool)?.to_string()).unwrap();
-                                a = asset;
-                                d = debt;
-                                debug!("Type AssetIsInputToken > Asset {} Debt {}", a, d);
-
-                                // update asset reciever balance
-                                let bal = *balance
-                                    .get(&pool.address)
-                                    .unwrap()
-                                    .get(&debt_token)
-                                    .unwrap();
-                                balance
-                                    .get_mut(&pool.address)
-                                    .unwrap()
-                                    .insert(debt_token, sub_i256(bal, debt));
-                                let bal = *balance
-                                    .get(&asset_reciever)
-                                    .unwrap()
-                                    .get(&asset_token)
-                                    .unwrap();
-                                balance
-                                    .get_mut(&asset_reciever)
-                                    .unwrap()
-                                    .insert(asset_token, bal + (asset));
                             } else if asset_token == self.input_token && index == 0 {
                                 debug!("Unproccessable step");
                                 return Err(anyhow::Error::msg("Unproccessable Step"));
@@ -822,7 +860,7 @@ impl MevPath {
                 if final_balance >= best_route_profit {
                     best_route_profit = final_balance;
                     best_route_size = i_atomic;
-                    best_route_index = i;
+                    best_route_index = instructions.len() - 1;
                     left = mid;
                 } else {
                     right = mid;

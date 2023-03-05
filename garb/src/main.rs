@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
         // will be written to stdout.
-        .with_max_level(tracing::Level::ERROR)
+        .with_max_level(tracing::Level::INFO)
         // completes the builder.
         .finish();
 
@@ -176,7 +176,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                 let nonce_update = nonce.clone();
                 let ap = client.clone();
 
-                join_handles.push(tokio::spawn(async move {
+                join_handles.push(tokio::runtime::Handle::current().spawn(async move {
                     // keep updating nonce
                     loop {
                         if let Ok(n) = ap.get_transaction_count(signer_wallet_address, None).await {
@@ -189,7 +189,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                 let block_update = block.clone();
                 let ap = client.clone();
 
-                join_handles.push(tokio::spawn(async move {
+                join_handles.push(tokio::runtime::Handle::current().spawn(async move {
                     // keep updating nonce
                     loop {
                         if let Ok(Some(b)) = ap.get_block(BlockId::Number(BlockNumber::Latest)).await {
@@ -224,7 +224,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                         let signer = signer.clone();
                         let client = client.clone();
                         let flashbots_client = flashbots_client.clone();
-                        handles.push(tokio::spawn(async move {
+                        handles.push(tokio::runtime::Handle::current().spawn(async move {
                             let mut tx_request = order;
                             tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
                             tx_request.from = Some(signer_wallet_address);
@@ -288,11 +288,11 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                                     if ex_tx.error.is_none() {
                                         println!("\n\n\n\n\n{:?}\n\n\n\n\n\n", ex_tx);
                                     } else {
-                                        // println!("{:?} {:?}", ex_tx.gas_used, ex_tx.revert)
+                                        println!("{:?} {:?}", ex_tx.gas_used, ex_tx.revert)
                                     }
                                 }
                                 Err(err) => {
-                                    // error!("{:?}", err)
+                                    error!("{:?}", err)
                                 }
                             }
 
@@ -310,9 +310,8 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                             // }
                         }));
                     }
-                    for task in handles {
-                        task.await.unwrap();
-                    }
+                    futures::future::join_all(handles).await;
+
                 }
                 for task in join_handles {
                     task.await.unwrap();

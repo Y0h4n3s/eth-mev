@@ -39,7 +39,7 @@ use nom::FindSubstring;
 use crate::sushiswap::SushiSwapMetadata;
 
 #[async_trait]
-pub trait LiquidityProvider: EventEmitter {
+pub trait LiquidityProvider: EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> {
     type Metadata;
     fn get_metadata(&self) -> Self::Metadata;
     async fn get_pools(&self) -> HashMap<String, Pool>;
@@ -103,7 +103,7 @@ pub trait EventSource: Send {
     fn get_event(&self) -> Self::Event;
 }
 pub type BoxedLiquidityProvider = Box<
-    dyn LiquidityProvider<Metadata = Box<dyn Meta>, EventType = Box<dyn EventSource<Event = PoolUpdateEvent>>>
+    dyn LiquidityProvider<Metadata = Box<dyn Meta>>
         + Send,
 >;
 
@@ -243,6 +243,13 @@ pub struct PoolUpdateEvent {
     pub timestamp: u128
 }
 
+#[derive(Decode, Encode, Debug, Clone, PartialEq,Eq)]
+pub struct PendingPoolUpdateEvent {
+    pub pool: Pool,
+    pub block_number: u64,
+    pub timestamp: u128
+}
+
 impl EventSource for PoolUpdateEvent {
     type Event = Self;
     fn get_event(&self) -> Self::Event {
@@ -315,12 +322,13 @@ impl Calculator for CpmmCalculator {
         } else {
             U256::from(pool.x_amount)
         };
-        if out_ >= swap_destination_amount {
-            return Ok(swap_source_amount);
-        }
-        if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) {
+        if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) || out_ >= swap_destination_amount {
             return Err(Error::msg("Insufficient Liquidity"))
         }
+        if out_ == swap_destination_amount {
+            return Ok(swap_source_amount);
+        }
+
         if let Some(numerator) = swap_source_amount.checked_mul( out_ * 100) {
             let denominator = (swap_destination_amount - out_) * U256::from((97) as u128);
             Ok((numerator / denominator) + 1)
@@ -403,16 +411,13 @@ impl UniswapV3Calculator {
 #[async_trait]
 impl Calculator for UniswapV3Calculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let amount_out = self.meta.simulate_swap(pool.x_to_y, in_)?;
-        let ne_percent = U256::from(98).checked_mul(amount_out).unwrap().checked_div(U256::from(100)).unwrap();
-                Ok(ne_percent)
+        let amount_out = self.meta.simulate_swap(pool.x_to_y, in_, true)?;
+                Ok(amount_out)
         }
     
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let amount_in = self.meta.simulate_swap(!pool.x_to_y, out_)?;
-        let two_percent = U256::from(2).checked_mul(amount_in).unwrap().checked_div(U256::from(100)).unwrap();
-
-        Ok(amount_in + two_percent)
+        let amount_in = self.meta.simulate_swap(pool.x_to_y, out_, false)?;
+        Ok(amount_in)
 
     }
     
@@ -467,7 +472,7 @@ pub async fn start(
     for provider in config.providers {
         let mut amm = provider.build();
         join_handles.push(amm.load_pools(high_volume_tokens.clone()));
-        amm.subscribe(updated_q.clone()).await;
+        amm.subscribe(updated_q.clone());
         amms.push(amm);
     }
 
@@ -503,7 +508,7 @@ pub async fn start(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use ethers::providers::{Provider, Ws};
     use tokio::test;
     #[test]
     async fn test_uniswap_v3_calculator() {
