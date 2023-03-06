@@ -282,7 +282,7 @@ impl MevPath {
         let mut best_route_profit = I256::from(0);
         let mut best_route_index = 0;
         let mut mid = if !path.first().unwrap().is_exact_in() && path.first().unwrap().get_pool().supports_callback_payment() {
-           20.0
+           60.0
         } else {
             MAX_SIZE.clone() / 2.0
         };
@@ -869,7 +869,11 @@ impl MevPath {
             }
         }
 
-
+        info!("Size: {} Profit: {}\n{} {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0),path.len(),Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+        for step in &path {
+            info!("{} -> {}", step, step.get_output());
+        }
+        info!("\n\n\nDone path\n\n\n");
         if best_route_profit > I256::from(0) {
             if best_route_profit.as_u128() > (0.3 * best_route_size) as u128 {
                 return Ok(PathResult {
@@ -992,6 +996,18 @@ impl MevPath {
             transactions: vec![],
         }
     }
+    pub fn get_transactions_mut(&mut self, updated_pool: Pool) -> Vec<Eip1559TransactionRequest> {
+        for path in self.paths.iter_mut() {
+            // check if the path has positive outcome
+            for mut step in (*path).iter_mut() {
+                // update first
+                if step.contains_pool(&updated_pool) {
+                    step.update_pool(&updated_pool);
+                }
+            }
+        }
+        self.get_transactions()
+    }
     pub fn get_transactions(&self) -> Vec<Eip1559TransactionRequest> {
         let mut transactions = vec![];
         for (index, path) in self
@@ -1057,6 +1073,11 @@ impl MevPath {
             }
         }
         transactions
+    }
+
+    pub fn get_transaction_for_pending_update(&self, updated_pool: Pool) -> Vec<Eip1559TransactionRequest>{
+        let mut mock = self.clone();
+        return mock.get_transactions_mut(updated_pool);
     }
 
     pub fn is_valid(&self) -> bool {

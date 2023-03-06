@@ -6,6 +6,7 @@
 #![allow(unused)]
 #![allow(deprecated)]
 
+// TODO: node url dispacher
 mod abi;
 
 use tracing::{debug, error, info, warn};
@@ -26,7 +27,7 @@ use ethers::prelude::{Address, H160, LocalWallet, SignerMiddleware};
 use ethers::prelude::StreamExt;
 
 use url::Url;
-use garb_sync_eth::{EventSource, LiquidityProviders, Pool, PoolUpdateEvent, SyncConfig};
+use garb_sync_eth::{EventSource, LiquidityProviders, PendingPoolUpdateEvent, Pool, PoolUpdateEvent, SyncConfig};
 use std::str::FromStr;
 use ethers::abi::{AbiEncode, ParamType, StateMutability, Token};
 use ethers::core::k256::elliptic_curve::consts::U25;
@@ -43,7 +44,7 @@ use rand::Rng;
 
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
-    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2,3".to_string()))
+    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1".to_string()))
         .split(",")
         .map(|i| LiquidityProviders::from(i))
         .collect()
@@ -80,6 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pub async fn async_main() -> anyhow::Result<()> {
     let pools = Arc::new(RwLock::new(HashMap::<String, Pool>::new()));
     let (update_q_sender, update_q_receiver) = kanal::bounded_async::<Box<dyn EventSource<Event=PoolUpdateEvent>>>(1000);
+    let (pending_update_q_sender, pending_update_q_receiver) = kanal::bounded_async::<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>(1000);
     // routes holds the routes that pass through an updated pool
     // this will be populated by the graph module when there is an updated pool
     let (routes_sender, mut routes_receiver) =
@@ -88,7 +90,7 @@ pub async fn async_main() -> anyhow::Result<()> {
     let sync_config = SyncConfig {
         providers: PROVIDERS.clone(),
     };
-    garb_sync_eth::start(pools.clone(), update_q_sender, sync_config)
+    garb_sync_eth::start(pools.clone(), update_q_sender, pending_update_q_sender, sync_config)
         .await
         .unwrap();
 
@@ -103,7 +105,7 @@ pub async fn async_main() -> anyhow::Result<()> {
         let rt = Runtime::new().unwrap();
 
         rt.block_on(async move {
-            garb_graph_eth::start(pools.clone(), update_q_receiver, Arc::new(RwLock::new(graph_routes)), graph_conifg).await.unwrap();
+            garb_graph_eth::start(pools.clone(), update_q_receiver, pending_update_q_receiver,Arc::new(RwLock::new(graph_routes)), graph_conifg).await.unwrap();
         });
     }));
     joins.push(std::thread::spawn(move || {
@@ -236,6 +238,8 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                             tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                             drop(n);
                             drop(blk);
+
+                            // profit doesn't cover tx_fees
                             if tx_request.max_fee_per_gas.unwrap() == base_fee {
                                 tx_request.max_fee_per_gas = Some(base_fee.checked_mul(U256::from(2)).unwrap());
                             }
@@ -276,30 +280,30 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                             //     // println!("{:?}", result.unwrap());
                             info!("{}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                            let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
-
-                            match simulated_bundle {
-                                Ok(res) => {
-                                    let ex_tx = res.transactions.get(0).unwrap();
-                                    //                                 if ex_tx.gas_used < U256::from(270000) {
-                                    // let result = client.send_transaction(typed_tx, Some(BlockId::Number(BlockNumber::Number(U64::from(blk))))).await;
-                                    //                                         println!("{:?}", result.unwrap());
-                                    //                                 }
-                                    if ex_tx.error.is_none() {
-                                        println!("\n\n\n\n\n{:?}\n\n\n\n\n\n", ex_tx);
-                                    } else {
-                                        println!("{:?} {:?}", ex_tx.gas_used, ex_tx.revert)
-                                    }
-                                }
-                                Err(err) => {
-                                    error!("{:?}", err)
-                                }
-                            }
+                            // let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
+                            //
+                            // match simulated_bundle {
+                            //     Ok(res) => {
+                            //         let ex_tx = res.transactions.get(0).unwrap();
+                            //         //                                 if ex_tx.gas_used < U256::from(270000) {
+                            //         // let result = client.send_transaction(typed_tx, Some(BlockId::Number(BlockNumber::Number(U64::from(blk))))).await;
+                            //         //                                         println!("{:?}", result.unwrap());
+                            //         //                                 }
+                            //         if ex_tx.error.is_none() {
+                            //             println!("\n\n\n\n\n{:?}\n\n\n\n\n\n", ex_tx);
+                            //         } else {
+                            //             println!("{:?} {:?}", ex_tx.gas_used, ex_tx.revert)
+                            //         }
+                            //     }
+                            //     Err(err) => {
+                            //         error!("{:?}", err)
+                            //     }
+                            // }
 
                             //
                             //                   }
-                            // let real_bundle = flashbots_client.inner().send_bundle(&bundle_request).await.unwrap().await;
-                            // println!("{:?}", real_bundle);
+                            let real_bundle = flashbots_client.inner().send_bundle(&bundle_request).await.unwrap().await;
+                            println!("{:?}", real_bundle);
 
                             // match simulated_bundle {
                             //     Ok(bundle) => {

@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
 
 use crate::types::UniSwapV2Pair;
-use crate::{CpmmCalculator, LiquidityProviderId, Meta, PoolUpdateEvent};
+use crate::{CpmmCalculator, LiquidityProviderId, Meta, PendingPoolUpdateEvent, PoolUpdateEvent};
 use crate::{Curve, LiquidityProvider, LiquidityProviders};
 use crate::{EventEmitter, EventSource, Pool};
 use async_std::sync::Arc;
@@ -42,6 +42,7 @@ pub struct SushiSwap {
     pub metadata: SushiSwapMetadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
     subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
+    pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>>,
 }
 
 impl SushiSwap {
@@ -50,6 +51,7 @@ impl SushiSwap {
             metadata,
             pools: Arc::new(RwLock::new(HashMap::new())),
             subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
+            pending_subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
         }
     }
 }
@@ -236,5 +238,15 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
                 futures::future::join_all(joins).await;
             });
         })
+    }
+}
+impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiSwap {
+    fn get_subscribers(&self) -> Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>>>> {
+        self.pending_subscribers.clone()
+    }
+    fn emit(&self) -> std::thread::JoinHandle<()> {
+        let pools = self.pools.clone();
+        let subscribers = self.subscribers.clone();
+        std::thread::spawn(move || {})
     }
 }

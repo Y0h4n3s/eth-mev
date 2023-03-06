@@ -18,7 +18,7 @@ use async_std::sync::Arc;
 use async_trait::async_trait;
 use bincode::{Decode, Encode};
 use coingecko::response::coins::CoinsMarketItem;
-use ethers::types::{H160, H256, I256, U256};
+use ethers::types::{H160, H256, I256, Transaction, U256};
 use ethers_providers::{Provider, Ws};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ use nom::FindSubstring;
 use crate::sushiswap::SushiSwapMetadata;
 
 #[async_trait]
-pub trait LiquidityProvider: EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> {
+pub trait LiquidityProvider: EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> + EventEmitter<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>> {
     type Metadata;
     fn get_metadata(&self) -> Self::Metadata;
     async fn get_pools(&self) -> HashMap<String, Pool>;
@@ -155,6 +155,14 @@ impl LiquidityProviders {
             
         }
     }
+
+    pub fn factory_address(&self) -> String {
+        match self {
+            LiquidityProviders::UniswapV2(meta) => meta.factory_address.clone(),
+            LiquidityProviders::UniswapV3(meta) => meta.factory_address.clone(),
+            LiquidityProviders::SushiSwap(meta) => meta.factory_address.clone(),
+        }
+    }
 }
 
 #[derive(Decode, Encode, Debug, Clone, Hash, Eq, PartialEq)]
@@ -243,14 +251,20 @@ pub struct PoolUpdateEvent {
     pub timestamp: u128
 }
 
-#[derive(Decode, Encode, Debug, Clone, PartialEq,Eq)]
+#[derive(Debug, Clone, PartialEq,Eq)]
 pub struct PendingPoolUpdateEvent {
     pub pool: Pool,
-    pub block_number: u64,
+    pub pending_tx: Transaction,
     pub timestamp: u128
 }
 
 impl EventSource for PoolUpdateEvent {
+    type Event = Self;
+    fn get_event(&self) -> Self::Event {
+        self.clone()
+    }
+}
+impl EventSource for PendingPoolUpdateEvent {
     type Event = Self;
     fn get_event(&self) -> Self::Event {
         self.clone()
@@ -434,6 +448,7 @@ pub struct SyncConfig {
 pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>,
+    pending_updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>,
     config: SyncConfig,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     // collect top tokens by market cap
@@ -441,7 +456,7 @@ pub async fn start(
     let mut markets_list = vec![];
     let all_coins = coingecko_client.coins_list(true).await?;
     let mut high_volume_tokens: Vec<String> = vec![];
-    for i in 1..8 {
+    for i in 1..12 {
         let coin_list = coingecko_client
             .coins_markets::<String>(
                 "usd",
@@ -473,6 +488,7 @@ pub async fn start(
         let mut amm = provider.build();
         join_handles.push(amm.load_pools(high_volume_tokens.clone()));
         amm.subscribe(updated_q.clone());
+        amm.subscribe(pending_updated_q.clone());
         amms.push(amm);
     }
 
@@ -494,9 +510,9 @@ pub async fn start(
     std::mem::drop(pools);
 
     let mut emitters = vec![];
-    for amm in &amms {
-        let emitter = amm.emit();
-        emitters.push(emitter);
+    for amm in amms {
+        // emitters.push(EventEmitter::<Box<dyn EventSource<Event = PoolUpdateEvent>>>::emit(&*amm));
+        emitters.push(EventEmitter::<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>::emit(&*amm));
     }
 
     Ok(tokio::spawn(async move {

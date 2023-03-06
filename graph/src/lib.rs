@@ -20,7 +20,7 @@ use tracing::{debug, info};
 use rayon::prelude::*;
 use bolt_proto::value::{Node, Relationship};
 use bolt_proto::Message;
-use garb_sync_eth::{EventSource, LiquidityProviderId, LiquidityProviders, Pool, PoolUpdateEvent};
+use garb_sync_eth::{EventSource, LiquidityProviderId, LiquidityProviders, PendingPoolUpdateEvent, Pool, PoolUpdateEvent};
 use neo4rs::{query, Graph as NGraph};
 use once_cell::sync::Lazy;
 use petgraph::algo::all_simple_paths;
@@ -33,6 +33,7 @@ use petgraph::{
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::iter::from_fn;
+use ethers::abi::AbiEncode;
 use ethers::types::{Eip1559TransactionRequest, U256};
 use tokio::runtime::Runtime;
 use tokio::sync::{RwLock, Semaphore};
@@ -94,6 +95,7 @@ pub static MAX_SIZE: Lazy<f64> = Lazy::new(|| {
 pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PoolUpdateEvent>>>,
+    pending_updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>,
     routes: Arc<RwLock<kanal::AsyncSender<Vec<Eip1559TransactionRequest>>>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
@@ -260,7 +262,7 @@ DETACH DELETE n",
         HashMap::<Pool, HashSet<(String, Vec<Pool>)>>::new(),
     ));
     let path_lookup1 = Arc::new(RwLock::new(
-        HashMap::<Pool, HashSet<MevPath>>::new(),
+        HashMap::<Pool, Vec<MevPath>>::new(),
     ));
     if config.from_file {
         println!("graph_service> Loading routes from file");
@@ -395,10 +397,10 @@ DETACH DELETE n",
                             for pool in p.pools.iter() {
                                 let mut w = path_lookup1.write().await;
                                 if let Some(mut existing) = w.get_mut(&pool) {
-                                    existing.insert(p.clone());
+                                    existing.push(p.clone());
                                 } else {
-                                    let mut set = HashSet::new();
-                                    set.insert(p.clone());
+                                    let mut set = vec![];
+                                    set.push(p.clone());
                                     w.insert(pool.clone(), set);
                                 }
                             }
@@ -489,63 +491,95 @@ DETACH DELETE n",
 //         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
 //     }
     println!("graph service> Starting Listener thread");
-    println!("graph service> Clearing {} cached events", updated_q.len());
+    println!("graph service> Clearing {} cached events", updated_q.len() + pending_updated_q.len());
 
     while !updated_q.is_empty() {
         drop(updated_q.recv().await);
+    }
+
+    while !pending_updated_q.is_empty() {
+        drop(pending_updated_q.recv().await);
     }
 
     let mut workers = vec![];
     let cores = num_cpus::get();
 
     for i in 0..cores {
-        let path_lookup = path_lookup1.read().await.clone();
+        let path_lookup = path_lookup1.clone();
         let routes = routes.read().await.clone();
         let updated_q = updated_q.clone();
         workers.push(tokio::spawn(async move {
-                while let Ok(updated_market_event) = updated_q.recv().await {
-                    let event = updated_market_event.get_event();
-                    let mut updated_market = event.pool;
-                    let routes = routes.clone();
-                    if let Some((pool, market_routes)) = path_lookup.iter().find(|(key, _value)| {
-                        updated_market.address == key.address
-                    }) {
-                        let pool = pool.clone();
-                        let market_routes = market_routes.clone();
-
-                        // tokio::spawn(async move {
-                            println!(
-                                "graph service> Found {} routes for updated market {} on block {}",
-                                market_routes.len(),
-                                updated_market,
-                                event.block_number
-                            );
-                            if market_routes.len() <= 0 {
-                                continue
-                            }
-
-                            let mut updated = market_routes.into_par_iter().map(|mut route| {
-                                route.update(pool.clone());
-                                let transactions = route.get_transactions();
-                                let mut n = vec![];
-                                for tx in transactions {
-                                    let mut mut_tx = tx.clone();
-                                    mut_tx.value = Some(U256::from(event.block_number));
-                                    n.push(mut_tx);
-                                }
-                                n
-                            }).flatten().collect::<Vec<Eip1559TransactionRequest>>();
-                            if updated.len() == 0 {
-                                continue
-                            }
-                            info!("{}. Sent {} on {}",i, updated.len(), event.block_number);
-                            routes.send(updated).await;
-                        // });
-                    } else {
-                        info!("graph service> No routes found for {}", updated_market);
+            while let Ok(updated_market_event) = updated_q.recv().await {
+                let event = updated_market_event.get_event();
+                let mut updated_market = event.pool;
+                let routes = routes.clone();
+                let market_routes = if let Some((pool, market_routes)) = path_lookup.write().await.iter_mut().find(|(key, _value)| {
+                    updated_market.address == key.address
+                }) {
+                    for mut route in market_routes.iter_mut() {
+                        route.update(updated_market.clone());
                     }
+
+                    println!(
+                        "graph service> Updating {} routes for updated market {}",
+                        market_routes.len(),
+                        updated_market,
+                    );
+                    if market_routes.len() <= 0 {
+                        continue
+                    }
+                    market_routes.clone()
                 }
+                else {
+                    info!("graph service> No routes found for {}", updated_market);
+                    continue;
+                };
+
+            }
             }));
+    }
+
+    for i in 0..cores {
+        let path_lookup = path_lookup1.clone();
+        let routes = routes.read().await.clone();
+        let pending_updated_q = pending_updated_q.clone();
+        workers.push(tokio::spawn(async move {
+            while let Ok(updated_market_event) = pending_updated_q.recv().await {
+                let event = updated_market_event.get_event();
+                let mut updated_market = event.pool;
+                let routes = routes.clone();
+                let market_routes = if let Some((pool, market_routes)) = path_lookup.read().await.iter().find(|(key, _value)| {
+                    updated_market.address == key.address
+                }) {
+                    println!(
+                        "graph service> Found {} routes for pending transaction {}",
+                        market_routes.len(),
+                        event.pending_tx.hash.encode_hex()
+                    );
+                    if market_routes.len() <= 0 {
+                        continue
+                    }
+                    market_routes.clone()
+                    }
+                else {
+                    info!("graph service> No routes found for pending update {}", updated_market);
+                    continue;
+                };
+                let mut updated = market_routes.into_par_iter().map(|mut route| {
+                    let transactions = route.get_transaction_for_pending_update(updated_market.clone());
+                    let mut n = vec![];
+                    for tx in transactions {
+                        let mut mut_tx = tx.clone();
+                        n.push(mut_tx);
+                    }
+                    n
+                }).flatten().collect::<Vec<Eip1559TransactionRequest>>();
+                if updated.len() == 0 {
+                    continue
+                }
+                routes.send(updated).await;
+            }
+        }));
     }
     for worker in workers {
         worker.await.unwrap();

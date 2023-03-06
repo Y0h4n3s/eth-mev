@@ -10,6 +10,7 @@ use crate::types::UniSwapV3Pool;
 use crate::types::UniSwapV3Token;
 use crate::{LiquidityProviderId, Meta, PoolUpdateEvent, UniswapV3Calculator};
 use crate::{Curve, LiquidityProvider, LiquidityProviders};
+use crate::PendingPoolUpdateEvent;
 use crate::{EventEmitter, EventSource, Pool};
 use async_std::sync::Arc;
 use async_trait::async_trait;
@@ -380,7 +381,7 @@ impl UniswapV3Metadata {
     }
 }
 
-const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 14969621;
+const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 13969621;
 
 pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
     120, 60, 202, 28, 4, 18, 221, 13, 105, 94, 120, 69, 104, 201, 109, 162, 233, 194, 47, 249, 137,
@@ -390,6 +391,7 @@ pub struct UniSwapV3 {
     pub metadata: UniswapV3Metadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
     subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
+    pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>>,
 }
 
 impl UniSwapV3 {
@@ -398,6 +400,7 @@ impl UniSwapV3 {
             metadata,
             pools: Arc::new(RwLock::new(HashMap::new())),
             subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
+            pending_subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
         }
     }
 }
@@ -601,10 +604,6 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                                 LiquidityProviders::UniswapV3(pool_meta) => Some(pool_meta),
                                 _ => None
                             } {
-
-                                // pool_meta.sqrt_price = log.sqrt_price_x96.to_string();
-                                // pool_meta.liquidity = log.liquidity;
-                                // pool_meta.tick = log.tick;
                                 let mut updated_meta = get_complete_pool_data_batch_request(vec![H160::from_str(&pool_meta.address).unwrap()], client.clone())
                                     .await
                                     .unwrap()
@@ -612,10 +611,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                                     .unwrap()
                                     .to_owned();
                                 updated_meta.factory_address = pool_meta.factory_address;
-                                // let x_y = get_uniswap_v3_tick_data_batch_request(&pool_meta, pool_meta.tick, true, 160, None, client.clone()).await.unwrap();
-                                // let y_x = get_uniswap_v3_tick_data_batch_request(&pool_meta, pool_meta.tick, false, 160, None, client.clone()).await.unwrap();
-                                // pool_meta.tick_bitmap_x_y = x_y;
-                                // pool_meta.tick_bitmap_y_x = y_x;
+
                                 pool.provider = LiquidityProviders::UniswapV3(updated_meta)
                             }
                             let event = PoolUpdateEvent {
@@ -634,3 +630,13 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
     }
 }
 
+impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwapV3 {
+    fn get_subscribers(&self) -> Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>>>> {
+        self.pending_subscribers.clone()
+    }
+    fn emit(&self) -> std::thread::JoinHandle<()> {
+        let pools = self.pools.clone();
+        let subscribers = self.subscribers.clone();
+        std::thread::spawn(move || {})
+    }
+}
