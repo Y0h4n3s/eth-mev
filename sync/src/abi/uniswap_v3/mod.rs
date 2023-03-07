@@ -223,7 +223,7 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
-                                            .as_u128(),
+                                            .into(),
                                         sqrt_price: pool_data[5]
                                             .to_owned()
                                             .into_uint()

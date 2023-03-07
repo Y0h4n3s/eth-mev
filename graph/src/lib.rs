@@ -264,17 +264,6 @@ DETACH DELETE n",
     let path_lookup1 = Arc::new(RwLock::new(
         HashMap::<Pool, Vec<MevPath>>::new(),
     ));
-    if config.from_file {
-        info!("graph_service> Loading routes from file");
-        let config = bincode::config::standard();
-        let contents = std::fs::read_to_string("path_lookup_1_uniswapv2_uniswapv1.json")?;
-        let mut path_lookup = path_lookup.write().await;
-        let encoded: Vec<u8> = serde_json::from_str(&contents)?;
-
-        let (decoded, len): (HashMap<Pool, HashSet<(String, Vec<Pool>)>>, usize) =
-            bincode::decode_from_slice(&encoded[..], config).unwrap();
-        *path_lookup = decoded;
-    } else {
         let max_intermidiate_nodes = 4;
 
         for i in 2..max_intermidiate_nodes {
@@ -455,15 +444,7 @@ DETACH DELETE n",
         }
 
 
-        if config.save_only {
-            let config = bincode::config::standard();
-            let file = std::fs::File::create(std::path::PathBuf::from("path_lookup.json"))?;
-            let encoded: Vec<u8> =
-                bincode::encode_to_vec(&path_lookup.read().await.clone(), config)?;
-            serde_json::to_writer(file, &encoded)?;
-            return Ok(());
-        }
-    }
+
     let mut total_paths = 0;
     for (_pool, paths) in path_lookup1.read().await.clone() {
         for path in paths {

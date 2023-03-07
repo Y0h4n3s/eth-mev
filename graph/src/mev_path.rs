@@ -875,7 +875,6 @@ impl MevPath {
         }
 
         if best_route_profit > I256::from(0) {
-
             info!("Size: {} Profit: {}\n{} {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0),path.len(),Self::path_to_solidity_test(&path, &instructions[best_route_index]));
             for step in &path {
                 info!("{} -> {}", step, step.get_output());

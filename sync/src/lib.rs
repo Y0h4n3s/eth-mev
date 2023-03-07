@@ -48,7 +48,7 @@ pub trait LiquidityProvider: EventEmitter<Box<dyn EventSource<Event = PoolUpdate
     fn get_id(&self) -> LiquidityProviderId;
 }
 
-#[derive(Deserialize, Serialize, Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum LiquidityProviders {
     UniswapV2(UniswapV2Metadata),
@@ -56,7 +56,7 @@ pub enum LiquidityProviders {
     SushiSwap(SushiSwapMetadata)
 }
 
-#[derive(Deserialize, Serialize, Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
+#[derive(Deserialize, Serialize,Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
 pub enum LiquidityProviderId {
     UniswapV2,
     UniswapV3,
@@ -166,7 +166,7 @@ impl LiquidityProviders {
     }
 }
 
-#[derive(Decode, Encode, Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub enum Curve {
     Uncorrelated,
     Stable,
@@ -179,7 +179,7 @@ pub trait PoolInfo {
     fn supports_pre_payment(&self) -> bool;
 }
 
-#[derive(Decode, Encode, Debug, Clone, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct Pool {
     pub address: String,
     pub x_address: String,
@@ -245,7 +245,7 @@ impl EventSource for Pool {
     }
 }
 
-#[derive(Decode, Encode, Debug, Clone, PartialEq,Eq)]
+#[derive(Debug, Clone, PartialEq,Eq)]
 pub struct PoolUpdateEvent {
     pub pool: Pool,
     pub block_number: u64,

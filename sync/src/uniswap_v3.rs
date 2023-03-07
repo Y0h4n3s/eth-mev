@@ -44,7 +44,7 @@ use tracing::{info};
 use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3TickData};
 
 // Todo: add word in here to update and remove middleware use in simulate_swap
-#[derive(Serialize, Deserialize,Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV3Metadata {
     pub factory_address: String,
     pub address: String,
@@ -55,7 +55,7 @@ pub struct UniswapV3Metadata {
     pub token_a_decimals: u8,
     pub token_b_decimals: u8,
     pub fee: u32,
-    pub liquidity: u128,
+    pub liquidity: U256,
     pub sqrt_price: String,
     pub tick: i32,
     pub tick_spacing: i32,
@@ -83,7 +83,7 @@ pub struct CurrentState {
     amount_calculated: I256,
     sqrt_price_x_96: U256,
     tick: i32,
-    liquidity: u128,
+    liquidity: U256,
 }
 impl UniswapV3Metadata {
     pub fn calculate_virtual_reserves(&self) -> (u128, u128) {
@@ -97,7 +97,7 @@ impl UniswapV3Metadata {
         )));
 
         let sqrt_price = price.sqrt();
-        let liquidity = BigFloat::from_u128(self.liquidity);
+        let liquidity = BigFloat::from_str(&self.liquidity.to_string()).unwrap();
 
         //Sqrt price is stored as a Q64.96 so we need to left shift the liquidity by 96 to be represented as Q64.96
         //We cant right shift sqrt_price because it could move the value to 0, making divison by 0 to get reserve_x
@@ -318,7 +318,7 @@ impl UniswapV3Metadata {
             ) = uniswap_v3_math::swap_math::compute_swap_step(
                 current_state.sqrt_price_x_96,
                 swap_target_sqrt_ratio,
-                current_state.liquidity,
+                current_state.liquidity.as_u128(),
                 current_state.amount_specified_remaining,
                 self.fee,
             )?;
@@ -351,9 +351,9 @@ impl UniswapV3Metadata {
                     }
 
                     current_state.liquidity = if liquidity_net < 0 {
-                        current_state.liquidity.checked_sub((-liquidity_net as u128)).unwrap_or(0)
+                        current_state.liquidity.checked_sub((U256::from(-liquidity_net))).unwrap_or(U256::from(0))
                     } else {
-                        current_state.liquidity + (liquidity_net as u128)
+                        current_state.liquidity + (U256::from(liquidity_net))
                     };
 
                     //Increment the current tick
