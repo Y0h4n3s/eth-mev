@@ -34,7 +34,7 @@ use ethers::core::k256::elliptic_curve::consts::U25;
 use ethers::prelude::k256::elliptic_curve::consts::U2;
 
 use ethers::signers::Signer;
-use ethers::types::{U256, Block, TxHash, BlockId, Eip1559TransactionRequest, BlockNumber, U64, NameOrAddress, transaction::eip2930::AccessList};
+use ethers::types::{U256, Block, TxHash, BlockId, Eip1559TransactionRequest, BlockNumber, U64, NameOrAddress, transaction::eip2930::AccessList, Transaction};
 use ethers::types::transaction::eip2718::TypedTransaction;
 use tokio::time::Duration;
 use ethers_providers::{Http, Middleware};
@@ -44,7 +44,7 @@ use rand::Rng;
 
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
-    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1".to_string()))
+    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,3,2".to_string()))
         .split(",")
         .map(|i| LiquidityProviders::from(i))
         .collect()
@@ -85,7 +85,7 @@ pub async fn async_main() -> anyhow::Result<()> {
     // routes holds the routes that pass through an updated pool
     // this will be populated by the graph module when there is an updated pool
     let (routes_sender, mut routes_receiver) =
-        kanal::bounded_async::<Vec<Eip1559TransactionRequest>>(10000);
+        kanal::bounded_async::<Vec<(Transaction, Eip1559TransactionRequest)>>(10000);
 
     let sync_config = SyncConfig {
         providers: PROVIDERS.clone(),
@@ -152,7 +152,7 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
 
 
 
-pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionRequest>>, _routes_sender: kanal::AsyncSender<Vec<Eip1559TransactionRequest>>) -> anyhow::Result<()> {
+pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<(Transaction, Eip1559TransactionRequest)>>, _routes_sender: kanal::AsyncSender<Vec<(Transaction, Eip1559TransactionRequest)>>) -> anyhow::Result<()> {
     let mut workers = vec![];
     let cores = num_cpus::get();
 
@@ -220,7 +220,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                 while let Ok(orders) = routes.recv().await {
                     info!("{}. Received {}",i, orders.len());
                     let mut handles = vec![];
-                    for order in orders {
+                    for (pair_tx, order) in orders {
                         let nonce_num = nonce.clone();
                         let block = block.clone();
                         let signer = signer.clone();
@@ -236,6 +236,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                             tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee).min(base_fee.checked_mul(U256::from(2)).unwrap()));
                             tx_request.max_priority_fee_per_gas = Some(base_fee);
                             tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
+                            let blk = blk.number.unwrap().as_u64();
                             drop(n);
                             drop(blk);
 
@@ -243,7 +244,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                             if tx_request.max_fee_per_gas.unwrap() == base_fee {
                                 tx_request.max_fee_per_gas = Some(base_fee.checked_mul(U256::from(2)).unwrap());
                             }
-                            let blk = tx_request.value.unwrap().as_u64();
+
                             tx_request.value = None;
                             //
                             // // gas * max_priority_fee_per_gas / 10 ^ 8 <= profit amount
@@ -268,7 +269,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                             let mut bundle_request = BundleRequest::new();
                             let bundled: BundleTransaction = signed_tx.clone().into();
 
-                            bundle_request = bundle_request.push_transaction(bundled).set_block(U64::from(blk)).set_simulation_block(U64::from(blk)).set_simulation_timestamp(0);
+                            bundle_request = bundle_request.push_transaction(pair_tx).push_transaction(bundled).set_block(U64::from(blk)).set_simulation_block(U64::from(blk)).set_simulation_timestamp(0);
                             // drop(blk);
                             // let mut sent_val = sent_v.write().await;
                             // if !(*sent_val) {
@@ -280,30 +281,30 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionReques
                             //     // println!("{:?}", result.unwrap());
                             info!("{}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                            // let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
+                            let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
                             //
-                            // match simulated_bundle {
-                            //     Ok(res) => {
-                            //         let ex_tx = res.transactions.get(0).unwrap();
-                            //         //                                 if ex_tx.gas_used < U256::from(270000) {
-                            //         // let result = client.send_transaction(typed_tx, Some(BlockId::Number(BlockNumber::Number(U64::from(blk))))).await;
-                            //         //                                         println!("{:?}", result.unwrap());
-                            //         //                                 }
-                            //         if ex_tx.error.is_none() {
-                            //             println!("\n\n\n\n\n{:?}\n\n\n\n\n\n", ex_tx);
-                            //         } else {
-                            //             println!("{:?} {:?}", ex_tx.gas_used, ex_tx.revert)
-                            //         }
-                            //     }
-                            //     Err(err) => {
-                            //         error!("{:?}", err)
-                            //     }
-                            // }
+                            match simulated_bundle {
+                                Ok(res) => {
+                                    let ex_tx = res.transactions.get(0).unwrap();
+                                    //                                 if ex_tx.gas_used < U256::from(270000) {
+                                    // let result = client.send_transaction(typed_tx, Some(BlockId::Number(BlockNumber::Number(U64::from(blk))))).await;
+                                    //                                         println!("{:?}", result.unwrap());
+                                    //                                 }
+                                    if ex_tx.error.is_none() {
+                                        println!("\n\n\n\n\n{:?}\n\n\n\n\n\n", ex_tx);
+                                    } else {
+                                        println!("{:?} {:?}", ex_tx.gas_used, ex_tx.revert)
+                                    }
+                                }
+                                Err(err) => {
+                                    error!("{:?}", err)
+                                }
+                            }
 
                             //
                             //                   }
-                            let real_bundle = flashbots_client.inner().send_bundle(&bundle_request).await.unwrap().await;
-                            println!("{:?}", real_bundle);
+                            // let real_bundle = flashbots_client.inner().send_bundle(&bundle_request).await.unwrap().await;
+                            // println!("{:?}", real_bundle);
 
                             // match simulated_bundle {
                             //     Ok(bundle) => {

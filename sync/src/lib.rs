@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::hash::*;
 use std::str::FromStr;
+use std::time::Duration;
 use anyhow::Error;
 use bincode::error::IntegerType::U128;
 use tokio::sync::RwLock;
@@ -456,7 +457,21 @@ pub async fn start(
     let mut markets_list = vec![];
     let all_coins = coingecko_client.coins_list(true).await?;
     let mut high_volume_tokens: Vec<String> = vec![];
-    for i in 1..12 {
+    for i in 1..15 {
+        let coin_list = coingecko_client
+            .coins_markets::<String>(
+                "usd",
+                &[],
+                Some("ethereum-ecosystem"),
+                coingecko::params::MarketsOrder::MarketCapDesc,
+                250,
+                i,
+                false,
+                &[],
+            )
+            .await?;
+        markets_list.extend(coin_list);
+
         let coin_list = coingecko_client
             .coins_markets::<String>(
                 "usd",
@@ -470,13 +485,29 @@ pub async fn start(
             )
             .await?;
         markets_list.extend(coin_list);
+        let coin_list = coingecko_client
+            .coins_markets::<String>(
+                "usd",
+                &[],
+                Some("ethereum-ecosystem"),
+                coingecko::params::MarketsOrder::GeckoDesc,
+                250,
+                i,
+                false,
+                &[],
+            )
+            .await?;
+        markets_list.extend(coin_list);
+        tokio::time::sleep(Duration::from_secs(10)).await;
     }
     for market in markets_list {
         if let Some(coin_info) = all_coins.iter().find(|coin| coin.id == market.id) {
             if let Some(platforms) = &coin_info.platforms {
                 if platforms.contains_key(&"ethereum".to_string()) {
                     if let Some(contract) = platforms.get("ethereum").unwrap() {
-                        high_volume_tokens.push(contract.clone())
+                        if !high_volume_tokens.contains(contract) {
+                            high_volume_tokens.push(contract.clone())
+                        }
                     }
                 }
             }

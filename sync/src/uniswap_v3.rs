@@ -40,6 +40,7 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
 use uniswap_v3_math::sqrt_price_math::FIXED_POINT_96_RESOLUTION;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
+use tracing::{info};
 use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3TickData};
 
 // Todo: add word in here to update and remove middleware use in simulate_swap
@@ -381,7 +382,7 @@ impl UniswapV3Metadata {
     }
 }
 
-const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 13969621;
+const UNISWAP_V3_DEPLOYMENT_BLOCK: u64 = 15969621;
 
 pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
     120, 60, 202, 28, 4, 18, 221, 13, 105, 94, 120, 69, 104, 201, 109, 162, 233, 194, 47, 249, 137,
@@ -536,7 +537,7 @@ impl LiquidityProvider for UniSwapV3 {
                                         w.insert(pool.address.clone(), pool);
                                     }
                                 } else {
-                                    eprintln!("{:?}", pairs_data.unwrap_err())
+                                    info!("{:?}", pairs_data.unwrap_err())
                                 }
                             }
                         }
@@ -549,7 +550,7 @@ impl LiquidityProvider for UniSwapV3 {
             }
 
 
-            println!(
+            info!(
                 "{:?} Pools: {}",
                 LiquidityProviderId::UniswapV3,
                 pools.read().await.len()
@@ -620,7 +621,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                             };
 
-                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV3 Send Error {:?}", e));
+                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| info!("sync_service> UniswapV3 Send Error {:?}", e));
                         }
                     }));
                 }

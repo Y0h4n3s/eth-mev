@@ -856,8 +856,13 @@ impl MevPath {
                 if i == 0 {
                     best_route_profit = final_balance;
                     best_route_size = i_atomic;
+                    if best_route_profit > I256::from(0) {
+                        left = mid;
+                    } else {
+                        right = mid;
+                    }
                 }
-                if final_balance >= best_route_profit {
+                else if final_balance >= best_route_profit {
                     best_route_profit = final_balance;
                     best_route_size = i_atomic;
                     best_route_index = instructions.len() - 1;
@@ -869,19 +874,8 @@ impl MevPath {
             }
         }
 
-        info!("Size: {} Profit: {}\n{} {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0),path.len(),Self::path_to_solidity_test(&path, &instructions[best_route_index]));
-        for step in &path {
-            info!("{} -> {}", step, step.get_output());
-        }
-        info!("\n\n\nDone path\n\n\n");
         if best_route_profit > I256::from(0) {
-            if best_route_profit.as_u128() > (0.3 * best_route_size) as u128 {
-                return Ok(PathResult {
-                    ix_data: "".to_string(),
-                    profit: 0,
-                    is_good: false,
-                });
-            }
+
             info!("Size: {} Profit: {}\n{} {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0),path.len(),Self::path_to_solidity_test(&path, &instructions[best_route_index]));
             for step in &path {
                 info!("{} -> {}", step, step.get_output());

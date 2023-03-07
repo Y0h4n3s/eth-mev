@@ -141,7 +141,7 @@ impl LiquidityProvider for UniSwapV2 {
                                     let mut w = pairs.write().await;
                                     w.append(&mut pairs_data);
                                 } else {
-                                    eprintln!("{:?}", pairs_data.unwrap_err())
+                                    info!("{:?}", pairs_data.unwrap_err())
                                 }
                             }
                         }
@@ -177,7 +177,7 @@ impl LiquidityProvider for UniSwapV2 {
                 let mut w = pools.write().await;
                 w.insert(pool.address.clone(), pool);
             }
-            println!(
+            info!(
                 "{:?} Pools: {}",
                 LiquidityProviderId::UniswapV2,
                 pools.read().await.len()
@@ -241,7 +241,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                                 block_number: meta.block_number.as_u64(),
                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                             };
-                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| eprintln!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
+                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| info!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
                         }
                     }));
                 }
@@ -349,13 +349,13 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                 continue;
                             }
                             let factory_address = factory_address.clone();
-                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                            let now = U256::from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
                             // skip paths > 2 for now
                             if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_eth_for_tokens(&tx.input) {
                                 if decoded.path.len() > 2 {
                                     continue;
                                 }
-                                if decoded.deadline.as_u64() > now {
+                                if decoded.deadline < now {
                                     continue;
                                 }
                                 //find associated pool
@@ -388,8 +388,8 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     } else {
                                         (mutated_pool.x_amount - amount_out.as_u128(),mutated_pool.y_amount + tx.value.as_u128() )
                                     };
-                                    println!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                    println!("swapExactEthForTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
+                                    info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                    info!("swapExactEthForTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
                                     let event = PendingPoolUpdateEvent {
                                         pool: mutated_pool,
                                         pending_tx: tx,
@@ -399,13 +399,14 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
 
 
                                 } else {
-                                    info!("Pool {} not being tracked", pool_address);
+                                    trace!("Pool {} not being tracked", pool_address);
                                 }
                             } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_tokens_for_tokens(&tx.input) {
                                 if decoded.path.len() > 2 {
                                     continue;
                                 }
-                                if decoded.deadline.as_u64() > now {
+
+                                if decoded.deadline < now {
                                     continue;
                                 }
                                 let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
@@ -437,8 +438,8 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     } else {
                                         ( mutated_pool.x_amount - amount_out.as_u128(), mutated_pool.y_amount + decoded.amount_in.as_u128())
                                     };
-                                    println!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                    println!("swapExactTokensForTokens: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
+                                    info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                    info!("swapExactTokensForTokens: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
                                     let event = PendingPoolUpdateEvent {
                                         pool: mutated_pool,
                                         pending_tx: tx,
@@ -448,14 +449,14 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
 
 
                                 } else {
-                                    info!("Pool {} not being tracked", pool_address);
+                                    trace!("Pool {} not being tracked", pool_address);
                                 }
                             } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_tokens_for_eth(&tx.input) {
                                 if decoded.path.len() > 2 {
                                     continue;
                                 }
 
-                                if decoded.deadline.as_u64() > now {
+                                if decoded.deadline < now {
                                     continue;
                                 }
                                 let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
@@ -483,8 +484,8 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     } else {
                                         (mutated_pool.x_amount - amount_out.as_u128(), mutated_pool.y_amount + decoded.amount_in.as_u128() )
                                     };
-                                    println!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                    println!("swapExactTokensForEth: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
+                                    info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                    info!("swapExactTokensForEth: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
                                     let event = PendingPoolUpdateEvent {
                                         pool: mutated_pool,
                                         pending_tx: tx,
@@ -494,14 +495,14 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     
 
                                 } else {
-                                    info!("Pool {} not being tracked", pool_address);
+                                    trace!("Pool {} not being tracked", pool_address);
                                 }
                             } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_tokens_for_exact_tokens(&tx.input) {
                                 if decoded.path.len() > 2 {
                                     continue;
                                 }
 
-                                if decoded.deadline.as_u64() > now {
+                                if decoded.deadline < now {
                                     continue;
                                 }
                                 let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
@@ -528,7 +529,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     } else {
                                         ( mutated_pool.x_amount - decoded.amount_out.as_u128(), mutated_pool.y_amount + amount_in.as_u128())
                                     };
-                                    println!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                    info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     let event = PendingPoolUpdateEvent {
                                         pool: mutated_pool,
                                         pending_tx: tx,
@@ -536,17 +537,17 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     };
                                     let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
 
-                                    println!("swapTokensForExactTokens: {:?}", decoded)
+                                    info!("swapTokensForExactTokens: {:?}", decoded)
 
                                 } else {
-                                    info!("Pool {} not being tracked", pool_address);
+                                    trace!("Pool {} not being tracked", pool_address);
                                 }
                             } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_tokens_for_exact_eth(&tx.input) {
                                 if decoded.path.len() > 2 {
                                     continue;
                                 }
 
-                                if decoded.deadline.as_u64() > now {
+                                if decoded.deadline < now {
                                     continue;
                                 }
                                 let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
@@ -573,7 +574,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     } else {
                                         (mutated_pool.x_amount - decoded.amount_out.as_u128(), mutated_pool.y_amount + amount_in.as_u128())
                                     };
-                                    println!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                    info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     let event = PendingPoolUpdateEvent {
                                         pool: mutated_pool,
                                         pending_tx: tx,
@@ -581,16 +582,17 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     };
                                     let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
 
-                                println!("swapTokensForExactEth: {:?}", decoded)
+                                info!("swapTokensForExactEth: {:?}", decoded)
 
                                 } else {
-                                    info!("Pool {} not being tracked", pool_address);
+                                    trace!("Pool {} not being tracked", pool_address);
                                 }
                             } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_eth_for_exact_tokens(&tx.input) {
                                 if decoded.path.len() > 2 {
                                     continue;
                                 }
-                                if decoded.deadline.as_u64() > now {
+
+                                if decoded.deadline < now {
                                     continue;
                                 }
                                 let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
@@ -617,8 +619,8 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     } else {
                                         (mutated_pool.x_amount - decoded.amount_out.as_u128(), mutated_pool.y_amount + amount_in.as_u128())
                                     };
-                                    println!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                    println!("swapEthForExactTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_in);
+                                    info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                    info!("swapEthForExactTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_in);
                                     let event = PendingPoolUpdateEvent {
                                         pool: mutated_pool,
                                         pending_tx: tx,
@@ -627,10 +629,10 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
 
                                 } else {
-                                    info!("Pool {} not being tracked", pool_address);
+                                    trace!("Pool {} not being tracked", pool_address);
                                 }
                             } else {
-                                info!("Useless transaction not decoded")
+                                trace!("Useless transaction not decoded")
                             }
                         }
                         Err(e) => {
