@@ -372,9 +372,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
 
                                     if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
                                         let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                            (pool.x_amount, pool.y_amount)
                                         } else {
-                                            (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                            (pool.y_amount, pool.x_amount)
                                         };
                                         let amount_out = match calculate_out(tx.value, source_amount, dest_amount) {
                                             Ok(amount) => amount,
@@ -391,9 +391,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
 
                                         let mut mutated_pool = pool.clone();
                                         (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount + tx.value.as_u128(), mutated_pool.y_amount - amount_out.as_u128())
+                                            (mutated_pool.x_amount + tx.value, mutated_pool.y_amount.saturating_sub(amount_out))
                                         } else {
-                                            (mutated_pool.x_amount - amount_out.as_u128(), mutated_pool.y_amount + tx.value.as_u128())
+                                            (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount + tx.value)
                                         };
                                         info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                         info!("swapExactEthForTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
@@ -421,9 +421,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
 
                                     if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
                                         let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                            (pool.x_amount, pool.y_amount)
                                         } else {
-                                            (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                            (pool.y_amount, pool.x_amount)
                                         };
                                         let amount_out = match calculate_out(decoded.amount_in, source_amount, dest_amount) {
                                             Ok(amount) => amount,
@@ -440,9 +440,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
 
                                         let mut mutated_pool = pool.clone();
                                         (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount + decoded.amount_in.as_u128(), mutated_pool.y_amount - amount_out.as_u128())
+                                            (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
                                         } else {
-                                            (mutated_pool.x_amount - amount_out.as_u128(), mutated_pool.y_amount + decoded.amount_in.as_u128())
+                                            (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
                                         };
                                         info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                         info!("swapExactTokensForTokens: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
@@ -467,9 +467,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
                                     if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
                                         let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                            (pool.x_amount, pool.y_amount)
                                         } else {
-                                            (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                            (pool.y_amount, pool.x_amount)
                                         };
                                         let amount_out = match calculate_out(decoded.amount_in, source_amount, dest_amount) {
                                             Ok(amount) => amount,
@@ -485,9 +485,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         }
                                         let mut mutated_pool = pool.clone();
                                         (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount + decoded.amount_in.as_u128(), mutated_pool.y_amount - amount_out.as_u128())
+                                            (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
                                         } else {
-                                            (mutated_pool.x_amount - amount_out.as_u128(), mutated_pool.y_amount + decoded.amount_in.as_u128())
+                                            (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
                                         };
                                         info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                         info!("swapExactTokensForEth: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
@@ -512,9 +512,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
                                     if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
                                         let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                            (pool.x_amount, pool.y_amount)
                                         } else {
-                                            (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                            (pool.y_amount, pool.x_amount)
                                         };
                                         let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
                                             Ok(amount) => amount,
@@ -529,9 +529,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         }
                                         let mut mutated_pool = pool.clone();
                                         (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount + amount_in.as_u128(), mutated_pool.y_amount - decoded.amount_out.as_u128())
+                                            (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
                                         } else {
-                                            (mutated_pool.x_amount - decoded.amount_out.as_u128(), mutated_pool.y_amount + amount_in.as_u128())
+                                            (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
                                         };
                                         info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                         let event = PendingPoolUpdateEvent {
@@ -557,9 +557,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
                                     if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
                                         let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                            (pool.x_amount, pool.y_amount)
                                         } else {
-                                            (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                            (pool.y_amount, pool.x_amount)
                                         };
                                         let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
                                             Ok(amount) => amount,
@@ -574,9 +574,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         }
                                         let mut mutated_pool = pool.clone();
                                         (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount + amount_in.as_u128(), mutated_pool.y_amount - decoded.amount_out.as_u128())
+                                            (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
                                         } else {
-                                            (mutated_pool.x_amount - decoded.amount_out.as_u128(), mutated_pool.y_amount + amount_in.as_u128())
+                                            (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
                                         };
                                         info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                         let event = PendingPoolUpdateEvent {
@@ -602,9 +602,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                     let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
                                     if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
                                         let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                            (pool.x_amount, pool.y_amount)
                                         } else {
-                                            (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                            (pool.y_amount, pool.x_amount)
                                         };
                                         let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
                                             Ok(amount) => amount,
@@ -619,9 +619,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         }
                                         let mut mutated_pool = pool.clone();
                                         (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount + amount_in.as_u128(), mutated_pool.y_amount - decoded.amount_out.as_u128())
+                                            (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
                                         } else {
-                                            (mutated_pool.x_amount - decoded.amount_out.as_u128(), mutated_pool.y_amount + amount_in.as_u128())
+                                            (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
                                         };
                                         info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                         info!("swapEthForExactTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_in);
@@ -660,9 +660,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
 
                                             if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
                                                 let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                                    (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                                    (pool.x_amount, pool.y_amount)
                                                 } else {
-                                                    (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                                    (pool.y_amount, pool.x_amount)
                                                 };
                                                 let amount_out = match calculate_out(decoded.amount_in, source_amount, dest_amount) {
                                                     Ok(amount) => amount,
@@ -679,9 +679,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
 
                                                 let mut mutated_pool = pool.clone();
                                                 (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                                    (mutated_pool.x_amount + decoded.amount_in.as_u128(), mutated_pool.y_amount - amount_out.as_u128())
+                                                    (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
                                                 } else {
-                                                    (mutated_pool.x_amount - amount_out.as_u128(), mutated_pool.y_amount + decoded.amount_in.as_u128())
+                                                    (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
                                                 };
                                                 info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                                 info!("V2ExactInput: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
@@ -704,9 +704,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                             let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
                                             if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
                                                 let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                                    (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                                    (pool.x_amount, pool.y_amount)
                                                 } else {
-                                                    (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                                    (pool.y_amount, pool.x_amount)
                                                 };
                                                 let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
                                                     Ok(amount) => amount,
@@ -721,9 +721,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                                 }
                                                 let mut mutated_pool = pool.clone();
                                                 (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                                    (mutated_pool.x_amount + amount_in.as_u128(), mutated_pool.y_amount - decoded.amount_out.as_u128())
+                                                    (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
                                                 } else {
-                                                    (mutated_pool.x_amount - decoded.amount_out.as_u128(), mutated_pool.y_amount + amount_in.as_u128())
+                                                    (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
                                                 };
                                                 info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                                 let event = PendingPoolUpdateEvent {

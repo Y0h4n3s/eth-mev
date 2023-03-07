@@ -542,7 +542,7 @@ pub async fn start(
 
     let mut emitters = vec![];
     for amm in amms {
-        // emitters.push(EventEmitter::<Box<dyn EventSource<Event = PoolUpdateEvent>>>::emit(&*amm));
+        emitters.push(EventEmitter::<Box<dyn EventSource<Event = PoolUpdateEvent>>>::emit(&*amm));
         emitters.push(EventEmitter::<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>::emit(&*amm));
     }
 

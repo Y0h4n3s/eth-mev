@@ -307,9 +307,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
 
                                 if let Some(pool) = pools.iter().find(|p| (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) || (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex())) )  {
                                     let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                        (pool.x_amount, pool.y_amount)
                                     } else {
-                                        (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                        (pool.y_amount, pool.x_amount)
                                     };
                                     let amount_out = match crate::uniswap_v2::calculate_out(tx.value, source_amount, dest_amount) {
                                         Ok(amount) => amount,
@@ -326,9 +326,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
 
                                     let mut mutated_pool = pool.clone();
                                     (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (mutated_pool.x_amount + tx.value.as_u128(), mutated_pool.y_amount - amount_out.as_u128())
+                                        (mutated_pool.x_amount.saturating_add(tx.value), mutated_pool.y_amount.saturating_sub(amount_out))
                                     } else {
-                                        (mutated_pool.x_amount - amount_out.as_u128(),mutated_pool.y_amount + tx.value.as_u128() )
+                                        (mutated_pool.x_amount.saturating_sub(amount_out),mutated_pool.y_amount.saturating_add(tx.value))
                                     };
                                     info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     info!("Sushiswap: swapExactEthForTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
@@ -355,9 +355,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
 
                                 if let Some(pool) = pools.iter().find(|p| (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) || (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex())) )  {
                                     let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                        (pool.x_amount, pool.y_amount)
                                     } else {
-                                        (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                        (pool.y_amount, pool.x_amount)
                                     };
                                     let amount_out = match crate::uniswap_v2::calculate_out(decoded.amount_in, source_amount, dest_amount) {
                                         Ok(amount) => amount,
@@ -374,9 +374,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
 
                                     let mut mutated_pool = pool.clone();
                                     (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (mutated_pool.x_amount + decoded.amount_in.as_u128(), mutated_pool.y_amount - amount_out.as_u128())
+                                        (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
                                     } else {
-                                        ( mutated_pool.x_amount - amount_out.as_u128(), mutated_pool.y_amount + decoded.amount_in.as_u128())
+                                        ( mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
                                     };
                                     info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     info!("Sushiswap: swapExactTokensForTokens: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
@@ -402,9 +402,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
 
                                 if let Some(pool) = pools.iter().find(|p| (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) || (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex())) )  {
                                     let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                        (pool.x_amount, pool.y_amount)
                                     } else {
-                                        (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                        (pool.y_amount, pool.x_amount)
                                     };
                                     let amount_out = match crate::uniswap_v2::calculate_out(decoded.amount_in, source_amount, dest_amount) {
                                         Ok(amount) => amount,
@@ -420,9 +420,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                     }
                                     let mut mutated_pool = pool.clone();
                                     (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (mutated_pool.x_amount + decoded.amount_in.as_u128(), mutated_pool.y_amount - amount_out.as_u128())
+                                        (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
                                     } else {
-                                        (mutated_pool.x_amount - amount_out.as_u128(), mutated_pool.y_amount + decoded.amount_in.as_u128() )
+                                        (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in) )
                                     };
                                     info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     info!("Sushiswap: swapExactTokensForEth: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
@@ -448,9 +448,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
 
                                 if let Some(pool) = pools.iter().find(|p| (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) || (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex())) )  {
                                     let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                        (pool.x_amount, pool.y_amount)
                                     } else {
-                                        (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                        (pool.y_amount, pool.x_amount)
                                     };
                                     let amount_in = match crate::uniswap_v2::calculate_in(decoded.amount_out, source_amount, dest_amount) {
                                         Ok(amount) => amount,
@@ -465,9 +465,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                     }
                                     let mut mutated_pool = pool.clone();
                                     (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (mutated_pool.x_amount + amount_in.as_u128(), mutated_pool.y_amount - decoded.amount_out.as_u128())
+                                        (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
                                     } else {
-                                        ( mutated_pool.x_amount - decoded.amount_out.as_u128(), mutated_pool.y_amount + amount_in.as_u128())
+                                        ( mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
                                     };
                                     info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     let event = PendingPoolUpdateEvent {
@@ -493,9 +493,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
 
                                 if let Some(pool) = pools.iter().find(|p| (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) || (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex())) )  {
                                     let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                        (pool.x_amount, pool.y_amount)
                                     } else {
-                                        (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                        (pool.y_amount, pool.x_amount)
                                     };
                                     let amount_in = match crate::uniswap_v2::calculate_in(decoded.amount_out, source_amount, dest_amount) {
                                         Ok(amount) => amount,
@@ -510,9 +510,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                     }
                                     let mut mutated_pool = pool.clone();
                                     (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (mutated_pool.x_amount + amount_in.as_u128(), mutated_pool.y_amount - decoded.amount_out.as_u128())
+                                        (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
                                     } else {
-                                        (mutated_pool.x_amount - decoded.amount_out.as_u128(), mutated_pool.y_amount + amount_in.as_u128())
+                                        (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
                                     };
                                     info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     let event = PendingPoolUpdateEvent {
@@ -537,9 +537,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
 
                                 if let Some(pool) = pools.iter().find(|p| (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) || (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex())) ) {
                                     let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (U256::from(pool.x_amount), U256::from(pool.y_amount))
+                                        (pool.x_amount, pool.y_amount)
                                     } else {
-                                        (U256::from(pool.y_amount), U256::from(pool.x_amount))
+                                        (pool.y_amount, pool.x_amount)
                                     };
                                     let amount_in = match crate::uniswap_v2::calculate_in(decoded.amount_out, source_amount, dest_amount) {
                                         Ok(amount) => amount,
@@ -554,9 +554,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                     }
                                     let mut mutated_pool = pool.clone();
                                     (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                        (mutated_pool.x_amount + amount_in.as_u128(), mutated_pool.y_amount - decoded.amount_out.as_u128())
+                                        (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
                                     } else {
-                                        (mutated_pool.x_amount - decoded.amount_out.as_u128(), mutated_pool.y_amount + amount_in.as_u128())
+                                        (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
                                     };
                                     info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     info!("Sushiswap: swapEthForExactTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_in);

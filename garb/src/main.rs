@@ -262,10 +262,11 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transac
                             bundle.push(pair_tx.rlp());
                             bundle.push(signed_tx);
                             handler.set_txs(bundle);
+                            warn!("Trying {}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
+
                             FlashBotsBundleHandler::submit(handler, blk, blk+1).await;
                             let mut bundle_request = BundleRequest::new();
 
-                            info!("{}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
                         }));
                     }
