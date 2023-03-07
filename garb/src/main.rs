@@ -44,7 +44,7 @@ use rand::Rng;
 
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
-    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,3,2".to_string()))
+    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2,3".to_string()))
         .split(",")
         .map(|i| LiquidityProviders::from(i))
         .collect()
@@ -66,7 +66,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
         // will be written to stdout.
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::WARN)
         // completes the builder.
         .finish();
 
@@ -281,6 +281,8 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<(Transaction, Eip1559Tra
                             //     // println!("{:?}", result.unwrap());
                             info!("{}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
+                            let real_bundle = flashbots_client.inner().send_bundle(&bundle_request).await.unwrap().await;
+                            warn!("{:?}", real_bundle);
                             let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
                             //
                             match simulated_bundle {
@@ -303,8 +305,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<(Transaction, Eip1559Tra
 
                             //
                             //                   }
-                            // let real_bundle = flashbots_client.inner().send_bundle(&bundle_request).await.unwrap().await;
-                            // println!("{:?}", real_bundle);
+
 
                             // match simulated_bundle {
                             //     Ok(bundle) => {

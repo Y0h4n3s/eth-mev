@@ -4,11 +4,12 @@
 #![allow(missing_docs)]
 pub mod uniswap_v2;
 pub mod uniswap_v3;
-use ethers::{abi::AbiDecode, prelude::*};
+use ethers::{abi::AbiDecode, prelude::{Bytes, abigen}};
 
 abigen!(UniswapV2Pair, "src/abi/IUniswapV2Pair.json");
 abigen!(UniswapV2Router02, "src/abi/IUniswapV2Router02.json");
 abigen!(UniswapV2Factory, "src/abi/IUniswapV2Factory.json");
+abigen!(UniversalRouter, "src/abi/IUniversalRouter.json");
 abigen!(IERC20, "src/abi/IERC20.json");
 
 // swapExactEthForTokens
@@ -34,4 +35,7 @@ pub fn decode_uniswap_router_swap_tokens_for_exact_eth(data: &Bytes) -> anyhow::
 // swapEthForExactTokens
 pub fn decode_uniswap_router_swap_eth_for_exact_tokens(data: &Bytes) -> anyhow::Result<SwapETHForExactTokensCall> {
     SwapETHForExactTokensCall::decode(data).map_err(|e| anyhow::Error::from(e))
+}
+pub fn decode_universal_router_execute(data: &Bytes) -> anyhow::Result<ExecuteCall> {
+    ExecuteCall::decode(data).map_err(|e| anyhow::Error::from(e))
 }
