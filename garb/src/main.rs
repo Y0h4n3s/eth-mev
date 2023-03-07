@@ -392,7 +392,8 @@ impl FlashBotsBundleHandler {
 
             match req.send().await {
                 Ok(res) => {
-                    warn!("Response: {:?}", res)
+                    warn!("ResponseMeta: {:?}", res);
+                    warn!("Response: {:?}", res.text().await)
                 } Err(e) => {
                     error!("Flashbots Relay Error: {:?}", e)
                 }
@@ -440,9 +441,13 @@ impl BundleHandlers {
 pub struct FlashBotsRequestParams {
     txs: Vec<Bytes>,
     block_number: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
     min_timestamp: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     max_timestamp: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reverting_tx_hashes: Option<Vec<Bytes>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     replacement_uuid: Option<u128>
 
 }
