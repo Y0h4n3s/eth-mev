@@ -68,7 +68,7 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
         match value.into().as_str() {
             "1" => LiquidityProviders::UniswapV2(Default::default()),
             "2" => LiquidityProviders::UniswapV3(UniswapV3Metadata {
-                sqrt_price: "0".to_string(),
+                sqrt_price: U256::zero(),
                 ..Default::default()
             }),
             "3" => LiquidityProviders::SushiSwap(Default::default()),
@@ -187,8 +187,8 @@ pub struct Pool {
     pub curve: Option<String>,
     pub curve_type: Curve,
     pub fee_bps: u64,
-    pub x_amount: u128,
-    pub y_amount: u128,
+    pub x_amount: U256,
+    pub y_amount: U256,
     pub x_to_y: bool,
     pub provider: LiquidityProviders,
 }

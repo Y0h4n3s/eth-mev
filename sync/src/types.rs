@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 
+use ethers::prelude::U256;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
@@ -28,8 +29,8 @@ pub struct UniSwapV2Pair {
     pub id: String,
     pub token0: UniSwapV2Token,
     pub token1: UniSwapV2Token,
-    pub reserve0: String,
-    pub reserve1: String,
+    pub reserve0: U256,
+    pub reserve1: U256,
     pub token0_decimals: u8,
     pub token1_decimals: u8,
 }

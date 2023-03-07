@@ -122,12 +122,12 @@ pub async fn get_pool_data_batch_request<M: Middleware>(
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
-                                            .to_string(),
+                                            .into(),
                                         reserve1: pool_data[5]
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
-                                            .to_string(),
+                                            .into(),
                                         token0_decimals: pool_data[1]
                                             .to_owned()
                                             .into_uint()

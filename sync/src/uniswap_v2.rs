@@ -170,12 +170,12 @@ impl LiquidityProvider for UniSwapV2 {
                     y_address: pair.token1.id.clone(),
                     curve: None,
                     curve_type: Curve::Uncorrelated,
-                    x_amount: pair.reserve0.parse::<u128>().unwrap(),
-                    y_amount: pair.reserve1.parse::<u128>().unwrap(),
+                    x_amount: pair.reserve0,
+                    y_amount: pair.reserve1,
                     x_to_y: true,
                     provider: LiquidityProviders::UniswapV2(Default::default()),
                 };
-                if pool.x_amount == 0 || pool.y_amount == 0 {
+                if pool.x_amount.is_zero() || pool.y_amount.is_zero() {
                     continue;
                 }
                 let mut w = pools.write().await;
@@ -235,11 +235,11 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                         while let Some(Ok((log, meta))) = stream.next().await {
                             let mut w = pools.write().await;
                             let mut p = w.get_mut(&pool.address).unwrap();
-                            p.x_amount = log.reserve_0;
-                            p.y_amount = log.reserve_1;
+                            p.x_amount = U256::from(log.reserve_0);
+                            p.y_amount = U256::from(log.reserve_1);
                             drop(w);
-                            pool.x_amount = log.reserve_0;
-                            pool.y_amount = log.reserve_1;
+                            pool.x_amount = U256::from(log.reserve_0);
+                            pool.y_amount = U256::from(log.reserve_1);
                             let event = PoolUpdateEvent {
                                 pool: pool.clone(),
                                 block_number: meta.block_number.as_u64(),

@@ -228,7 +228,7 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
-                                            .to_string(),
+                                            .into(),
                                         tick: I256::from_raw(pool_data[6]
                                             .to_owned()
                                             .into_int()
@@ -249,18 +249,17 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                                         liquidity_net: I256::from_raw(pool_data[9]
                                             .to_owned()
                                             .into_int()
-                                            .unwrap())
-                                            .as_i128(),
+                                            .unwrap()),
                                         token_a_amount: pool_data[10]
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
-                                            .to_string(),
+                                            .into(),
                                         token_b_amount: pool_data[11]
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
-                                            .to_string(),
+                                            .into(),
                                         tick_bitmap_x_y: pool_data[12]
                                             .to_owned()
                                             .into_array()
@@ -302,11 +301,11 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
 }
 
 
-#[derive(Serialize, Deserialize,Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV3TickData {
     pub initialized: bool,
     pub tick: i32,
-    pub liquidity_net: i128,
+    pub liquidity_net: I256,
 }
 
 impl UniswapV3TickData {
@@ -325,8 +324,7 @@ impl UniswapV3TickData {
             liquidity_net: I256::from_raw(tokens[2]
                 .to_owned()
                 .into_int()
-                .unwrap())
-                .as_i128(),
+                .unwrap()),
 
         }
     }
@@ -397,8 +395,7 @@ pub async fn get_uniswap_v3_tick_data_batch_request(
                     .to_owned()
                     .into_int()
                     .expect("Could not convert token to int"),
-            )
-                .as_i128();
+            );
 
             tick_data.push(UniswapV3TickData {
                 initialized,

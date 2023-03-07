@@ -50,16 +50,16 @@ pub struct UniswapV3Metadata {
     pub address: String,
     pub token_a: String,
     pub token_b: String,
-    pub token_a_amount: String,
-    pub token_b_amount: String,
+    pub token_a_amount: U256,
+    pub token_b_amount: U256,
     pub token_a_decimals: u8,
     pub token_b_decimals: u8,
     pub fee: u32,
     pub liquidity: U256,
-    pub sqrt_price: String,
+    pub sqrt_price: U256,
     pub tick: i32,
     pub tick_spacing: i32,
-    pub liquidity_net: i128,
+    pub liquidity_net: I256,
     pub tick_bitmap_x_y: Vec<UniswapV3TickData>,
     pub tick_bitmap_y_x: Vec<UniswapV3TickData>,
 }
@@ -87,7 +87,7 @@ pub struct CurrentState {
 }
 impl UniswapV3Metadata {
     pub fn calculate_virtual_reserves(&self) -> (u128, u128) {
-        let sqrt_price = U256::from_dec_str(&self.sqrt_price).unwrap();
+        let sqrt_price = self.sqrt_price;
         let price = BigFloat::from_u128(
             (U256::from(sqrt_price.overflowing_mul(sqrt_price).0) >> 128).as_u128(),
         )
@@ -131,7 +131,7 @@ impl UniswapV3Metadata {
     // @returns { f64 } token_b_amount (swap through 1 token_a)
     //
     pub fn calculate_price(&self, base_token: String) -> f64 {
-        let sqrt_price = U256::from_dec_str(&self.sqrt_price).unwrap();
+        let sqrt_price =self.sqrt_price;
     
         let price = if self.token_b_decimals > self.token_a_decimals {
             BigFloat::from_str(
@@ -264,7 +264,7 @@ impl UniswapV3Metadata {
 
         //Initialize a mutable state state struct to hold the dynamic simulated state of the pool
         let mut current_state = CurrentState {
-            sqrt_price_x_96: U256::from_dec_str(&self.sqrt_price).unwrap(), //Active price on the pool
+            sqrt_price_x_96: self.sqrt_price, //Active price on the pool
             amount_calculated: I256::zero(),  //Amount of token_out that has been calculated
             amount_specified_remaining: amount_in, //Amount of token_in that has not been swapped
             tick: self.tick,                                       //Current i24 tick of the pool
@@ -350,10 +350,10 @@ impl UniswapV3Metadata {
                         liquidity_net = -liquidity_net;
                     }
 
-                    current_state.liquidity = if liquidity_net < 0 {
-                        current_state.liquidity.checked_sub((U256::from(-liquidity_net))).unwrap_or(U256::from(0))
+                    current_state.liquidity = if liquidity_net < I256::zero() {
+                        current_state.liquidity.checked_sub((-liquidity_net).into_raw()).unwrap_or(U256::from(0))
                     } else {
-                        current_state.liquidity + (U256::from(liquidity_net))
+                        current_state.liquidity + (liquidity_net.into_raw())
                     };
 
                     //Increment the current tick
@@ -446,7 +446,6 @@ impl LiquidityProvider for UniSwapV3 {
 
             let cores = num_cpus::get();
             let permits = Arc::new(Semaphore::new(cores));
-            let mut pairs = Arc::new(RwLock::new(Vec::<UniSwapV3Pool>::new()));
             let mut indices: Arc<Mutex<VecDeque<(u64, u64)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
@@ -457,7 +456,6 @@ impl LiquidityProvider for UniSwapV3 {
 
             loop {
                 let permit = permits.clone().acquire_owned().await.unwrap();
-                let pairs = pairs.clone();
                 let mut w = indices.lock().await;
                 if w.len() == 0 {
                     break;
@@ -522,8 +520,8 @@ impl LiquidityProvider for UniSwapV3 {
                                             y_address: meta.token_b.clone(),
                                             curve: None,
                                             curve_type: Curve::Uncorrelated,
-                                            x_amount: 0,
-                                            y_amount: 0,
+                                            x_amount: U256::zero(),
+                                            y_amount: U256::zero(),
                                             x_to_y: true,
                                             provider: LiquidityProviders::UniswapV3(meta),
                                         };
