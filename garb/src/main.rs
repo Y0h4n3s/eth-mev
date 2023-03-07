@@ -8,8 +8,8 @@
 
 // TODO: node url dispacher
 mod abi;
-
-use tracing::{debug, error, info, warn};
+use serde::{Serialize, Deserialize};
+use tracing::{debug, error, info, Instrument, warn};
 //Deployer: 0xef344B9eFcc133EB4e7FEfbd73a613E3b2D05e86
 // Deployed to: 0x5F416E55fdBbA8CC0D385907C534B57a08710c35
 // Transaction hash: 0x2f03f71cc6915fcc17afd71730f1fb6809cef88b102fcb3aa3e3dc60095d1aee
@@ -23,7 +23,7 @@ use tokio::runtime::Runtime;
 use async_std::sync::Arc;
 use tokio::sync::RwLock;
 use std::collections::{HashMap};
-use ethers::prelude::{Address, H160, LocalWallet, SignerMiddleware};
+use ethers::prelude::{Address, H160, H256, LocalWallet, SignerMiddleware};
 use ethers::prelude::StreamExt;
 
 use url::Url;
@@ -32,16 +32,17 @@ use std::str::FromStr;
 use ethers::abi::{AbiEncode, ParamType, StateMutability, Token};
 use ethers::core::k256::elliptic_curve::consts::U25;
 use ethers::prelude::k256::elliptic_curve::consts::U2;
-
+use ethers::types::Bytes;
 use ethers::signers::Signer;
 use ethers::types::{U256, Block, TxHash, BlockId, Eip1559TransactionRequest, BlockNumber, U64, NameOrAddress, transaction::eip2930::AccessList, Transaction};
 use ethers::types::transaction::eip2718::TypedTransaction;
+use ethers::utils::keccak256;
 use tokio::time::Duration;
 use ethers_providers::{Http, Middleware};
 use ethers_flashbots::{BundleRequest, FlashbotsMiddleware, BundleTransaction};
 use garb_graph_eth::{GraphConfig, Order};
 use rand::Rng;
-
+use async_trait::async_trait;
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
     std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2,3".to_string()))
@@ -85,7 +86,7 @@ pub async fn async_main() -> anyhow::Result<()> {
     // routes holds the routes that pass through an updated pool
     // this will be populated by the graph module when there is an updated pool
     let (routes_sender, mut routes_receiver) =
-        kanal::bounded_async::<Vec<(Transaction, Eip1559TransactionRequest)>>(10000);
+        kanal::bounded_async::<(Transaction, Eip1559TransactionRequest)>(10000);
 
     let sync_config = SyncConfig {
         providers: PROVIDERS.clone(),
@@ -152,16 +153,20 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
 
 
 
-pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<(Transaction, Eip1559TransactionRequest)>>, _routes_sender: kanal::AsyncSender<Vec<(Transaction, Eip1559TransactionRequest)>>) -> anyhow::Result<()> {
+pub fn transactor(routes: &mut kanal::AsyncReceiver<(Transaction, Eip1559TransactionRequest)>, _routes_sender: kanal::AsyncSender<(Transaction, Eip1559TransactionRequest)>) -> anyhow::Result<()> {
     let mut workers = vec![];
     let cores = num_cpus::get();
 
     for i in 0..cores {
         let routes = routes.clone();
         workers.push(std::thread::spawn(move || {
-            let rt = Runtime::new().unwrap();
-
+            let mut rt = Runtime::new().unwrap();
             rt.block_on(async move {
+                let mut bundle_handlers = vec![];
+                bundle_handlers.push(BundleHandlers::FlashBots("https://relay.flashbots.net".to_string(), FlashBotsRequestParams::default()));
+                // bundle_handlers.push(BundleHandlers::FlashBots("https://eth-builder.com".to_string(), FlashBotsRequestParams::default()));
+                bundle_handlers.push(BundleHandlers::FlashBots("https://api.blocknative.com/v1/auction".to_string(), FlashBotsRequestParams::default()));
+                bundle_handlers.push(BundleHandlers::FlashBots("https://api.edennetwork.io/v1/bundle".to_string(), FlashBotsRequestParams::default()));
                 let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
 
                 let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
@@ -217,15 +222,17 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<(Transaction, Eip1559Tra
 
                 let sent = Arc::new(RwLock::new(false));
                 let signer = Arc::new(signer);
-                while let Ok(orders) = routes.recv().await {
-                    info!("{}. Received {}",i, orders.len());
+                while let Ok((pair_tx, order)) = routes.recv().await {
                     let mut handles = vec![];
-                    for (pair_tx, order) in orders {
+                    for handler in &bundle_handlers {
+                        let order = order.clone();
+                        let pair_tx = pair_tx.clone();
                         let nonce_num = nonce.clone();
                         let block = block.clone();
                         let signer = signer.clone();
                         let client = client.clone();
                         let flashbots_client = flashbots_client.clone();
+                        let mut handler = handler.clone();
                         handles.push(tokio::runtime::Handle::current().spawn(async move {
                             let mut tx_request = order;
                             tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
@@ -233,7 +240,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<(Transaction, Eip1559Tra
                             let n = nonce_num.read().await;
                             let blk = block.read().await;
                             let base_fee = blk.base_fee_per_gas.unwrap();
-                            tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee).min(base_fee.checked_mul(U256::from(2)).unwrap()));
+                            tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee));
                             tx_request.max_priority_fee_per_gas = Some(base_fee);
                             tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                             let blk = blk.number.unwrap().as_u64();
@@ -242,78 +249,24 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<(Transaction, Eip1559Tra
 
                             // profit doesn't cover tx_fees
                             if tx_request.max_fee_per_gas.unwrap() == base_fee {
-                                tx_request.max_fee_per_gas = Some(base_fee.checked_mul(U256::from(2)).unwrap());
+                                return
                             }
 
                             tx_request.value = None;
-                            //
-                            // // gas * max_priority_fee_per_gas / 10 ^ 8 <= profit amount
-                            // let tx_request = Eip1559TransactionRequest {
-                            //     to: Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone())),
-                            //     from: Some(signer_wallet_address),
-                            //     data: Some(ethers::types::Bytes::from(tx_data)),
-                            //     chain_id: Some(U64::from(1)),
-                            //     max_priority_fee_per_gas: Some(U256::from(0)),
-                            //     max_fee_per_gas: Some(blk.base_fee_per_gas.unwrap().checked_add(blk.base_fee_per_gas.unwrap().checked_div(U256::from(2)).unwrap()).unwrap_or(U256::from(0))),
-                            //     gas: Some(U256::from(1000000)),
-                            //     nonce: Some(n.clone().checked_add(U256::from(0)).unwrap()),
-                            //     value: None,
-                            //     access_list: AccessList::default(),
-                            // };
-                            // drop(n);
-                            //
+
 
                             let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
                             let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
                             let signed_tx = typed_tx.rlp_signed(&tx_sig);
+                            let mut bundle = vec![];
+                            bundle.push(pair_tx.rlp());
+                            bundle.push(signed_tx);
+                            handler.set_txs(bundle);
+                            FlashBotsBundleHandler::submit(handler, blk, blk+1).await;
                             let mut bundle_request = BundleRequest::new();
-                            let bundled: BundleTransaction = signed_tx.clone().into();
 
-                            bundle_request = bundle_request.push_transaction(pair_tx).push_transaction(bundled).set_block(U64::from(blk)).set_simulation_block(U64::from(blk)).set_simulation_timestamp(0);
-                            // drop(blk);
-                            // let mut sent_val = sent_v.write().await;
-                            // if !(*sent_val) {
-                            //
-                            //     *sent_val = false;
-                            //     drop(sent_val);
-                            //
-                            //     // let result = client.send_transaction(typed_tx, Some(BlockId::Number(BlockNumber::Number(U64::from(blk))))).await;
-                            //     // println!("{:?}", result.unwrap());
                             info!("{}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                            let real_bundle = flashbots_client.inner().send_bundle(&bundle_request).await.unwrap().await;
-                            warn!("{:?}", real_bundle);
-                            let simulated_bundle = flashbots_client.inner().simulate_bundle(&bundle_request).await;
-                            //
-                            match simulated_bundle {
-                                Ok(res) => {
-                                    let ex_tx = res.transactions.get(0).unwrap();
-                                    //                                 if ex_tx.gas_used < U256::from(270000) {
-                                    // let result = client.send_transaction(typed_tx, Some(BlockId::Number(BlockNumber::Number(U64::from(blk))))).await;
-                                    //                                         println!("{:?}", result.unwrap());
-                                    //                                 }
-                                    if ex_tx.error.is_none() {
-                                        println!("\n\n\n\n\n{:?}\n\n\n\n\n\n", ex_tx);
-                                    } else {
-                                        println!("{:?} {:?}", ex_tx.gas_used, ex_tx.revert)
-                                    }
-                                }
-                                Err(err) => {
-                                    error!("{:?}", err)
-                                }
-                            }
-
-                            //
-                            //                   }
-
-
-                            // match simulated_bundle {
-                            //     Ok(bundle) => {
-                            //
-                            //     }
-                            //     Err(e) =>
-                            //         println!("{:?}", e)
-                            // }
                         }));
                     }
                     futures::future::join_all(handles).await;
@@ -322,7 +275,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<(Transaction, Eip1559Tra
                 for task in join_handles {
                     task.await.unwrap();
                 }
-            })
+            });
         }));
     }
     for worker in workers {
@@ -336,3 +289,158 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<Vec<(Transaction, Eip1559Tra
 fn hex_to_address_string(hex: String) -> String {
     ("0x".to_string() + hex.split_at(26).1).to_string()
 }
+
+#[derive(Serialize, Deserialize)]
+pub struct JsonRpcRequest<'a, T> {
+    id: u64,
+    jsonrpc: &'a str,
+    method: &'a str,
+    params: T,
+}
+
+impl<'a, T> JsonRpcRequest<'a, T> {
+    pub fn new(method: &'a str, params: T) -> Self {
+        Self {
+            id: 1,
+            jsonrpc: "2.0",
+            method,
+            params,
+        }
+    }
+}
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct JsonRpcError {
+    /// The error code
+    pub code: i64,
+    /// The error message
+    pub message: String,
+    /// Additional data
+    pub data: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct JsonRpcResponse<T> {
+    pub(crate) id: u64,
+    jsonrpc: String,
+    #[serde(flatten)]
+    pub data: JsonRpcResponseData<T>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum JsonRpcResponseData<R> {
+    Error { error: JsonRpcError },
+    Success { result: R },
+}
+
+impl<R> JsonRpcResponseData<R> {
+    /// Consume response and return value
+    pub fn into_result(self) -> Result<R, JsonRpcError> {
+        match self {
+            JsonRpcResponseData::Success { result } => Ok(result),
+            JsonRpcResponseData::Error { error } => Err(error),
+        }
+    }
+}
+
+
+#[derive(Clone)]
+pub struct FlashBotsBundleHandler {
+}
+
+impl FlashBotsBundleHandler {
+
+    async fn submit(handler_meta: BundleHandlers, from_block: u64, to_block: u64) {
+        let client = reqwest::Client::new();
+        let endpoint = Url::from_str(&handler_meta.endpoint()).unwrap();
+        let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
+        for i in 0..(to_block-from_block) + 1 {
+            let mut handler = handler_meta.clone();
+            handler.set_block(from_block + i);
+            let request = match handler {
+                BundleHandlers::FlashBots(_, params) | BundleHandlers::EthBuilder(_, params)  | BundleHandlers::BlockVision(_, params)=> {
+                    JsonRpcRequest::new("eth_sendBundle", params.clone())
+                }
+                _ => {
+                return
+                }
+            };
+
+            warn!("REquest: {}", serde_json::to_string(&request).unwrap());
+            let signature = bundle_signer
+                .sign_message(format!(
+                    "0x{:x}",
+                    H256::from(keccak256(
+                        serde_json::to_string(&request)
+                            .unwrap()
+                            .as_bytes()
+                    ))
+                ))
+                .await
+                .unwrap();
+
+            let mut req = client
+                .post(endpoint.as_ref())
+                .header(
+                    "X-Flashbots-Signature",
+                    format!("{:?}:0x{}", bundle_signer.address(), signature),
+                ).json(&request);
+            warn!("Header: {}", format!("{:?}:0x{}", bundle_signer.address(), signature));
+
+            match req.send().await {
+                Ok(res) => {
+                    warn!("Response: {:?}", res)
+                } Err(e) => {
+                    error!("Flashbots Relay Error: {:?}", e)
+                }
+            }
+
+        }
+    }
+}
+#[derive(Serialize, Deserialize, Clone)]
+enum BundleHandlers {
+    FlashBots(String, FlashBotsRequestParams),
+    BlockVision(String, FlashBotsRequestParams),
+    EthBuilder(String, FlashBotsRequestParams),
+}
+
+impl BundleHandlers {
+    pub fn endpoint(&self) -> String {
+        match self {
+            Self::EthBuilder(url, _) | Self::FlashBots(url, _) | Self::BlockVision(url, _) => {
+                url.clone()
+            }
+        }
+    }
+
+    pub fn set_txs(&mut self, txs: Vec<Bytes>) -> Self {
+        match self {
+            Self::EthBuilder(_ , params) | Self::FlashBots(_, params) | Self::BlockVision(_, params) => {
+                params.txs = txs
+            }
+        }
+        self.clone()
+    }
+
+    pub fn set_block(&mut self, block: u64) -> Self {
+        match self {
+            Self::EthBuilder(_ , params) | Self::FlashBots(_, params) | Self::BlockVision(_, params) => {
+                params.block_number = block
+            }
+        }
+        self.clone()
+    }
+}
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FlashBotsRequestParams {
+    txs: Vec<Bytes>,
+    block_number: u64,
+    min_timestamp: Option<u64>,
+    max_timestamp: Option<u64>,
+    reverting_tx_hashes: Option<Vec<Bytes>>,
+    replacement_uuid: Option<u128>
+
+}
+

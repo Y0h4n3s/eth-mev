@@ -96,7 +96,7 @@ pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PoolUpdateEvent>>>,
     pending_updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>,
-    routes: Arc<RwLock<kanal::AsyncSender<Vec<(Transaction, Eip1559TransactionRequest)>>>>,
+    routes: Arc<RwLock<kanal::AsyncSender<(Transaction, Eip1559TransactionRequest)>>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
     Graph::<String, Pool, Undirected>::new_undirected();
@@ -555,7 +555,7 @@ DETACH DELETE n",
                     continue
                 }
 
-                routes.send(vec![(event.pending_tx, updated.first().unwrap().clone())]).await;
+                routes.send((event.pending_tx, updated.first().unwrap().clone())).await;
             }
         }));
     }
