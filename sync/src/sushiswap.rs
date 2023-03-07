@@ -196,36 +196,36 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
         let subscribers = self.subscribers.clone();
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
-            let pools = pools.clone();
+            let pls = pools.clone();
             rt.block_on(async move {
                 let mut joins = vec![];
-                let client = Arc::new(
+                let clnt = Arc::new(
                     Provider::<Ws>::connect("ws://89.58.31.215:8546")
                         .await
                         .unwrap(),
                 );
 
-                let latest_block = client.get_block_number().await.unwrap();
+                let latest_block = clnt.get_block_number().await.unwrap();
 
-                for pool in pools.read().await.values() {
+                for pool in pls.read().await.values() {
                     let subscribers = subscribers.clone();
-                    let mut pool = pool.clone();
-                    let client = client.clone();
-                    let subscribers = subscribers.read().unwrap();
-                    let sub = subscribers.first().unwrap().clone();
-                    drop(subscribers);
-                    let pools = pools.clone();
+                    let pl = pool.clone();
+                    let subs = subscribers.read().unwrap();
 
+                    let sub = subs.first().unwrap().clone();
+                    drop(subs);
+                    let client = clnt.clone();
+                    let pls = pools.clone();
+                    let mut pool = pl.clone();
                     joins.push(tokio::runtime::Handle::current().spawn(async move {
                         let event =
-                            ethers::contract::Contract::event_of_type::<SyncFilter>(client)
+                            ethers::contract::Contract::event_of_type::<SyncFilter>(client.clone())
                                 .from_block(latest_block)
                                 .address(ValueOrArray::Array(vec![pool.address.parse().unwrap()]));
 
                         let mut stream = event.subscribe_with_meta().await.unwrap();
-
                         while let Some(Ok((log, meta))) = stream.next().await {
-                            let mut w = pools.write().await;
+                            let mut w = pls.write().await;
                             let mut p = w.get_mut(&pool.address).unwrap();
                             p.x_amount = U256::from(log.reserve_0);
                             p.y_amount = U256::from(log.reserve_1);
@@ -237,9 +237,51 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
                                 block_number: meta.block_number.as_u64(),
                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                             };
+                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| debug!("sync_service> Sushiswap Send Error {:?}", e)).unwrap();
+                        }
+                    }));
+                    // update on any other event
+                    let subs = subscribers.read().unwrap();
 
-                                let res = sub.send(Box::new(event.clone())).await.map_err(|e| info!("sync_service> SushiSwap Send Error {:?}", e));
+                    let sub = subs.first().unwrap().clone();
+                    drop(subs);
+                    let mut pool = pl.clone();
+                    let client = clnt.clone();
+                    let pls = pools.clone();
+                    joins.push(tokio::runtime::Handle::current().spawn(async move {
+                        let contract = crate::abi::UniswapV2Pair::new(Address::from_str(&pool.address).unwrap(), client.clone());
+                        let events = contract.events();
 
+                        let mut stream = events.stream().await.unwrap();
+                        while let Some(e) = stream.next().await {
+                            let updated_meta = if let Some(mut pool_meta) = match pool.clone().provider {
+                                LiquidityProviders::SushiSwap(pool_meta) => Some(pool_meta),
+                                _ => None
+                            } {
+                                let mut updated_meta = crate::abi::uniswap_v2::get_complete_pool_data_batch_request(vec![H160::from_str(&pool.address).unwrap()], client.clone())
+                                    .await
+                                    .unwrap()
+                                    .first()
+                                    .unwrap()
+                                    .to_owned();
+                                updated_meta.factory_address = pool_meta.factory_address;
+                                updated_meta
+                            } else {
+                                continue
+                            };
+                            let mut w = pls.write().await;
+                            let mut p = w.get_mut(&pool.address).unwrap();
+                            p.x_amount = updated_meta.reserve0;
+                            p.y_amount = updated_meta.reserve1;
+                            drop(w);
+                            pool.x_amount = updated_meta.reserve0;
+                            pool.y_amount = updated_meta.reserve1;
+                            let event = PoolUpdateEvent {
+                                pool: pool.clone(),
+                                block_number: updated_meta.block_number,
+                                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
+                            };
+                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| debug!("sync_service> Sushiswap Send Error {:?}", e)).unwrap();
                         }
                     }));
                 }

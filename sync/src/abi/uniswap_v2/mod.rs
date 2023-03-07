@@ -9,12 +9,15 @@ use ethers::{
 };
 use ethers_providers::ProviderError::JsonRpcClientError;
 use std::sync::Arc;
+use crate::uniswap_v2::UniswapV2Metadata;
 
 abigen!(
     GetUniswapV2PairsBatchRequest,
     "src/abi/uniswap_v2/GetUniswapV2PairsBatchRequest.json";
     GetUniswapV2PoolDataBatchRequest,
     "src/abi/uniswap_v2/GetUniswapV2PoolDataBatchRequest.json";
+    UniswapV2DataAggregator,
+    "src/abi/uniswap_v2/UniswapV2DataAggregator.json";
 );
 
 pub async fn get_pairs_batch_request<M: Middleware>(
@@ -54,6 +57,85 @@ pub async fn get_pairs_batch_request<M: Middleware>(
     Ok(pairs)
 }
 
+
+pub async fn get_complete_pool_data_batch_request<M: Middleware>(
+    pairs: Vec<H160>,
+    middleware: Arc<M>,
+) -> Result<Vec<UniswapV2Metadata>> {
+    let mut target_addresses = vec![];
+    for pair in pairs.iter() {
+        target_addresses.push(Token::Address(pair.clone()));
+    }
+
+
+    let mut final_pairs = vec![];
+    let constructor_args = Token::Tuple(vec![Token::Array(target_addresses)]);
+
+    let deployer =
+        UniswapV2DataAggregator::deploy(middleware.clone(), constructor_args).unwrap();
+
+    loop {
+        let call = deployer.call_raw().await;
+        if let Ok(return_data) = call {
+            let return_data_tokens = ethers::abi::decode(
+                &[ParamType::Array(Box::new(ParamType::Tuple(vec![
+                    ParamType::Uint(256),  // token a amount
+                    ParamType::Uint(256),  // token b amount
+                    ParamType::Uint(256),  // block number
+
+                ])))],
+                &return_data,
+            )?;
+
+            let mut pool_idx = 0;
+
+            for tokens in return_data_tokens {
+                if let Some(tokens_arr) = tokens.into_array() {
+                    for tup in tokens_arr {
+                        if let Some(pool_data) = tup.into_tuple() {
+
+                                //Update the pool data
+                                if let Some(_) = pairs.get(pool_idx) {
+                                    let u_pair = UniswapV2Metadata {
+                                        reserve0: pool_data[0]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .into(),
+                                        reserve1: pool_data[1]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .into(),
+                                        block_number: pool_data[2]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .as_u64(),
+                                        ..Default::default()
+                                    };
+                                    final_pairs.push(u_pair);
+                                }
+
+                            pool_idx += 1;
+                        }
+                    }
+                }
+            }
+            break;
+        } else {
+            match call.unwrap_err() {
+                JsonRpcClientError(err) => {
+                    // eprintln!("{:?}", err);
+                    continue;
+                }
+                _ => break,
+            }
+        }
+    }
+
+    Ok(final_pairs)
+}
 pub async fn get_pool_data_batch_request<M: Middleware>(
     pairs: Vec<H160>,
     middleware: Arc<M>,

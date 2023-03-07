@@ -61,6 +61,7 @@ contract UniswapV2DataAggregator {
     struct PoolData {
         uint256 reserve0;
         uint256 reserve1;
+        uint256 blockNumber;
     }
 
     constructor(address[] memory pools) {
@@ -72,86 +73,8 @@ contract UniswapV2DataAggregator {
             if (codeSizeIsZero(poolAddress)) continue;
 
             PoolData memory poolData;
-            (poolData.reserve0, poolData.reserve1, ) = IUniswapV2Pair(poolAddress).getReserves()
-
-            poolData.tokenA = IUniswapV3Pool(poolAddress).token0();
-            poolData.tokenB = IUniswapV3Pool(poolAddress).token1();
-
-            //Check that tokenA and tokenB do not have codesize of 0
-            if (codeSizeIsZero(poolData.tokenA)) continue;
-            if (codeSizeIsZero(poolData.tokenB)) continue;
-
-            //Get tokenA decimals
-            (
-            bool tokenADecimalsSuccess,
-            bytes memory tokenADecimalsData
-            ) = poolData.tokenA.call(abi.encodeWithSignature("decimals()"));
-
-            if (tokenADecimalsSuccess) {
-                uint256 tokenADecimals;
-
-                if (tokenADecimalsData.length == 32) {
-                    (tokenADecimals) = abi.decode(
-                        tokenADecimalsData,
-                        (uint256)
-                    );
-
-                    if (tokenADecimals == 0 || tokenADecimals > 255) {
-                        continue;
-                    } else {
-                        poolData.tokenADecimals = uint8(tokenADecimals);
-                    }
-                } else {
-                    continue;
-                }
-            } else {
-                continue;
-            }
-
-            (
-            bool tokenBDecimalsSuccess,
-            bytes memory tokenBDecimalsData
-            ) = poolData.tokenB.call(abi.encodeWithSignature("decimals()"));
-
-            if (tokenBDecimalsSuccess) {
-                uint256 tokenBDecimals;
-                if (tokenBDecimalsData.length == 32) {
-                    (tokenBDecimals) = abi.decode(
-                        tokenBDecimalsData,
-                        (uint256)
-                    );
-
-                    if (tokenBDecimals == 0 || tokenBDecimals > 255) {
-                        continue;
-                    } else {
-                        poolData.tokenBDecimals = uint8(tokenBDecimals);
-                    }
-                } else {
-                    continue;
-                }
-            } else {
-                continue;
-            }
-
-            (uint160 sqrtPriceX96, int24 tick, , , , ,) = IUniswapV3Pool(
-                poolAddress
-            ).slot0();
-
-            (, int128 liquidityNet, , , , , ,) = IUniswapV3Pool(poolAddress)
-            .ticks(tick);
-
-            poolData.liquidity = IUniswapV3Pool(poolAddress).liquidity();
-            poolData.tickSpacing = IUniswapV3Pool(poolAddress).tickSpacing();
-            poolData.fee = IUniswapV3Pool(poolAddress).fee();
-
-            poolData.sqrtPrice = sqrtPriceX96;
-            poolData.tick = tick;
-
-            poolData.liquidityNet = liquidityNet;
-            poolData.tickBitmapXY = getTickBitmap(poolAddress, tick, true, poolData.tickSpacing);
-            poolData.tickBitmapYX = getTickBitmap(poolAddress, tick, false, poolData.tickSpacing);
-            poolData.tokenAAmount = IERC20(poolData.tokenA).balanceOf(poolAddress);
-            poolData.tokenBAmount = IERC20(poolData.tokenB).balanceOf(poolAddress);
+            (poolData.reserve0, poolData.reserve1, ) = IUniswapV2Pair(poolAddress).getReserves();
+            poolData.blockNumber = block.number;
             allPoolData[i] = poolData;
         }
 
