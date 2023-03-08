@@ -131,7 +131,7 @@ impl MevPathStep {
             | MevPathStep::Payback(pool, _, _) => {
                 let mut update = updated_pool.clone();
                 update.x_to_y = pool.x_to_y;
-                *pool = updated_pool.clone();
+                *pool = update;
             }
         }
     }

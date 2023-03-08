@@ -541,14 +541,15 @@ DETACH DELETE n",
                 };
                 let mut updated = market_routes.into_par_iter().map(|mut route| {
                     let transactions = route.get_transaction_for_pending_update(updated_market.clone());
-                    info!("{}", transactions.len());
                   transactions
                 }).flatten().collect::<Vec<Eip1559TransactionRequest>>();
                 if updated.len() == 0 {
                     continue
                 }
+                for tx in updated {
+                    routes.send((event.pending_tx, tx)).await;
 
-                routes.send((event.pending_tx, updated.first().unwrap().clone())).await;
+                }
             }
         }));
     }
