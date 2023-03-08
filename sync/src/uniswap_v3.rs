@@ -613,6 +613,8 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                                     .to_owned();
                                 updated_meta.factory_address = pool_meta.factory_address;
 
+                                pool.x_amount = updated_meta.token_a_amount;
+                                pool.y_amount = updated_meta.token_b_amount;
                                 pool.provider = LiquidityProviders::UniswapV3(updated_meta)
                             }
                             let event = PoolUpdateEvent {

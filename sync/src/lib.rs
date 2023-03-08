@@ -426,11 +426,17 @@ impl UniswapV3Calculator {
 #[async_trait]
 impl Calculator for UniswapV3Calculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
+        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) {
+            return Err(Error::msg("Insufficient Liquidity"))
+        }
         let amount_out = self.meta.simulate_swap(pool.x_to_y, in_, true)?;
                 Ok(amount_out)
         }
     
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
+        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) {
+            return Err(Error::msg("Insufficient Liquidity"))
+        }
         let amount_in = self.meta.simulate_swap(pool.x_to_y, out_, false)?;
         Ok(amount_in)
 
