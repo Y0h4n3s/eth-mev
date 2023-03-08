@@ -241,7 +241,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transac
                             let blk = block.read().await;
                             let base_fee = blk.base_fee_per_gas.unwrap();
                             tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee));
-                            tx_request.max_priority_fee_per_gas = Some(base_fee);
+                            // tx_request.max_priority_fee_per_gas = Some(base_fee);
                             tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                             let blk = blk.number.unwrap().as_u64();
                             drop(n);
@@ -266,7 +266,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transac
                             handler.set_txs(bundle);
                             warn!("Trying {}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                            FlashBotsBundleHandler::submit(handler, blk, blk+1).await;
+                            FlashBotsBundleHandler::simulate(handler, blk).await;
                             let mut bundle_request = BundleRequest::new();
 
 
@@ -362,7 +362,7 @@ impl FlashBotsBundleHandler {
             handler.set_block(from_block + i);
             let request = match handler {
                 BundleHandlers::FlashBots(_, params) | BundleHandlers::EthBuilder(_, params)  | BundleHandlers::BlockVision(_, params)=> {
-                    JsonRpcRequest::new("eth_sendBundle", params.clone())
+                    JsonRpcRequest::new("eth_sendBundle", [params.clone()])
                 }
                 _ => {
                 return
@@ -401,7 +401,65 @@ impl FlashBotsBundleHandler {
 
         }
     }
+
+    async fn simulate(handler_meta: BundleHandlers, block: u64) {
+        let client = reqwest::Client::new();
+        let endpoint = Url::from_str(&handler_meta.endpoint()).unwrap();
+        let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
+            let mut handler = handler_meta.clone();
+            handler.set_block(block);
+            let request = match handler {
+                BundleHandlers::FlashBots(_, params) | BundleHandlers::EthBuilder(_, params)  | BundleHandlers::BlockVision(_, params)=> {
+                    let param = FlashBotsSimulateRequestParams {
+                        txs: params.txs,
+                        block_number: params.block_number,
+                        state_block_number: "latest".to_string(),
+                        min_timestamp: None,
+                        max_timestamp: None,
+                        reverting_tx_hashes: None,
+                        replacement_uuid: None,
+                    };
+                    JsonRpcRequest::new("eth_callBundle", [param.clone()])
+                }
+                _ => {
+                    return
+                }
+            };
+
+            warn!("Sim Request: {}", serde_json::to_string(&request).unwrap());
+            let signature = bundle_signer
+                .sign_message(format!(
+                    "0x{:x}",
+                    H256::from(keccak256(
+                        serde_json::to_string(&request)
+                            .unwrap()
+                            .as_bytes()
+                    ))
+                ))
+                .await
+                .unwrap();
+
+            let mut req = client
+                .post(endpoint.as_ref())
+                .header(
+                    "X-Flashbots-Signature",
+                    format!("{:?}:0x{}", bundle_signer.address(), signature),
+                ).json(&request);
+            warn!("Header: {}", format!("{:?}:0x{}", bundle_signer.address(), signature));
+
+            match req.send().await {
+                Ok(res) => {
+                    warn!("Sim ResponseMeta: {:?}", res);
+                    warn!("Sim Response: {:?}", res.text().await)
+                } Err(e) => {
+                    error!("Flashbots Sim Relay Error: {:?}", e)
+                }
+            }
+
+    }
 }
+
+
 #[derive(Serialize, Deserialize, Clone)]
 enum BundleHandlers {
     FlashBots(String, FlashBotsRequestParams),
@@ -430,7 +488,7 @@ impl BundleHandlers {
     pub fn set_block(&mut self, block: u64) -> Self {
         match self {
             Self::EthBuilder(_ , params) | Self::FlashBots(_, params) | Self::BlockVision(_, params) => {
-                params.block_number = block
+                params.block_number = U64::from(block)
             }
         }
         self.clone()
@@ -440,7 +498,24 @@ impl BundleHandlers {
 #[serde(rename_all = "camelCase")]
 pub struct FlashBotsRequestParams {
     txs: Vec<Bytes>,
-    block_number: u64,
+    block_number: U64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    min_timestamp: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_timestamp: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reverting_tx_hashes: Option<Vec<Bytes>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replacement_uuid: Option<u128>
+
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FlashBotsSimulateRequestParams {
+    txs: Vec<Bytes>,
+    block_number: U64,
+    state_block_number: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     min_timestamp: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
