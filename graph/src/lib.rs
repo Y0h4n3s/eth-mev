@@ -543,11 +543,9 @@ DETACH DELETE n",
                     let transactions = route.get_transaction_for_pending_update(updated_market.clone());
                   transactions
                 }).flatten().collect::<Vec<Eip1559TransactionRequest>>();
-                if updated.len() == 0 {
-                    continue
-                }
+
                 for tx in updated {
-                    routes.send((event.pending_tx, tx)).await;
+                    routes.send((event.pending_tx.clone(), tx)).await;
 
                 }
             }
