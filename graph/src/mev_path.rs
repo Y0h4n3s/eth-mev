@@ -424,6 +424,11 @@ impl MevPath {
                                 }
                                 if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
                                     let asset = I256::from_dec_str(&out_.to_string()).unwrap();
+                                    if asset == I256::zero() {
+                                        right = mid;
+                                        mid = (left + right) / 2.0;
+                                        continue 'binary_search;
+                                    }
                                     a = asset;
                                     d = debt;
                                     steps_taken.push(StepMeta {
@@ -485,6 +490,11 @@ impl MevPath {
                                 }
                                 if let Ok(in_) = calculator.calculate_in(as_uint.unwrap(), pool) {
                                     let debt = I256::from_dec_str(&in_.to_string()).unwrap();
+                                    if debt == I256::zero() {
+                                        right = mid;
+                                        mid = (left + right) / 2.0;
+                                        continue 'binary_search;
+                                    }
                                     a = asset;
                                     d = debt;
                                     debug!("Type AssetIsDebtedToOther > Asset {} Debt {}", a, d);
@@ -572,6 +582,11 @@ impl MevPath {
 
                                 if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
                                     let asset = I256::from_dec_str(&out_.to_string()).unwrap();
+                                    if asset == I256::zero() {
+                                        right = mid;
+                                        mid = (left + right) / 2.0;
+                                        continue 'binary_search;
+                                    }
                                     a = asset;
                                     d = debt;
                                     debug!("Type DebtIsAssetOnSelf > Asset {} Debt {}", a, d);
@@ -619,6 +634,11 @@ impl MevPath {
 
                                 if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
                                     let asset = I256::from_dec_str(&out_.to_string()).unwrap();
+                                    if asset == I256::zero() {
+                                        right = mid;
+                                        mid = (left + right) / 2.0;
+                                        continue 'binary_search;
+                                    }
                                     a = asset;
                                     d = debt;
                                     debug!("Type DebtIsInputToken > Asset {} Debt {}", a, d);
@@ -676,6 +696,11 @@ impl MevPath {
                                 }
                                 if let Ok(in_) = calculator.calculate_in(as_uint.unwrap(), pool) {
                                     let debt = I256::from_dec_str(&in_.to_string()).unwrap();
+                                    if debt == I256::zero() {
+                                        right = mid;
+                                        mid = (left + right) / 2.0;
+                                        continue 'binary_search;
+                                    }
                                     a = asset;
                                     d = debt;
                                     debug!("Type AssetIsInputToken > Asset {} Debt {}", a, d);
