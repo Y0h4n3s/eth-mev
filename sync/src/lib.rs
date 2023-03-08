@@ -315,9 +315,6 @@ impl Calculator for CpmmCalculator {
         if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        if in_ >= swap_source_amount {
-            return Ok(swap_destination_amount);
-        }
         let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - pool.fee_bps));
         let numerator = amount_in_with_fee
             .checked_mul(swap_destination_amount)
@@ -426,15 +423,29 @@ impl UniswapV3Calculator {
 #[async_trait]
 impl Calculator for UniswapV3Calculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
+        } else {
+            (pool.y_amount, pool.x_amount)
+        };
+
         if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) {
             return Err(Error::msg("Insufficient Liquidity"))
         }
         let amount_out = self.meta.simulate_swap(pool.x_to_y, in_, true)?;
+        if amount_out > swap_destination_amount {
+            return Err(Error::msg("Insufficient Liquidity"))
+        }
                 Ok(amount_out)
         }
     
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) {
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
+        } else {
+            (pool.y_amount, pool.x_amount)
+        };
+        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) || out_ >= swap_destination_amount{
             return Err(Error::msg("Insufficient Liquidity"))
         }
         let amount_in = self.meta.simulate_swap(pool.x_to_y, out_, false)?;
