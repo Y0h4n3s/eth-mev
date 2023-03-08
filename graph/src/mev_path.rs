@@ -670,7 +670,11 @@ impl MevPath {
                                 return Err(anyhow::Error::msg("Unproccessable Step"));
                             } else {
                                 debug!("Can not process step");
-                                continue 'inner;
+                                if step.get_pool().supports_callback_payment() {
+                                    continue 'inner;
+                                } else {
+                                    return Err(anyhow::Error::msg("Unproccessable Step"));
+                                }
                             }
 
                             if step.is_exact_in() {
@@ -965,28 +969,14 @@ impl MevPath {
             return "0".to_string() + &encoded[index..];
         };
     }
-    pub fn update(&mut self, updated_pool: Pool) -> MevPathUpdateResult {
+    pub fn update(&mut self, updated_pool: Pool) {
         for path in self.paths.iter_mut() {
             // check if the path has positive outcome
             for mut step in (*path).iter_mut() {
-                // update first
                 if step.contains_pool(&updated_pool) {
                     step.update_pool(&updated_pool);
                 }
             }
-        }
-
-        for (index, path) in self
-            .paths
-            .iter()
-            .enumerate()
-            .collect::<Vec<(usize, &Vec<MevPathStep>)>>()
-        {
-            // TODO: use transaction builder
-        }
-
-        MevPathUpdateResult {
-            transactions: vec![],
         }
     }
     pub fn get_transactions_mut(&mut self, updated_pool: Pool) -> Vec<Eip1559TransactionRequest> {

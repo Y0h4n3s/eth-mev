@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
         // will be written to stdout.
-        .with_max_level(tracing::Level::WARN)
+        .with_max_level(tracing::Level::INFO)
         // completes the builder.
         .finish();
 
@@ -240,8 +240,8 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transac
                             let n = nonce_num.read().await;
                             let blk = block.read().await;
                             let base_fee = blk.base_fee_per_gas.unwrap();
-                            tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee));
-                            // tx_request.max_priority_fee_per_gas = Some(base_fee);
+                            tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee).min(U256::from(3).checked_mul(base_fee).unwrap()));
+                            tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
                             tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                             let blk = blk.number.unwrap().as_u64();
                             drop(n);
@@ -250,7 +250,6 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transac
                             // profit doesn't cover tx_fees
                             if tx_request.max_fee_per_gas.unwrap() == base_fee {
                                 warn!("Skipping {}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
-
                                 return
                             }
 
@@ -266,7 +265,7 @@ pub fn transactor(routes: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transac
                             handler.set_txs(bundle);
                             warn!("Trying {}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                            FlashBotsBundleHandler::simulate(handler, blk).await;
+                            FlashBotsBundleHandler::submit(handler, blk, blk + 1).await;
                             let mut bundle_request = BundleRequest::new();
 
 
@@ -369,7 +368,7 @@ impl FlashBotsBundleHandler {
                 }
             };
 
-            warn!("REquest: {}", serde_json::to_string(&request).unwrap());
+            debug!("REquest: {}", serde_json::to_string(&request).unwrap());
             let signature = bundle_signer
                 .sign_message(format!(
                     "0x{:x}",
@@ -388,7 +387,7 @@ impl FlashBotsBundleHandler {
                     "X-Flashbots-Signature",
                     format!("{:?}:0x{}", bundle_signer.address(), signature),
                 ).json(&request);
-            warn!("Header: {}", format!("{:?}:0x{}", bundle_signer.address(), signature));
+            debug!("Header: {}", format!("{:?}:0x{}", bundle_signer.address(), signature));
 
             match req.send().await {
                 Ok(res) => {
@@ -426,7 +425,7 @@ impl FlashBotsBundleHandler {
                 }
             };
 
-            warn!("Sim Request: {}", serde_json::to_string(&request).unwrap());
+            // warn!("Sim Request: {}", serde_json::to_string(&request).unwrap());
             let signature = bundle_signer
                 .sign_message(format!(
                     "0x{:x}",
@@ -445,7 +444,7 @@ impl FlashBotsBundleHandler {
                     "X-Flashbots-Signature",
                     format!("{:?}:0x{}", bundle_signer.address(), signature),
                 ).json(&request);
-            warn!("Header: {}", format!("{:?}:0x{}", bundle_signer.address(), signature));
+            // warn!("Header: {}", format!("{:?}:0x{}", bundle_signer.address(), signature));
 
             match req.send().await {
                 Ok(res) => {

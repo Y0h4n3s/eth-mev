@@ -441,8 +441,8 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         } else {
                                             (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount + tx.value)
                                         };
-                                        info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                        info!("swapExactEthForTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
+                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                        debug!("swapExactEthForTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
                                         let event = PendingPoolUpdateEvent {
                                             pool: mutated_pool,
                                             pending_tx: tx,
@@ -490,8 +490,8 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         } else {
                                             (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
                                         };
-                                        info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                        info!("swapExactTokensForTokens: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
+                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                        debug!("swapExactTokensForTokens: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
                                         let event = PendingPoolUpdateEvent {
                                             pool: mutated_pool,
                                             pending_tx: tx,
@@ -535,8 +535,8 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         } else {
                                             (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
                                         };
-                                        info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                        info!("swapExactTokensForEth: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
+                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                        debug!("swapExactTokensForEth: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
                                         let event = PendingPoolUpdateEvent {
                                             pool: mutated_pool,
                                             pending_tx: tx,
@@ -579,7 +579,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         } else {
                                             (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
                                         };
-                                        info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                         let event = PendingPoolUpdateEvent {
                                             pool: mutated_pool,
                                             pending_tx: tx,
@@ -587,7 +587,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         };
                                         let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
 
-                                        info!("swapTokensForExactTokens: {:?}", decoded)
+                                        debug!("swapTokensForExactTokens: {:?}", decoded)
                                     } else {
                                         trace!("Pool {} not being tracked", pool_address);
                                     }
@@ -624,7 +624,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         } else {
                                             (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
                                         };
-                                        info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                         let event = PendingPoolUpdateEvent {
                                             pool: mutated_pool,
                                             pending_tx: tx,
@@ -632,7 +632,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         };
                                         let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
 
-                                        info!("swapTokensForExactEth: {:?}", decoded)
+                                        debug!("swapTokensForExactEth: {:?}", decoded)
                                     } else {
                                         trace!("Pool {} not being tracked", pool_address);
                                     }
@@ -669,8 +669,8 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                         } else {
                                             (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
                                         };
-                                        info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                        info!("swapEthForExactTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_in);
+                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                        debug!("swapEthForExactTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_in);
                                         let event = PendingPoolUpdateEvent {
                                             pool: mutated_pool,
                                             pending_tx: tx,
@@ -729,8 +729,8 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                                 } else {
                                                     (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
                                                 };
-                                                info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                                info!("V2ExactInput: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
+                                                debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                                debug!("V2ExactInput: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
                                                 let event = PendingPoolUpdateEvent {
                                                     pool: mutated_pool,
                                                     pending_tx: tx.clone(),
@@ -771,7 +771,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                                 } else {
                                                     (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
                                                 };
-                                                info!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                                debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                                 let event = PendingPoolUpdateEvent {
                                                     pool: mutated_pool,
                                                     pending_tx: tx.clone(),
@@ -779,7 +779,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                                 };
                                                 let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
 
-                                                info!("V2ExactOut: {:?}", decoded)
+                                                debug!("V2ExactOut: {:?}", decoded)
                                             } else {
                                                 trace!("Pool {} not being tracked", pool_address);
                                             }

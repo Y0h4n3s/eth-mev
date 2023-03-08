@@ -474,10 +474,6 @@ DETACH DELETE n",
     info!("Starting Listener thread");
     info!("Clearing {} cached events", updated_q.len() + pending_updated_q.len());
 
-    while !updated_q.is_empty() {
-        drop(updated_q.recv().await);
-    }
-
     while !pending_updated_q.is_empty() {
         drop(pending_updated_q.recv().await);
     }
@@ -494,25 +490,22 @@ DETACH DELETE n",
                 let event = updated_market_event.get_event();
                 let mut updated_market = event.pool;
                 let routes = routes.clone();
-                let market_routes = if let Some((pool, market_routes)) = path_lookup.write().await.iter_mut().find(|(key, _value)| {
+                if let Some((pool, market_routes)) = path_lookup.write().await.iter_mut().find(|(key, _value)| {
                     updated_market.address == key.address
                 }) {
                     for mut route in market_routes.iter_mut() {
                         route.update(updated_market.clone());
                     }
 
-                    info!(
+                    debug!(
                         "Updating {} routes for updated market {}",
                         market_routes.len(),
                         updated_market,
                     );
-                    if market_routes.len() <= 0 {
-                        continue
-                    }
-                    market_routes.clone()
+                    continue
                 }
                 else {
-                    info!("No routes found for {}", updated_market);
+                    debug!("No routes found for {}", updated_market);
                     continue;
                 };
 

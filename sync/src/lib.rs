@@ -498,7 +498,7 @@ pub async fn start(
             )
             .await?;
         markets_list.extend(coin_list);
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(Duration::from_secs(15)).await;
     }
     for market in markets_list {
         if let Some(coin_info) = all_coins.iter().find(|coin| coin.id == market.id) {
