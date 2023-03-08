@@ -946,7 +946,7 @@ impl MevPath {
             // info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
             info!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
             for step in &steps_meta[best_route_index] {
-                info!("{} -> {}\nType: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step_id, step.step, step.step.get_output(), step.asset_token, step.asset, step.debt_token, step.debt);
+                info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
             }
             println!("\n\n\n");
             let mut final_data = "".to_string();

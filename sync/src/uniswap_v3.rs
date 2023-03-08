@@ -520,8 +520,8 @@ impl LiquidityProvider for UniSwapV3 {
                                             y_address: meta.token_b.clone(),
                                             curve: None,
                                             curve_type: Curve::Uncorrelated,
-                                            x_amount: U256::zero(),
-                                            y_amount: U256::zero(),
+                                            x_amount: meta.token_a_amount,
+                                            y_amount: meta.token_b_amount,
                                             x_to_y: true,
                                             provider: LiquidityProviders::UniswapV3(meta),
                                         };
@@ -530,7 +530,9 @@ impl LiquidityProvider for UniSwapV3 {
                                         {
                                             continue;
                                         }
-
+                                        if pool.x_amount.is_zero() || pool.y_amount.is_zero() {
+                                            continue;
+                                        }
                                         let mut w = pools.write().await;
                                         w.insert(pool.address.clone(), pool);
                                     }
