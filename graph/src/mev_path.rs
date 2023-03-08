@@ -194,6 +194,14 @@ fn sub_i256(first: I256, second: I256) -> I256 {
     }
 }
 
+struct StepMeta {
+    pub step_id: String,
+    pub asset: I256,
+    pub debt: I256,
+    pub asset_token: String,
+    pub debt_token: String,
+    pub step: MevPathStep
+}
 
 #[derive(Debug)]
 struct PathResult {
@@ -297,6 +305,7 @@ impl MevPath {
         let mut right = mid * 2.0;
         let decimals = crate::decimals(self.input_token.clone());
         let mut instructions = vec![];
+        let mut steps_meta = vec![];
 
 
         let pre_pay = !path.first().unwrap().get_pool().supports_callback_payment();
@@ -360,6 +369,7 @@ impl MevPath {
 
 
             let mut instruction = Vec::with_capacity(path.len());
+            let mut steps_taken = Vec::with_capacity(path.len());
             let mut steps_done: Vec<usize> = vec![];
 
             'stepper: for j in 0..path.len() {
@@ -416,6 +426,14 @@ impl MevPath {
                                     let asset = I256::from_dec_str(&out_.to_string()).unwrap();
                                     a = asset;
                                     d = debt;
+                                    steps_taken.push(StepMeta {
+                                        step_id: "PrePaid".to_string(),
+                                        asset: a,
+                                        debt: d,
+                                        asset_token: asset_token.clone(),
+                                        debt_token: debt_token.clone(),
+                                        step: step.clone(),
+                                    });
                                     debug!("Type PrePaid > Asset {} Debt {}", a, d);
 
                                     let bal = *balance
@@ -489,7 +507,7 @@ impl MevPath {
                                         balance
                                             .get_mut(&pool.address)
                                             .unwrap()
-                                            .insert(debt_token, I256::from(0));
+                                            .insert(debt_token.clone(), I256::from(0));
                                     } else {
                                         // update asset reciever balance
                                         let bal = *balance
@@ -500,7 +518,7 @@ impl MevPath {
                                         balance
                                             .get_mut(&pool.address)
                                             .unwrap()
-                                            .insert(debt_token, sub_i256(bal, debt));
+                                            .insert(debt_token.clone(), sub_i256(bal, debt));
                                     }
 
                                     let bal = *balance
@@ -511,7 +529,16 @@ impl MevPath {
                                     balance
                                         .get_mut(&asset_reciever)
                                         .unwrap()
-                                        .insert(asset_token, bal + (asset));
+                                        .insert(asset_token.clone(), bal + (asset));
+
+                                    steps_taken.push(StepMeta {
+                                        step_id: "AssetIsDebtedToOther".to_string(),
+                                        asset: a,
+                                        debt: d,
+                                        asset_token: asset_token.clone(),
+                                        debt_token: debt_token.clone(),
+                                        step: step.clone(),
+                                    });
                                 } else {
                                     right = mid;
                                     mid = (left + right) / 2.0;
@@ -548,7 +575,14 @@ impl MevPath {
                                     a = asset;
                                     d = debt;
                                     debug!("Type DebtIsAssetOnSelf > Asset {} Debt {}", a, d);
-
+                                    steps_taken.push(StepMeta {
+                                        step_id: "DebtIsAssetOnSelf".to_string(),
+                                        asset: a,
+                                        debt: d,
+                                        asset_token: asset_token.clone(),
+                                        debt_token: debt_token.clone(),
+                                        step: step.clone(),
+                                    });
                                     let bal = *balance
                                         .get(&pool.address)
                                         .unwrap()
@@ -596,7 +630,7 @@ impl MevPath {
                                         balance
                                             .get_mut(&pool.address)
                                             .unwrap()
-                                            .insert(debt_token, I256::from(0));
+                                            .insert(debt_token.clone(), I256::from(0));
                                     } else {
                                         // update asset reciever balance
                                         let bal = *balance
@@ -607,9 +641,16 @@ impl MevPath {
                                         balance
                                             .get_mut(&pool.address)
                                             .unwrap()
-                                            .insert(debt_token, sub_i256(bal, debt));
+                                            .insert(debt_token.clone(), sub_i256(bal, debt));
                                     }
-
+                                    steps_taken.push(StepMeta {
+                                        step_id: "DebtIsInputToken".to_string(),
+                                        asset: a,
+                                        debt: d,
+                                        asset_token: asset_token.clone(),
+                                        debt_token: debt_token.clone(),
+                                        step: step.clone(),
+                                    });
                                     let bal = *balance
                                         .get(&asset_reciever)
                                         .unwrap()
@@ -638,7 +679,14 @@ impl MevPath {
                                     a = asset;
                                     d = debt;
                                     debug!("Type AssetIsInputToken > Asset {} Debt {}", a, d);
-
+                                    steps_taken.push(StepMeta {
+                                        step_id: "AssetIsInputToken".to_string(),
+                                        asset: a,
+                                        debt: d,
+                                        asset_token: asset_token.clone(),
+                                        debt_token: debt_token.clone(),
+                                        step: step.clone(),
+                                    });
                                     // update asset reciever balance
                                     let bal = *balance
                                         .get(&pool.address)
@@ -804,7 +852,14 @@ impl MevPath {
                                         .unwrap()
                                         .insert(token.clone(), I256::from(0));
                                 }
-
+                                steps_taken.push(StepMeta {
+                                    step_id: "PaybackSender".to_string(),
+                                    asset: amount_to_pay,
+                                    debt: amount_to_pay,
+                                    asset_token: token.clone(),
+                                    debt_token: token.clone(),
+                                    step: step.clone(),
+                                });
                                 (PAY_SENDER.to_string(), "".to_string())
                             } else {
                                 if *balance.get(&pool.address).unwrap().get(&token).unwrap() > I256::from(0) {
@@ -830,6 +885,14 @@ impl MevPath {
                                         .unwrap()
                                         .insert(token.clone(), I256::from(0));
                                 }
+                                steps_taken.push(StepMeta {
+                                    step_id: "Payback_address".to_string(),
+                                    asset: amount_to_pay,
+                                    debt: amount_to_pay,
+                                    asset_token: token.clone(),
+                                    debt_token: token.clone(),
+                                    step: step.clone(),
+                                });
                                 (PAY_ADDRESS.to_string(), pool.address.clone()[2..].to_string())
                             };
 
@@ -847,6 +910,7 @@ impl MevPath {
                 }
             }
             instructions.push(instruction);
+            steps_meta.push(steps_taken);
             let asset_balances = balance.iter().map(|(p, b)| b.get(&self.input_token).unwrap()).map(|b| if *b < I256::from(0) { -*b } else { *b }).filter(|b| b != &I256::from(i_atomic as u128)).sorted().collect::<Vec<I256>>();
             if steps_done.len() != path.len() {
                 debug!("{} {}", steps_done.len(), path.len());
@@ -879,11 +943,12 @@ impl MevPath {
         }
 
         if best_route_profit > I256::from(0) {
-            info!("Size: {} Profit: {}\n{} {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0),path.len(),Self::path_to_solidity_test(&path, &instructions[best_route_index]));
-            for step in &path {
-                info!("{} -> {}", step, step.get_output());
+            // info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+            info!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
+            for step in &steps_meta[best_route_index] {
+                info!("{} -> {}\nType: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step_id, step.step, step.step.get_output(), step.asset_token, step.asset, step.debt_token, step.debt);
             }
-            info!("\n\n\nDone path\n\n\n");
+            println!("\n\n\n");
             let mut final_data = "".to_string();
             for ix in instructions[best_route_index].clone() {
                 let end = ix.len() as u8;
