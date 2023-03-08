@@ -14,6 +14,7 @@ use crate::PendingPoolUpdateEvent;
 use crate::{EventEmitter, EventSource, Pool};
 use async_std::sync::Arc;
 use async_trait::async_trait;
+use ethers::abi::AbiDecode;
 use bincode::{Decode, Encode};
 use coingecko::response::coins::CoinsMarketItem;
 use ethers::abi::{AbiEncode, Address, Uint};
@@ -40,7 +41,7 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
 use uniswap_v3_math::sqrt_price_math::FIXED_POINT_96_RESOLUTION;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
-use tracing::{info};
+use tracing::{info, debug, trace, error};
 use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3TickData};
 
 // Todo: add word in here to update and remove middleware use in simulate_swap
@@ -422,7 +423,7 @@ impl UniswapV3Metadata {
             tick: self.tick,                                       //Current i24 tick of the pool
             liquidity: self.liquidity, //Current available liquidity in the tick range
         };
-
+        let mut liquidity_net = self.liquidity_net;
         while current_state.amount_specified_remaining != I256::zero()
             && current_state.sqrt_price_x_96 != sqrt_price_limit_x_96
         {
@@ -495,7 +496,7 @@ impl UniswapV3Metadata {
             //If the price moved all the way to the next price, recompute the liquidity change for the next iteration
             if current_state.sqrt_price_x_96 == step.sqrt_price_next_x96 {
                 if next_tick_data.initialized {
-                    let mut liquidity_net = next_tick_data.liquidity_net;
+                     liquidity_net = next_tick_data.liquidity_net;
 
                     // we are on a tick boundary, and the next tick is initialized, so we must charge a protocol fee
                     if zero_for_one {
@@ -749,6 +750,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                     let sub = subscribers.first().unwrap().clone();
                     drop(subscribers);
 
+                    let pools = pools.clone();
                     joins.push(tokio::runtime::Handle::current().spawn(async move {
                         let event =
                               ethers::contract::Contract::event_of_type::<SwapFilter>(client.clone())
@@ -771,7 +773,9 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
 
                                 pool.x_amount = updated_meta.token_a_amount;
                                 pool.y_amount = updated_meta.token_b_amount;
-                                pool.provider = LiquidityProviders::UniswapV3(updated_meta)
+                                pool.provider = LiquidityProviders::UniswapV3(updated_meta);
+                                let mut w = pools.write().await;
+                                w.insert(pool.address.clone(), pool.clone());
                             }
                             let event = PoolUpdateEvent {
                                 pool: pool.clone(),
@@ -795,7 +799,183 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
     }
     fn emit(&self) -> std::thread::JoinHandle<()> {
         let pools = self.pools.clone();
-        let subscribers = self.subscribers.clone();
-        std::thread::spawn(move || {})
+        let subscribers = self.pending_subscribers.clone();
+        std::thread::spawn(move || {
+            let mut rt = Runtime::new().unwrap();
+            let pools = pools.clone();
+
+            rt.block_on(async move {
+                let client = Arc::new(
+                    Provider::<Ws>::connect("ws://89.58.31.215:8546")
+                        .await
+                        .unwrap(),
+                );
+                let latest_block = client.get_block_number().await.unwrap();
+                let pending_stream = client.watch_pending_transactions().await.unwrap();
+                let mut stream = pending_stream.transactions_unordered(usize::MAX);
+                let subscribers = subscribers.read().unwrap();
+                let sub = Arc::new(subscribers.first().unwrap().clone());
+                drop(subscribers);
+                while let Some(tx_result) = stream.next().await {
+                    match tx_result {
+                        Err(e) => {
+                            debug!("{:?}", e);
+                        }
+                        Ok(tx) => {
+                            let pools = pools
+                                .read()
+                                .await
+                                .values()
+                                .cloned()
+                                .collect::<Vec<Pool>>();
+                            if pools.len() <= 0 {
+                                continue;
+                            }
+                            let client = client.clone();
+                            let sub = sub.clone();
+                            tokio::task::spawn(async move {
+                                let now = U256::from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+
+                                if tx.to == Some(H160::from_str(crate::uniswap_v2::UNISWAP_UNIVERSAL_ROUTER).unwrap()) {
+                                    if let Ok(decoded) = crate::abi::decode_universal_router_execute(&tx.input) {
+                                        if decoded.deadline < now {
+                                            return
+                                        }
+                                        for i in 0..decoded.commands.len() {
+                                            let command = decoded.commands[i] & 0x3f;
+                                            if command == 0x00 {
+                                                let decoded: crate::uniswap_v2::V2ExactInInput = crate::uniswap_v2::V2ExactInInput::decode(&decoded.inputs[i]).unwrap();
+
+                                                if decoded.path.len() > 2 {
+                                                    return
+                                                }
+                                                if let Some(pool) = pools.iter().find(|p|
+                                                    (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) ||
+                                                        (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex()))) {
+                                                    let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                        (pool.x_amount, pool.y_amount)
+                                                    } else {
+                                                        (pool.y_amount, pool.x_amount)
+                                                    };
+
+                                                    let mut meta = match &pool.provider {
+                                                        LiquidityProviders::UniswapV3(meta) => meta.clone(),
+                                                        _ => return
+                                                    };
+                                                    let amount_out = match meta.simulate_swap_mut(pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()), decoded.amount_in, true) {
+                                                        Ok(amount) => amount,
+                                                        Err(e) => {
+                                                            debug!("{:?}", e);
+                                                            return
+                                                        }
+                                                    };
+
+                                                    if amount_out < decoded.amount_out_min {
+                                                        trace!("Output less than minimum");
+                                                        return
+                                                    }
+
+                                                    meta.tick_bitmap_x_y = match get_uniswap_v3_tick_data_batch_request(&meta, meta.tick, true, 100, None, client.clone()).await {
+                                                        Ok(res) => res,
+                                                        _ => return
+                                                    };
+
+                                                    meta.tick_bitmap_y_x = match get_uniswap_v3_tick_data_batch_request(&meta, meta.tick, false, 100, None, client.clone()).await {
+                                                        Ok(res) => res,
+                                                        _ => return
+                                                    };
+                                                    let mut mutated_pool = pool.clone();
+                                                    mutated_pool.provider = LiquidityProviders::UniswapV3(meta);
+                                                    (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                        (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
+                                                    } else {
+                                                        (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
+                                                    };
+                                                    debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                                    info!("V3ExactInput: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
+                                                    let event = PendingPoolUpdateEvent {
+                                                        pool: mutated_pool,
+                                                        pending_tx: tx.clone(),
+                                                        timestamp: 0,
+                                                    };
+                                                    let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV3 Send Error {:?}", e)).unwrap();
+                                                } else {
+                                                    trace!("Pair {} {} not being tracked", hex_to_address_string(decoded.path[0].encode_hex()), hex_to_address_string(decoded.path[1].encode_hex()));                                                }
+                                            } else if command == 0x09 {
+                                                let decoded: crate::uniswap_v2::V2ExactOutInput = crate::uniswap_v2::V2ExactOutInput::decode(&decoded.inputs[i]).unwrap();
+
+                                                if decoded.path.len() > 2 {
+                                                    return
+                                                }
+
+                                                if let Some(pool) = pools.iter().find(|p| (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) || (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex()))) {
+                                                    let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                        (pool.x_amount, pool.y_amount)
+                                                    } else {
+                                                        (pool.y_amount, pool.x_amount)
+                                                    };
+                                                    let mut meta = match &pool.provider {
+                                                        LiquidityProviders::UniswapV3(meta) => meta.clone(),
+                                                        _ => return
+                                                    };
+                                                    let amount_in = match meta.simulate_swap_mut(pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()), decoded.amount_out, false) {
+                                                        Ok(amount) => amount,
+                                                        Err(e) => {
+                                                            debug!("{:?}", e);
+                                                            return
+                                                        }
+                                                    };
+
+                                                    if amount_in > decoded.amount_in_max {
+                                                        trace!("Insufficient amount for swap");
+                                                        return
+                                                    }
+
+                                                    meta.tick_bitmap_x_y = match get_uniswap_v3_tick_data_batch_request(&meta, meta.tick, true, 100, None, client.clone()).await {
+                                                        Ok(res) => res,
+                                                        _ => return
+                                                    };
+
+                                                    meta.tick_bitmap_y_x = match get_uniswap_v3_tick_data_batch_request(&meta, meta.tick, false, 100, None, client.clone()).await {
+                                                        Ok(res) => res,
+                                                        _ => return
+                                                    };
+                                                    let mut mutated_pool = pool.clone();
+                                                    mutated_pool.provider = LiquidityProviders::UniswapV3(meta);
+                                                    (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                        (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
+                                                    } else {
+                                                        (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
+                                                    };
+                                                    debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                                    let event = PendingPoolUpdateEvent {
+                                                        pool: mutated_pool,
+                                                        pending_tx: tx.clone(),
+                                                        timestamp: 0,
+                                                    };
+                                                    let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV3 Send Error {:?}", e)).unwrap();
+
+                                                    info!("V3ExactOut: {:?}", decoded)
+                                                } else {
+                                                    trace!("Pair {} {} not being tracked", hex_to_address_string(decoded.path[0].encode_hex()), hex_to_address_string(decoded.path[1].encode_hex()));
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        trace!("Couldn't decode universal router input {:?} {}", crate::abi::decode_universal_router_execute(&tx.input), &tx.input);
+                                    }
+                                } else {
+                                    trace!("Transaction is not to uniswap v3, skipping...");
+                                    return;
+                                }
+                            });
+                        }
+                    }
+                }
+
+
+            })
+        })
     }
 }
+

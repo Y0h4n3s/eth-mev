@@ -38,7 +38,7 @@ use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace, warn};
 use itertools::Itertools;
 const UNISWAP_V2_ROUTER: &str = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d";
-const UNISWAP_UNIVERSAL_ROUTER: &str = "0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B";
+pub(crate) const UNISWAP_UNIVERSAL_ROUTER: &str = "0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B";
 
 #[derive(Serialize, Deserialize,Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV2Metadata {
@@ -806,21 +806,21 @@ use ethers::abi::AbiDecode;
 use crate::abi::uniswap_v2::get_complete_pool_data_batch_request;
 
 #[derive(Serialize, Deserialize, Debug)]
-struct V2ExactInInput {
+pub struct V2ExactInInput {
     recipient: Address,
-    amount_in: U256,
-    amount_out_min: U256,
+    pub amount_in: U256,
+    pub amount_out_min: U256,
     payer_is_user: bool,
-    path: Vec<Address>
+    pub path: Vec<Address>
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct V2ExactOutInput {
+pub struct V2ExactOutInput {
     recipient: Address,
-    amount_out: U256,
-    amount_in_max: U256,
+    pub amount_out: U256,
+    pub amount_in_max: U256,
     payer_is_user: bool,
-    path: Vec<Address>
+    pub path: Vec<Address>
 }
 
 impl AbiDecode for V2ExactInInput {

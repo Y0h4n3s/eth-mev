@@ -124,10 +124,13 @@ impl MevPathStep {
         }
     }
     pub fn update_pool(&mut self, updated_pool: &Pool) {
+        // x_to_y can never change
         match self {
             MevPathStep::ExactIn(pool, _, _)
             | MevPathStep::ExactOut(pool, _, _)
             | MevPathStep::Payback(pool, _, _) => {
+                let mut update = updated_pool.clone();
+                update.x_to_y = pool.x_to_y;
                 *pool = updated_pool.clone();
             }
         }
