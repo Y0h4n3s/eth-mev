@@ -183,8 +183,8 @@ impl LiquidityProvider for UniSwapV2 {
                     x_to_y: true,
                     provider: LiquidityProviders::UniswapV2(pair.clone()),
                 };
-                let min_0 = U256::from(10).pow(U256::from(pair.token0_decimals-1));
-                let min_1 = U256::from(10).pow(U256::from(pair.token1_decimals-1));
+                let min_0 = U256::from(10).pow(U256::from(pair.token0_decimals+1));
+                let min_1 = U256::from(10).pow(U256::from(pair.token1_decimals+1));
                 if pair.balance0.lt(&min_0) || pair.balance1.lt(&min_1) || pair.reserve1.lt(&min_1) || pair.reserve0.lt(&min_0) {
                     continue;
                 }
@@ -234,37 +234,6 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                     let client = clnt.clone();
                     let pls = pools.clone();
                     let mut pool = pl.clone();
-                    joins.push(tokio::runtime::Handle::current().spawn(async move {
-                        let event =
-                            ethers::contract::Contract::event_of_type::<SyncFilter>(client.clone())
-                                .from_block(latest_block)
-                                .address(ValueOrArray::Array(vec![pool.address.parse().unwrap()]));
-
-                        let mut stream = event.subscribe_with_meta().await.unwrap();
-                        while let Some(Ok((log, meta))) = stream.next().await {
-                            let mut w = pls.write().await;
-                            let mut p = w.get_mut(&pool.address).unwrap();
-                            p.x_amount = U256::from(log.reserve_0);
-                            p.y_amount = U256::from(log.reserve_1);
-                            drop(w);
-                            pool.x_amount = U256::from(log.reserve_0);
-                            pool.y_amount = U256::from(log.reserve_1);
-                            let event = PoolUpdateEvent {
-                                pool: pool.clone(),
-                                block_number: meta.block_number.as_u64(),
-                                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
-                            };
-                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| info!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
-                        }
-                    }));
-                    // update on any other event
-                    let subs = subscribers.read().unwrap();
-
-                    let sub = subs.first().unwrap().clone();
-                    drop(subs);
-                    let mut pool = pl.clone();
-                    let client = clnt.clone();
-                    let pls = pools.clone();
                     joins.push(tokio::runtime::Handle::current().spawn(async move {
                         let contract = UniswapV2Pair::new(Address::from_str(&pool.address).unwrap(), client.clone());
                         let events = contract.events();

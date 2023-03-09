@@ -666,8 +666,8 @@ impl LiquidityProvider for UniSwapV3 {
                                 if let Ok(mut pairs_data) = pairs_data {
 
                                     for meta in pairs_data {
-                                        let min_0 = U256::from(10).pow(U256::from(meta.token_a_decimals-1));
-                                        let min_1 = U256::from(10).pow(U256::from(meta.token_b_decimals-1));
+                                        let min_0 = U256::from(10).pow(U256::from(meta.token_a_decimals+1));
+                                        let min_1 = U256::from(10).pow(U256::from(meta.token_b_decimals+1));
                                         if meta.token_a_amount.lt(&min_0) || meta.token_b_amount.lt(&min_1)  {
                                             continue;
                                         }
