@@ -818,18 +818,24 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                             debug!("{:?}", e);
                         }
                         Ok(tx) => {
-                            let pools = pools
+                            if tx.to != Some(H160::from_str(crate::uniswap_v2::UNISWAP_UNIVERSAL_ROUTER).unwrap()) {
+                                continue;
+                            }
+                            let client = client.clone();
+                            let sub = sub.clone();
+                            let pools = pools.clone();
+                            tokio::task::spawn(async move {
+                                let pools = pools
                                 .read()
                                 .await
                                 .values()
                                 .cloned()
                                 .collect::<Vec<Pool>>();
-                            if pools.len() <= 0 {
-                                continue;
-                            }
-                            let client = client.clone();
-                            let sub = sub.clone();
-                            tokio::task::spawn(async move {
+                                if pools.len() <= 0 {
+                                    return ;
+                                }
+
+
                                 let now = U256::from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
 
                                 if tx.to == Some(H160::from_str(crate::uniswap_v2::UNISWAP_UNIVERSAL_ROUTER).unwrap()) {

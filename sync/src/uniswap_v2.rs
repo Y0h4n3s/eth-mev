@@ -364,411 +364,410 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                             debug!("{:?}", e);
                         }
                         Ok(tx) => {
-                            let pools = pools
-                                .read()
-                                .await
-                                .values()
-                                .cloned()
-                                .collect::<Vec<Pool>>();
-                            if pools.len() <= 0 {
+                            if tx.to != Some(H160::from_str(UNISWAP_V2_ROUTER).unwrap()) && tx.to != Some(H160::from_str(UNISWAP_UNIVERSAL_ROUTER).unwrap()) {
                                 continue;
                             }
-                            let factory_address = factory_address.clone();
-                            let now = U256::from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
-                            if tx.to == Some(H160::from_str(UNISWAP_V2_ROUTER).unwrap()) {
+                            let client = client.clone();
+                            let sub = sub.clone();
+                            let pools = pools.clone();
+                            tokio::task::spawn(async move {
+                                let pools = pools
+                                    .read()
+                                    .await
+                                    .values()
+                                    .cloned()
+                                    .collect::<Vec<Pool>>();
+                                if pools.len() <= 0 {
+                                    return;
+                                }
+                                let factory_address = factory_address.clone();
+                                let now = U256::from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+                                if tx.to == Some(H160::from_str(UNISWAP_V2_ROUTER).unwrap()) {
 
 
+                                    // skip paths > 2 for now
+                                    if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_eth_for_tokens(&tx.input) {
+                                        if decoded.path.len() > 2 {
+                                            return;
+                                        }
+                                        if decoded.deadline < now {
+                                            return;
+                                        }
+                                        //find associated pool
+                                        let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
 
-                                // skip paths > 2 for now
-                                if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_eth_for_tokens(&tx.input) {
-                                    if decoded.path.len() > 2 {
-                                        continue;
-                                    }
-                                    if decoded.deadline < now {
-                                        continue;
-                                    }
-                                    //find associated pool
-                                    let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
+                                        // path[0] is always weth
 
-                                    // path[0] is always weth
+                                        if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
+                                            let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (pool.x_amount, pool.y_amount)
+                                            } else {
+                                                (pool.y_amount, pool.x_amount)
+                                            };
+                                            let amount_out = match calculate_out(tx.value, source_amount, dest_amount) {
+                                                Ok(amount) => amount,
+                                                Err(e) => {
+                                                    trace!("{:?}", e);
+                                                    return
+                                                }
+                                            };
 
-                                    if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
-                                        let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (pool.x_amount, pool.y_amount)
-                                        } else {
-                                            (pool.y_amount, pool.x_amount)
-                                        };
-                                        let amount_out = match calculate_out(tx.value, source_amount, dest_amount) {
-                                            Ok(amount) => amount,
-                                            Err(e) => {
-                                                trace!("{:?}", e);
-                                                continue
+                                            if amount_out < decoded.amount_out_min {
+                                                trace!("Output less than minimum");
+                                                return
                                             }
-                                        };
 
-                                        if amount_out < decoded.amount_out_min {
-                                            trace!("Output less than minimum");
-                                            continue
+                                            let mut mutated_pool = pool.clone();
+                                            (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (mutated_pool.x_amount + tx.value, mutated_pool.y_amount.saturating_sub(amount_out))
+                                            } else {
+                                                (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount + tx.value)
+                                            };
+                                            debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                            debug!("swapExactEthForTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
+                                            let event = PendingPoolUpdateEvent {
+                                                pool: mutated_pool,
+                                                pending_tx: tx,
+                                                timestamp: 0,
+                                            };
+                                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
+                                        } else {
+                                            trace!("Pool {} not being tracked", pool_address);
+                                        }
+                                    } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_tokens_for_tokens(&tx.input) {
+                                        if decoded.path.len() > 2 {
+                                            return;
                                         }
 
-                                        let mut mutated_pool = pool.clone();
-                                        (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount + tx.value, mutated_pool.y_amount.saturating_sub(amount_out))
-                                        } else {
-                                            (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount + tx.value)
-                                        };
-                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                        debug!("swapExactEthForTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
-                                        let event = PendingPoolUpdateEvent {
-                                            pool: mutated_pool,
-                                            pending_tx: tx,
-                                            timestamp: 0,
-                                        };
-                                        let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
-                                    } else {
-                                        trace!("Pool {} not being tracked", pool_address);
-                                    }
-                                }
-                                else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_tokens_for_tokens(&tx.input) {
-                                    if decoded.path.len() > 2 {
-                                        continue;
-                                    }
+                                        if decoded.deadline < now {
+                                            return;
+                                        }
+                                        let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
 
-                                    if decoded.deadline < now {
-                                        continue;
-                                    }
-                                    let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
+                                        // path[0] is always weth
 
-                                    // path[0] is always weth
+                                        if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
+                                            let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (pool.x_amount, pool.y_amount)
+                                            } else {
+                                                (pool.y_amount, pool.x_amount)
+                                            };
+                                            let amount_out = match calculate_out(decoded.amount_in, source_amount, dest_amount) {
+                                                Ok(amount) => amount,
+                                                Err(e) => {
+                                                    trace!("{:?}", e);
+                                                    return
+                                                }
+                                            };
 
-                                    if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
-                                        let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (pool.x_amount, pool.y_amount)
-                                        } else {
-                                            (pool.y_amount, pool.x_amount)
-                                        };
-                                        let amount_out = match calculate_out(decoded.amount_in, source_amount, dest_amount) {
-                                            Ok(amount) => amount,
-                                            Err(e) => {
-                                                trace!("{:?}", e);
-                                                continue
+                                            if amount_out < decoded.amount_out_min {
+                                                trace!("Output less than minimum");
+                                                return
                                             }
-                                        };
 
-                                        if amount_out < decoded.amount_out_min {
-                                            trace!("Output less than minimum");
-                                            continue
+                                            let mut mutated_pool = pool.clone();
+                                            (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
+                                            } else {
+                                                (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
+                                            };
+                                            debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                            debug!("swapExactTokensForTokens: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
+                                            let event = PendingPoolUpdateEvent {
+                                                pool: mutated_pool,
+                                                pending_tx: tx,
+                                                timestamp: 0,
+                                            };
+                                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
+                                        } else {
+                                            trace!("Pool {} not being tracked", pool_address);
+                                        }
+                                    } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_tokens_for_eth(&tx.input) {
+                                        if decoded.path.len() > 2 {
+                                            return;
                                         }
 
-                                        let mut mutated_pool = pool.clone();
-                                        (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
-                                        } else {
-                                            (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
-                                        };
-                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                        debug!("swapExactTokensForTokens: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
-                                        let event = PendingPoolUpdateEvent {
-                                            pool: mutated_pool,
-                                            pending_tx: tx,
-                                            timestamp: 0,
-                                        };
-                                        let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
-                                    } else {
-                                        trace!("Pool {} not being tracked", pool_address);
-                                    }
-                                }
-                                else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_tokens_for_eth(&tx.input) {
-                                    if decoded.path.len() > 2 {
-                                        continue;
-                                    }
-
-                                    if decoded.deadline < now {
-                                        continue;
-                                    }
-                                    let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
-                                    if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
-                                        let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (pool.x_amount, pool.y_amount)
-                                        } else {
-                                            (pool.y_amount, pool.x_amount)
-                                        };
-                                        let amount_out = match calculate_out(decoded.amount_in, source_amount, dest_amount) {
-                                            Ok(amount) => amount,
-                                            Err(e) => {
-                                                trace!("{:?}", e);
-                                                continue
-                                            }
-                                        };
-
-                                        if amount_out < decoded.amount_out_min {
-                                            trace!("Output less than minimum");
-                                            continue
+                                        if decoded.deadline < now {
+                                            return;
                                         }
-                                        let mut mutated_pool = pool.clone();
-                                        (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
-                                        } else {
-                                            (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
-                                        };
-                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                        debug!("swapExactTokensForEth: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
-                                        let event = PendingPoolUpdateEvent {
-                                            pool: mutated_pool,
-                                            pending_tx: tx,
-                                            timestamp: 0,
-                                        };
-                                        let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
-                                    } else {
-                                        trace!("Pool {} not being tracked", pool_address);
-                                    }
-                                }
-                                else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_tokens_for_exact_tokens(&tx.input) {
-                                    if decoded.path.len() > 2 {
-                                        continue;
-                                    }
+                                        let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
+                                        if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
+                                            let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (pool.x_amount, pool.y_amount)
+                                            } else {
+                                                (pool.y_amount, pool.x_amount)
+                                            };
+                                            let amount_out = match calculate_out(decoded.amount_in, source_amount, dest_amount) {
+                                                Ok(amount) => amount,
+                                                Err(e) => {
+                                                    trace!("{:?}", e);
+                                                    return
+                                                }
+                                            };
 
-                                    if decoded.deadline < now {
-                                        continue;
-                                    }
-                                    let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
-                                    if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
-                                        let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (pool.x_amount, pool.y_amount)
-                                        } else {
-                                            (pool.y_amount, pool.x_amount)
-                                        };
-                                        let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
-                                            Ok(amount) => amount,
-                                            Err(e) => {
-                                                trace!("{:?}", e);
-                                                continue
+                                            if amount_out < decoded.amount_out_min {
+                                                trace!("Output less than minimum");
+                                                return
                                             }
-                                        };
-                                        if amount_in > decoded.amount_in_max {
-                                            trace!("Insufficient amount for swap");
-                                            continue
+                                            let mut mutated_pool = pool.clone();
+                                            (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
+                                            } else {
+                                                (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
+                                            };
+                                            debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                            debug!("swapExactTokensForEth: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
+                                            let event = PendingPoolUpdateEvent {
+                                                pool: mutated_pool,
+                                                pending_tx: tx,
+                                                timestamp: 0,
+                                            };
+                                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
+                                        } else {
+                                            trace!("Pool {} not being tracked", pool_address);
                                         }
-                                        let mut mutated_pool = pool.clone();
-                                        (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
-                                        } else {
-                                            (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
-                                        };
-                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                        let event = PendingPoolUpdateEvent {
-                                            pool: mutated_pool,
-                                            pending_tx: tx,
-                                            timestamp: 0,
-                                        };
-                                        let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
-
-                                        debug!("swapTokensForExactTokens: {:?}", decoded)
-                                    } else {
-                                        trace!("Pool {} not being tracked", pool_address);
-                                    }
-                                }
-                                else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_tokens_for_exact_eth(&tx.input) {
-                                    if decoded.path.len() > 2 {
-                                        continue;
-                                    }
-
-                                    if decoded.deadline < now {
-                                        continue;
-                                    }
-                                    let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
-                                    if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
-                                        let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (pool.x_amount, pool.y_amount)
-                                        } else {
-                                            (pool.y_amount, pool.x_amount)
-                                        };
-                                        let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
-                                            Ok(amount) => amount,
-                                            Err(e) => {
-                                                trace!("{:?}", e);
-                                                continue
-                                            }
-                                        };
-                                        if amount_in > decoded.amount_in_max {
-                                            trace!("Insufficient amount for swap");
-                                            continue
+                                    } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_tokens_for_exact_tokens(&tx.input) {
+                                        if decoded.path.len() > 2 {
+                                            return;
                                         }
-                                        let mut mutated_pool = pool.clone();
-                                        (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
-                                        } else {
-                                            (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
-                                        };
-                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                        let event = PendingPoolUpdateEvent {
-                                            pool: mutated_pool,
-                                            pending_tx: tx,
-                                            timestamp: 0,
-                                        };
-                                        let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
 
-                                        debug!("swapTokensForExactEth: {:?}", decoded)
-                                    } else {
-                                        trace!("Pool {} not being tracked", pool_address);
-                                    }
-                                }
-                                else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_eth_for_exact_tokens(&tx.input) {
-                                    if decoded.path.len() > 2 {
-                                        continue;
-                                    }
-
-                                    if decoded.deadline < now {
-                                        continue;
-                                    }
-                                    let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
-                                    if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
-                                        let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (pool.x_amount, pool.y_amount)
-                                        } else {
-                                            (pool.y_amount, pool.x_amount)
-                                        };
-                                        let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
-                                            Ok(amount) => amount,
-                                            Err(e) => {
-                                                trace!("{:?}", e);
-                                                continue
-                                            }
-                                        };
-                                        if amount_in > tx.value {
-                                            trace!("Insufficient amount for swap");
-                                            continue
+                                        if decoded.deadline < now {
+                                            return;
                                         }
-                                        let mut mutated_pool = pool.clone();
-                                        (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                            (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
-                                        } else {
-                                            (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
-                                        };
-                                        debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                        debug!("swapEthForExactTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_in);
-                                        let event = PendingPoolUpdateEvent {
-                                            pool: mutated_pool,
-                                            pending_tx: tx,
-                                            timestamp: 0,
-                                        };
-                                        let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
-                                    } else {
-                                        trace!("Pool {} not being tracked", pool_address);
-                                    }
-                                }
-                                else {
-                                    trace!("Useless transaction not decoded")
-                                }
-                            }
-                            else if tx.to == Some(H160::from_str(UNISWAP_UNIVERSAL_ROUTER).unwrap()) {
-                                if let Ok(decoded) = crate::abi::decode_universal_router_execute(&tx.input) {
-                                    if decoded.deadline < now {
-                                        continue;
-                                    }
-                                    for i in 0..decoded.commands.len() {
-                                        let command = decoded.commands[i] & 0x3f;
-                                        if command == 0x08 {
-                                            let decoded: V2ExactInInput =  V2ExactInInput::decode(&decoded.inputs[i]).unwrap();
-
-                                            if decoded.path.len() > 2 {
-                                                continue;
+                                        let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
+                                        if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
+                                            let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (pool.x_amount, pool.y_amount)
+                                            } else {
+                                                (pool.y_amount, pool.x_amount)
+                                            };
+                                            let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
+                                                Ok(amount) => amount,
+                                                Err(e) => {
+                                                    trace!("{:?}", e);
+                                                    return
+                                                }
+                                            };
+                                            if amount_in > decoded.amount_in_max {
+                                                trace!("Insufficient amount for swap");
+                                                return
                                             }
+                                            let mut mutated_pool = pool.clone();
+                                            (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
+                                            } else {
+                                                (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
+                                            };
+                                            debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                            let event = PendingPoolUpdateEvent {
+                                                pool: mutated_pool,
+                                                pending_tx: tx,
+                                                timestamp: 0,
+                                            };
+                                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
 
+                                            debug!("swapTokensForExactTokens: {:?}", decoded)
+                                        } else {
+                                            trace!("Pool {} not being tracked", pool_address);
+                                        }
+                                    } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_tokens_for_exact_eth(&tx.input) {
+                                        if decoded.path.len() > 2 {
+                                            return;
+                                        }
 
-                                            let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
+                                        if decoded.deadline < now {
+                                            return;
+                                        }
+                                        let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
+                                        if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
+                                            let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (pool.x_amount, pool.y_amount)
+                                            } else {
+                                                (pool.y_amount, pool.x_amount)
+                                            };
+                                            let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
+                                                Ok(amount) => amount,
+                                                Err(e) => {
+                                                    trace!("{:?}", e);
+                                                    return
+                                                }
+                                            };
+                                            if amount_in > decoded.amount_in_max {
+                                                trace!("Insufficient amount for swap");
+                                                return
+                                            }
+                                            let mut mutated_pool = pool.clone();
+                                            (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
+                                            } else {
+                                                (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
+                                            };
+                                            debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                            let event = PendingPoolUpdateEvent {
+                                                pool: mutated_pool,
+                                                pending_tx: tx,
+                                                timestamp: 0,
+                                            };
+                                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
 
-                                            // path[0] is always weth
+                                            debug!("swapTokensForExactEth: {:?}", decoded)
+                                        } else {
+                                            trace!("Pool {} not being tracked", pool_address);
+                                        }
+                                    } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_eth_for_exact_tokens(&tx.input) {
+                                        if decoded.path.len() > 2 {
+                                            return;
+                                        }
 
-                                            if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
-                                                let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                                    (pool.x_amount, pool.y_amount)
-                                                } else {
-                                                    (pool.y_amount, pool.x_amount)
-                                                };
-                                                let amount_out = match calculate_out(decoded.amount_in, source_amount, dest_amount) {
-                                                    Ok(amount) => amount,
-                                                    Err(e) => {
-                                                        debug!("{:?}", e);
-                                                        continue
-                                                    }
-                                                };
+                                        if decoded.deadline < now {
+                                            return;
+                                        }
+                                        let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
+                                        if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
+                                            let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (pool.x_amount, pool.y_amount)
+                                            } else {
+                                                (pool.y_amount, pool.x_amount)
+                                            };
+                                            let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
+                                                Ok(amount) => amount,
+                                                Err(e) => {
+                                                    trace!("{:?}", e);
+                                                    return
+                                                }
+                                            };
+                                            if amount_in > tx.value {
+                                                trace!("Insufficient amount for swap");
+                                                return
+                                            }
+                                            let mut mutated_pool = pool.clone();
+                                            (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
+                                            } else {
+                                                (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
+                                            };
+                                            debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                            debug!("swapEthForExactTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_in);
+                                            let event = PendingPoolUpdateEvent {
+                                                pool: mutated_pool,
+                                                pending_tx: tx,
+                                                timestamp: 0,
+                                            };
+                                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
+                                        } else {
+                                            trace!("Pool {} not being tracked", pool_address);
+                                        }
+                                    } else {
+                                        trace!("Useless transaction not decoded")
+                                    }
+                                } else if tx.to == Some(H160::from_str(UNISWAP_UNIVERSAL_ROUTER).unwrap()) {
+                                    if let Ok(decoded) = crate::abi::decode_universal_router_execute(&tx.input) {
+                                        if decoded.deadline < now {
+                                            return;
+                                        }
+                                        for i in 0..decoded.commands.len() {
+                                            let command = decoded.commands[i] & 0x3f;
+                                            if command == 0x08 {
+                                                let decoded: V2ExactInInput = V2ExactInInput::decode(&decoded.inputs[i]).unwrap();
 
-                                                if amount_out < decoded.amount_out_min {
-                                                    trace!("Output less than minimum");
-                                                    continue
+                                                if decoded.path.len() > 2 {
+                                                    return;
                                                 }
 
-                                                let mut mutated_pool = pool.clone();
-                                                (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                                    (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
-                                                } else {
-                                                    (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
-                                                };
-                                                debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                                debug!("V2ExactInput: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
-                                                let event = PendingPoolUpdateEvent {
-                                                    pool: mutated_pool,
-                                                    pending_tx: tx.clone(),
-                                                    timestamp: 0,
-                                                };
-                                                let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
-                                            } else {
-                                                trace!("Pool {} not being tracked", pool_address);
-                                            }
-                                        } else if command == 0x09 {
-                                            let decoded: V2ExactOutInput =  V2ExactOutInput::decode(&decoded.inputs[i]).unwrap();
 
-                                            if decoded.path.len() > 2 {
-                                                continue;
-                                            }
+                                                let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
 
-                                            let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
-                                            if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
-                                                let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                                    (pool.x_amount, pool.y_amount)
-                                                } else {
-                                                    (pool.y_amount, pool.x_amount)
-                                                };
-                                                let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
-                                                    Ok(amount) => amount,
-                                                    Err(e) => {
-                                                        trace!("{:?}", e);
-                                                        continue
+                                                // path[0] is always weth
+
+                                                if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
+                                                    let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                        (pool.x_amount, pool.y_amount)
+                                                    } else {
+                                                        (pool.y_amount, pool.x_amount)
+                                                    };
+                                                    let amount_out = match calculate_out(decoded.amount_in, source_amount, dest_amount) {
+                                                        Ok(amount) => amount,
+                                                        Err(e) => {
+                                                            debug!("{:?}", e);
+                                                            return
+                                                        }
+                                                    };
+
+                                                    if amount_out < decoded.amount_out_min {
+                                                        trace!("Output less than minimum");
+                                                        return
                                                     }
-                                                };
-                                                if amount_in > decoded.amount_in_max {
-                                                    trace!("Insufficient amount for swap");
-                                                    continue
-                                                }
-                                                let mut mutated_pool = pool.clone();
-                                                (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
-                                                    (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
-                                                } else {
-                                                    (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
-                                                };
-                                                debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                                let event = PendingPoolUpdateEvent {
-                                                    pool: mutated_pool,
-                                                    pending_tx: tx.clone(),
-                                                    timestamp: 0,
-                                                };
-                                                let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
 
-                                                debug!("V2ExactOut: {:?}", decoded)
-                                            } else {
-                                                trace!("Pool {} not being tracked", pool_address);
+                                                    let mut mutated_pool = pool.clone();
+                                                    (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                        (mutated_pool.x_amount.saturating_add(decoded.amount_in), mutated_pool.y_amount.saturating_sub(amount_out))
+                                                    } else {
+                                                        (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
+                                                    };
+                                                    debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                                    debug!("V2ExactInput: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
+                                                    let event = PendingPoolUpdateEvent {
+                                                        pool: mutated_pool,
+                                                        pending_tx: tx.clone(),
+                                                        timestamp: 0,
+                                                    };
+                                                    let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
+                                                } else {
+                                                    trace!("Pool {} not being tracked", pool_address);
+                                                }
+                                            } else if command == 0x09 {
+                                                let decoded: V2ExactOutInput = V2ExactOutInput::decode(&decoded.inputs[i]).unwrap();
+
+                                                if decoded.path.len() > 2 {
+                                                    return;
+                                                }
+
+                                                let pool_address = hex_to_address_string(calculate_uniswap_v2_pair_address(&decoded.path[0], &decoded.path[1], factory_address).unwrap().encode_hex());
+                                                if let Some(pool) = pools.iter().find(|p| p.address == pool_address) {
+                                                    let (source_amount, dest_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                        (pool.x_amount, pool.y_amount)
+                                                    } else {
+                                                        (pool.y_amount, pool.x_amount)
+                                                    };
+                                                    let amount_in = match calculate_in(decoded.amount_out, source_amount, dest_amount) {
+                                                        Ok(amount) => amount,
+                                                        Err(e) => {
+                                                            trace!("{:?}", e);
+                                                            return
+                                                        }
+                                                    };
+                                                    if amount_in > decoded.amount_in_max {
+                                                        trace!("Insufficient amount for swap");
+                                                        return
+                                                    }
+                                                    let mut mutated_pool = pool.clone();
+                                                    (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
+                                                        (mutated_pool.x_amount.saturating_add(amount_in), mutated_pool.y_amount.saturating_sub(decoded.amount_out))
+                                                    } else {
+                                                        (mutated_pool.x_amount.saturating_sub(decoded.amount_out), mutated_pool.y_amount.saturating_add(amount_in))
+                                                    };
+                                                    debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
+                                                    let event = PendingPoolUpdateEvent {
+                                                        pool: mutated_pool,
+                                                        pending_tx: tx.clone(),
+                                                        timestamp: 0,
+                                                    };
+                                                    let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
+
+                                                    debug!("V2ExactOut: {:?}", decoded)
+                                                } else {
+                                                    trace!("Pool {} not being tracked", pool_address);
+                                                }
                                             }
                                         }
+                                    } else {
+                                        trace!("Couldn't decode universal router input {:?} {}", crate::abi::decode_universal_router_execute(&tx.input), &tx.input);
                                     }
-
                                 } else {
-                                    trace!("Couldn't decode universal router input {:?} {}", crate::abi::decode_universal_router_execute(&tx.input), &tx.input);
+                                    trace!("Transaction is not to uniswap v2, skipping...");
+                                    return;
                                 }
-                            } else {
-                                trace!("Transaction is not to uniswap v2, skipping...");
-                                continue;
-                            }
+                            });
                         }
                     }
                 }

@@ -291,10 +291,15 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                 while let Some(tx_result) = stream.next().await {
                     match tx_result {
                         Ok(tx) => {
+
                             if tx.to != Some(H160::from_str(SUSHISWAP_ROUTER).unwrap()) {
                                 trace!("Transaction is not to sushiswap router, skipping...");
                                 continue;
                             }
+                            let client = client.clone();
+                            let sub = sub.clone();
+                            let pools = pools.clone();
+                            tokio::task::spawn(async move {
                             let pools = pools
                                 .read()
                                 .await
@@ -302,17 +307,17 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                 .cloned()
                                 .collect::<Vec<Pool>>();
                             if pools.len() <= 0 {
-                                continue;
+                                return;
                             }
                             let factory_address = factory_address.clone();
                             let now = U256::from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
                             // skip paths > 2 for now
                             if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_eth_for_tokens(&tx.input) {
                                 if decoded.path.len() > 2 {
-                                    continue;
+                                    return;
                                 }
                                 if decoded.deadline < now {
-                                    continue;
+                                    return;
                                 }
                                 //find associated pool
 
@@ -328,13 +333,13 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                         Ok(amount) => amount,
                                         Err(e) => {
                                             trace!("{:?}", e);
-                                            continue
+                                            return
                                         }
                                     };
 
                                     if amount_out < decoded.amount_out_min {
                                         trace!("Output less than minimum");
-                                        continue
+                                        return
                                     }
 
                                     let mut mutated_pool = pool.clone();
@@ -358,10 +363,10 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                 }
                             } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_tokens_for_tokens(&tx.input) {
                                 if decoded.path.len() > 2 {
-                                    continue;
+                                    return;
                                 }
                                 if decoded.deadline < now {
-                                    continue;
+                                    return;
                                 }
 
                                 // path[0] is always weth
@@ -376,13 +381,13 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                         Ok(amount) => amount,
                                         Err(e) => {
                                             trace!("{:?}", e);
-                                            continue
+                                            return
                                         }
                                     };
 
                                     if amount_out < decoded.amount_out_min {
                                         trace!("Output less than minimum");
-                                        continue
+                                        return
                                     }
 
                                     let mut mutated_pool = pool.clone();
@@ -406,11 +411,11 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                 }
                             } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_exact_tokens_for_eth(&tx.input) {
                                 if decoded.path.len() > 2 {
-                                    continue;
+                                    return;
                                 }
 
                                 if decoded.deadline < now {
-                                    continue;
+                                    return;
                                 }
 
                                 if let Some(pool) = pools.iter().find(|p| (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) || (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex())) )  {
@@ -423,13 +428,13 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                         Ok(amount) => amount,
                                         Err(e) => {
                                             trace!("{:?}", e);
-                                            continue
+                                            return
                                         }
                                     };
 
                                     if amount_out < decoded.amount_out_min {
                                         trace!("Output less than minimum");
-                                        continue
+                                        return
                                     }
                                     let mut mutated_pool = pool.clone();
                                     (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
@@ -452,11 +457,11 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                 }
                             } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_tokens_for_exact_tokens(&tx.input) {
                                 if decoded.path.len() > 2 {
-                                    continue;
+                                    return;
                                 }
 
                                 if decoded.deadline < now {
-                                    continue;
+                                    return;
                                 }
 
                                 if let Some(pool) = pools.iter().find(|p| (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) || (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex())) )  {
@@ -469,12 +474,12 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                         Ok(amount) => amount,
                                         Err(e) => {
                                             trace!("{:?}", e);
-                                            continue
+                                            return
                                         }
                                     };
                                     if amount_in > decoded.amount_in_max {
                                         trace!("Insufficient amount for swap");
-                                        continue
+                                        return
                                     }
                                     let mut mutated_pool = pool.clone();
                                     (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
@@ -497,11 +502,11 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                 }
                             } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_tokens_for_exact_eth(&tx.input) {
                                 if decoded.path.len() > 2 {
-                                    continue;
+                                    return;
                                 }
 
                                 if decoded.deadline < now {
-                                    continue;
+                                    return;
                                 }
 
                                 if let Some(pool) = pools.iter().find(|p| (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) || (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex())) )  {
@@ -514,12 +519,12 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                         Ok(amount) => amount,
                                         Err(e) => {
                                             trace!("{:?}", e);
-                                            continue
+                                            return
                                         }
                                     };
                                     if amount_in > decoded.amount_in_max {
                                         trace!("Insufficient amount for swap");
-                                        continue
+                                        return
                                     }
                                     let mut mutated_pool = pool.clone();
                                     (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
@@ -542,10 +547,10 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                 }
                             } else if let Ok(decoded) = crate::abi::decode_uniswap_router_swap_eth_for_exact_tokens(&tx.input) {
                                 if decoded.path.len() > 2 {
-                                    continue;
+                                    return;
                                 }
                                 if decoded.deadline < now {
-                                    continue;
+                                    return;
                                 }
 
                                 if let Some(pool) = pools.iter().find(|p| (p.x_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.y_address == hex_to_address_string(decoded.path[1].encode_hex())) || (p.y_address == hex_to_address_string(decoded.path[0].encode_hex()) && p.x_address == hex_to_address_string(decoded.path[1].encode_hex())) ) {
@@ -558,12 +563,12 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                         Ok(amount) => amount,
                                         Err(e) => {
                                             trace!("{:?}", e);
-                                            continue
+                                            return
                                         }
                                     };
                                     if amount_in > tx.value {
                                         trace!("Insufficient amount for swap");
-                                        continue
+                                        return
                                     }
                                     let mut mutated_pool = pool.clone();
                                     (mutated_pool.x_amount, mutated_pool.y_amount) = if pool.x_address == hex_to_address_string(decoded.path[0].encode_hex()) {
@@ -586,6 +591,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                             } else {
                                 debug!("Useless transaction not decoded")
                             }
+                            });
                         }
                         Err(e) => {
                             debug!("{:?}", e);
