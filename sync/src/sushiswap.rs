@@ -31,7 +31,7 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace};
-
+use std::cmp::min;
 const SUSHISWAP_ROUTER: &str = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F";
 #[derive(Serialize, Deserialize,Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct SushiSwapMetadata {
@@ -95,13 +95,13 @@ impl LiquidityProvider for SushiSwap {
             let step = 766;
             let cores = num_cpus::get();
             let permits = Arc::new(Semaphore::new(cores));
-            let mut pairs = Arc::new(RwLock::new(Vec::<UniSwapV2Pair>::new()));
+            let mut pairs = Arc::new(RwLock::new(Vec::<crate::uniswap_v2::UniswapV2Metadata>::new()));
             let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
             for i in (0..pairs_length.as_usize()).step_by(step) {
                 let mut w = indices.lock().await;
-                w.push_back((i, i + step));
+                w.push_back((i, min(i + step, pairs_length.as_usize() - 1)));
             }
             let mut handles = vec![];
             loop {
@@ -126,9 +126,9 @@ impl LiquidityProvider for SushiSwap {
                             .await;
 
                         if let Ok(resources) = response {
-                            for pair_chunk in resources.as_slice().chunks(127) {
+                            for pair_chunk in resources.as_slice().chunks(67) {
                                 let pairs_data =
-                                    crate::abi::uniswap_v2::get_pool_data_batch_request(
+                                    crate::abi::uniswap_v2::get_complete_pool_data_batch_request(
                                         pair_chunk.to_vec(),
                                         eth_client.clone(),
                                     )
@@ -140,6 +140,8 @@ impl LiquidityProvider for SushiSwap {
                                     info!("{:?}", pairs_data.unwrap_err())
                                 }
                             }
+                        } else {
+                            error!("{:?}", response.unwrap_err())
                         }
                         drop(permit);
                     }));
@@ -148,18 +150,13 @@ impl LiquidityProvider for SushiSwap {
             for handle in handles {
                 handle.await;
             }
-
+            let len = pairs.read().await.len();
             for pair in pairs.read().await.iter() {
-                if !(filter_tokens.iter().any(|token| token == &pair.token0.id)
-                    && filter_tokens.iter().any(|token| token == &pair.token1.id))
-                {
-                    continue;
-                }
                 let pool = Pool {
-                    address: pair.id.clone(),
-                    x_address: pair.token0.id.clone(),
+                    address: pair.address.clone(),
+                    x_address: pair.token0.clone(),
                     fee_bps: 30,
-                    y_address: pair.token1.id.clone(),
+                    y_address: pair.token1.clone(),
                     curve: None,
                     curve_type: Curve::Uncorrelated,
                     x_amount: pair.reserve0,
@@ -167,8 +164,11 @@ impl LiquidityProvider for SushiSwap {
                     x_to_y: true,
                     provider: LiquidityProviders::SushiSwap(Default::default()),
                 };
-                if pool.x_amount == U256::zero() || pool.y_amount == U256::zero() {
-                    continue
+                // atleast 0.1
+                let min_0 = U256::from(10).pow(U256::from(pair.token0_decimals-1));
+                let min_1 = U256::from(10).pow(U256::from(pair.token1_decimals-1));
+                if pair.balance0.lt(&min_0) || pair.balance1.lt(&min_1) || pair.reserve1.lt(&min_1) || pair.reserve0.lt(&min_0) {
+                    continue;
                 }
                 let mut w = pools.write().await;
                 w.insert(pool.address.clone(), pool);

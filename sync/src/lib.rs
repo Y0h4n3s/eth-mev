@@ -470,78 +470,78 @@ pub async fn start(
     config: SyncConfig,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     // collect top tokens by market cap
-    let coingecko_client = coingecko::CoinGeckoClient::new("https://api.coingecko.com/api/v3");
-    let mut markets_list = vec![];
-    let all_coins = coingecko_client.coins_list(true).await?;
-    let mut high_volume_tokens: Vec<String> = vec![];
-    for i in 1..15 {
-        let coin_list = coingecko_client
-            .coins_markets::<String>(
-                "usd",
-                &[],
-                Some("ethereum-ecosystem"),
-                coingecko::params::MarketsOrder::MarketCapDesc,
-                250,
-                i,
-                false,
-                &[],
-            )
-            .await?;
-        markets_list.extend(coin_list);
-
-        let coin_list = coingecko_client
-            .coins_markets::<String>(
-                "usd",
-                &[],
-                Some("ethereum-ecosystem"),
-                coingecko::params::MarketsOrder::VolumeDesc,
-                250,
-                i,
-                false,
-                &[],
-            )
-            .await?;
-        markets_list.extend(coin_list);
-        let coin_list = coingecko_client
-            .coins_markets::<String>(
-                "usd",
-                &[],
-                Some("ethereum-ecosystem"),
-                coingecko::params::MarketsOrder::GeckoDesc,
-                250,
-                i,
-                false,
-                &[],
-            )
-            .await?;
-        markets_list.extend(coin_list);
-        tokio::time::sleep(Duration::from_secs(15)).await;
-    }
-    for market in markets_list {
-        if let Some(coin_info) = all_coins.iter().find(|coin| coin.id == market.id) {
-            if let Some(platforms) = &coin_info.platforms {
-                if platforms.contains_key(&"ethereum".to_string()) {
-                    if let Some(contract) = platforms.get("ethereum").unwrap() {
-                        if !high_volume_tokens.contains(contract) {
-                            high_volume_tokens.push(contract.clone())
-                        }
-                    }
-                }
-            }
-        }
-    }
+    // let coingecko_client = coingecko::CoinGeckoClient::new("https://api.coingecko.com/api/v3");
+    // let mut markets_list = vec![];
+    // let all_coins = coingecko_client.coins_list(true).await?;
+    // let mut high_volume_tokens: Vec<String> = vec![];
+    // for i in 1..2 {
+    //     let coin_list = coingecko_client
+    //         .coins_markets::<String>(
+    //             "usd",
+    //             &[],
+    //             Some("ethereum-ecosystem"),
+    //             coingecko::params::MarketsOrder::MarketCapDesc,
+    //             250,
+    //             i,
+    //             false,
+    //             &[],
+    //         )
+    //         .await?;
+    //     markets_list.extend(coin_list);
+    //
+    //     let coin_list = coingecko_client
+    //         .coins_markets::<String>(
+    //             "usd",
+    //             &[],
+    //             Some("ethereum-ecosystem"),
+    //             coingecko::params::MarketsOrder::VolumeDesc,
+    //             250,
+    //             i,
+    //             false,
+    //             &[],
+    //         )
+    //         .await?;
+    //     markets_list.extend(coin_list);
+    //     let coin_list = coingecko_client
+    //         .coins_markets::<String>(
+    //             "usd",
+    //             &[],
+    //             Some("ethereum-ecosystem"),
+    //             coingecko::params::MarketsOrder::GeckoDesc,
+    //             250,
+    //             i,
+    //             false,
+    //             &[],
+    //         )
+    //         .await?;
+    //     markets_list.extend(coin_list);
+    //     tokio::time::sleep(Duration::from_secs(15)).await;
+    // }
+    // for market in markets_list {
+    //     if let Some(coin_info) = all_coins.iter().find(|coin| coin.id == market.id) {
+    //         if let Some(platforms) = &coin_info.platforms {
+    //             if platforms.contains_key(&"ethereum".to_string()) {
+    //                 if let Some(contract) = platforms.get("ethereum").unwrap() {
+    //                     if !high_volume_tokens.contains(contract) {
+    //                         high_volume_tokens.push(contract.clone())
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
     let mut join_handles = vec![];
     let mut amms = vec![];
     for provider in config.providers {
         let mut amm = provider.build();
-        join_handles.push(amm.load_pools(high_volume_tokens.clone()));
+        join_handles.push(amm.load_pools(vec![]));
         amm.subscribe(updated_q.clone());
         amm.subscribe(pending_updated_q.clone());
         amms.push(amm);
     }
 
     // Make sure pools are loaded before starting the listener
-    println!("Loading Pools... {}", high_volume_tokens.len());
+    println!("Loading Pools... ");
     for handle in join_handles {
         handle.await?;
     }

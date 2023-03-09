@@ -36,16 +36,24 @@ use byte_slice_cast::AsByteSlice;
 use ethers::types::serde_helpers;
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace, warn};
+use std::cmp::min;
 use itertools::Itertools;
 const UNISWAP_V2_ROUTER: &str = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d";
 pub(crate) const UNISWAP_UNIVERSAL_ROUTER: &str = "0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B";
 
 #[derive(Serialize, Deserialize,Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV2Metadata {
+    pub address: String,
     pub factory_address: String,
     pub reserve0: U256,
     pub reserve1: U256,
-    pub block_number: u64
+    pub balance0: U256,
+    pub balance1: U256,
+    pub block_number: u64,
+    pub token0_decimals: u8,
+    pub token1_decimals: u8,
+    pub token0: String,
+    pub token1: String,
 }
 
 impl Meta for UniswapV2Metadata {}
@@ -106,13 +114,13 @@ impl LiquidityProvider for UniSwapV2 {
             let step = 766;
             let cores = num_cpus::get();
             let permits = Arc::new(Semaphore::new(cores));
-            let mut pairs = Arc::new(RwLock::new(Vec::<UniSwapV2Pair>::new()));
+            let mut pairs = Arc::new(RwLock::new(Vec::<UniswapV2Metadata>::new()));
             let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
             for i in (0..pairs_length.as_usize()).step_by(step) {
                 let mut w = indices.lock().await;
-                w.push_back((i, i + step));
+                w.push_back((i, min(i + step, pairs_length.as_usize() - 1)));
             }
             let mut handles = vec![];
             loop {
@@ -137,9 +145,9 @@ impl LiquidityProvider for UniSwapV2 {
                             .await;
 
                         if let Ok(resources) = response {
-                            for pair_chunk in resources.as_slice().chunks(127) {
+                            for pair_chunk in resources.as_slice().chunks(67) {
                                 let pairs_data =
-                                    crate::abi::uniswap_v2::get_pool_data_batch_request(
+                                    crate::abi::uniswap_v2::get_complete_pool_data_batch_request(
                                         pair_chunk.to_vec(),
                                         eth_client.clone(),
                                     )
@@ -159,26 +167,25 @@ impl LiquidityProvider for UniSwapV2 {
             for handle in handles {
                 handle.await;
             }
+            let len = pairs.read().await.len();
 
             for pair in pairs.read().await.iter() {
-                if !(filter_tokens.iter().any(|token| token == &pair.token0.id)
-                    && filter_tokens.iter().any(|token| token == &pair.token1.id))
-                {
-                    continue;
-                }
+
                 let pool = Pool {
-                    address: pair.id.clone(),
-                    x_address: pair.token0.id.clone(),
+                    address: pair.address.clone(),
+                    x_address: pair.token0.clone(),
                     fee_bps: 30,
-                    y_address: pair.token1.id.clone(),
+                    y_address: pair.token1.clone(),
                     curve: None,
                     curve_type: Curve::Uncorrelated,
                     x_amount: pair.reserve0,
                     y_amount: pair.reserve1,
                     x_to_y: true,
-                    provider: LiquidityProviders::UniswapV2(Default::default()),
+                    provider: LiquidityProviders::UniswapV2(pair.clone()),
                 };
-                if pool.x_amount.is_zero() || pool.y_amount.is_zero() {
+                let min_0 = U256::from(10).pow(U256::from(pair.token0_decimals-1));
+                let min_1 = U256::from(10).pow(U256::from(pair.token1_decimals-1));
+                if pair.balance0.lt(&min_0) || pair.balance1.lt(&min_1) || pair.reserve1.lt(&min_1) || pair.reserve0.lt(&min_0) {
                     continue;
                 }
                 let mut w = pools.write().await;

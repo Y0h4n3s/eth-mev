@@ -643,11 +643,6 @@ impl LiquidityProvider for UniSwapV3 {
 
                                     let token_a = hex_to_address_string(log.topics.get(1).unwrap().encode_hex());
                                     let token_b = hex_to_address_string(log.topics.get(2).unwrap().encode_hex());
-                                    if !(filter_tokens.iter().any(|token| token == &token_a)
-                                        && filter_tokens.iter().any(|token| token == &token_b))
-                                    {
-                                        return None;
-                                    }
                                     let tokens = ethers::abi::decode(
                                         &[ParamType::Uint(32), ParamType::Address],
                                         &log.data,
@@ -669,7 +664,13 @@ impl LiquidityProvider for UniSwapV3 {
                                     )
                                     .await;
                                 if let Ok(mut pairs_data) = pairs_data {
+
                                     for meta in pairs_data {
+                                        let min_0 = U256::from(10).pow(U256::from(meta.token_a_decimals-1));
+                                        let min_1 = U256::from(10).pow(U256::from(meta.token_b_decimals-1));
+                                        if meta.token_a_amount.lt(&min_0) || meta.token_b_amount.lt(&min_1)  {
+                                            continue;
+                                        }
                                         let pool = Pool {
                                             address: meta.address.clone(),
                                             x_address: meta.token_a.clone(),
@@ -682,14 +683,7 @@ impl LiquidityProvider for UniSwapV3 {
                                             x_to_y: true,
                                             provider: LiquidityProviders::UniswapV3(meta),
                                         };
-                                        if !(filter_tokens.iter().any(|token| token == &pool.x_address)
-                                            && filter_tokens.iter().any(|token| token == &pool.y_address))
-                                        {
-                                            continue;
-                                        }
-                                        if pool.x_amount.is_zero() || pool.y_amount.is_zero() {
-                                            continue;
-                                        }
+
                                         let mut w = pools.write().await;
                                         w.insert(pool.address.clone(), pool);
                                     }
@@ -697,6 +691,8 @@ impl LiquidityProvider for UniSwapV3 {
                                     info!("{:?}", pairs_data.unwrap_err())
                                 }
                             }
+                        } else {
+
                         }
                         drop(permit);
                     }));

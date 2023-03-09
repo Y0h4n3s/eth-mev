@@ -72,6 +72,7 @@ contract UniswapV3DataAggregator {
     int24 internal constant MAX_TICK = - MIN_TICK;
 
     struct PoolData {
+        address addr;
         address tokenA;
         uint8 tokenADecimals;
         address tokenB;
@@ -102,7 +103,7 @@ contract UniswapV3DataAggregator {
             if (codeSizeIsZero(poolAddress)) continue;
 
             PoolData memory poolData;
-
+            poolData.addr = poolAddress;
             poolData.tokenA = IUniswapV3Pool(poolAddress).token0();
             poolData.tokenB = IUniswapV3Pool(poolAddress).token1();
 

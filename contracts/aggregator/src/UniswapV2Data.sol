@@ -51,7 +51,10 @@ interface IUniswapV2Pair {
 
     function initialize(address, address) external;
 }
-
+interface IERC20 {
+    function decimals() external view returns (uint8);
+    function balanceOf(address) external returns(uint256);
+}
 /**
 @dev This contract is not meant to be deployed. Instead, use a static call with the
              deployment bytecode as payload.
@@ -59,9 +62,16 @@ interface IUniswapV2Pair {
 contract UniswapV2DataAggregator {
 
     struct PoolData {
+        address addr;
         uint256 reserve0;
         uint256 reserve1;
+        uint256 balance0;
+        uint256 balance1;
         uint256 blockNumber;
+        address tokenA;
+        uint8 tokenADecimals;
+        address tokenB;
+        uint8 tokenBDecimals;
     }
 
     constructor(address[] memory pools) {
@@ -74,6 +84,109 @@ contract UniswapV2DataAggregator {
 
             PoolData memory poolData;
             (poolData.reserve0, poolData.reserve1, ) = IUniswapV2Pair(poolAddress).getReserves();
+            poolData.tokenA = IUniswapV2Pair(poolAddress).token0();
+            poolData.addr = poolAddress;
+            poolData.tokenB = IUniswapV2Pair(poolAddress).token1();
+            if (codeSizeIsZero(poolData.tokenA)) continue;
+            if (codeSizeIsZero(poolData.tokenB)) continue;
+
+            //Get tokenA decimals
+            (
+            bool tokenADecimalsSuccess,
+            bytes memory tokenADecimalsData
+            ) = poolData.tokenA.call(abi.encodeWithSignature("decimals()"));
+
+            if (tokenADecimalsSuccess) {
+                uint256 tokenADecimals;
+
+                if (tokenADecimalsData.length == 32) {
+                    (tokenADecimals) = abi.decode(
+                        tokenADecimalsData,
+                        (uint256)
+                    );
+
+                    if (tokenADecimals == 0 || tokenADecimals > 255) {
+                        continue;
+                    } else {
+                        poolData.tokenADecimals = uint8(tokenADecimals);
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+
+            (
+            bool tokenBDecimalsSuccess,
+            bytes memory tokenBDecimalsData
+            ) = poolData.tokenB.call(abi.encodeWithSignature("decimals()"));
+
+            if (tokenBDecimalsSuccess) {
+                uint256 tokenBDecimals;
+                if (tokenBDecimalsData.length == 32) {
+                    (tokenBDecimals) = abi.decode(
+                        tokenBDecimalsData,
+                        (uint256)
+                    );
+
+                    if (tokenBDecimals == 0 || tokenBDecimals > 255) {
+                        continue;
+                    } else {
+                        poolData.tokenBDecimals = uint8(tokenBDecimals);
+                    }
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+
+            (
+            bool tokenABalanceSuccess,
+            bytes memory tokenABalanceData
+            ) = poolData.tokenA.call(abi.encodeWithSignature("balanceOf(address)", poolAddress));
+
+            if (tokenABalanceSuccess) {
+                uint256 tokenABalance;
+
+                if (tokenABalanceData.length == 32) {
+                    (poolData.balance0) = abi.decode(
+                        tokenABalanceData,
+                        (uint256)
+                    );
+                    if (poolData.balance0 == 0) {
+                        continue;
+                    }
+
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            (
+            bool tokenBBalanceSuccess,
+            bytes memory tokenBBalanceData
+            ) = poolData.tokenB.call(abi.encodeWithSignature("balanceOf(address)", poolAddress));
+
+            if (tokenBBalanceSuccess) {
+
+                if (tokenBBalanceData.length == 32) {
+                    (poolData.balance1) = abi.decode(
+                        tokenBBalanceData,
+                        (uint256)
+                    );
+                    if (poolData.balance1 == 0) {
+                        continue;
+                    }
+
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
             poolData.blockNumber = block.number;
             allPoolData[i] = poolData;
         }

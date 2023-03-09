@@ -18,6 +18,7 @@ use std::str::FromStr;
 use bincode::{Decode, Encode};
 use nom::character::complete::i128;
 use serde::{Deserialize, Serialize};
+use tracing::info;
 use crate::{CHECKED_COIN, U256};
 use crate::uniswap_v3::UniswapV3Metadata;
 abigen!(
@@ -155,6 +156,7 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
         if let Ok(return_data) = call {
             let return_data_tokens = ethers::abi::decode(
                 &[ParamType::Array(Box::new(ParamType::Tuple(vec![
+                    ParamType::Address,   // address
                     ParamType::Address,   // token a
                     ParamType::Uint(8),   // token a decimals
                     ParamType::Address,   // token b
@@ -187,87 +189,92 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                 if let Some(tokens_arr) = tokens.into_array() {
                     for tup in tokens_arr {
                         if let Some(pool_data) = tup.into_tuple() {
-                            if !pool_data[0].to_owned().into_address().unwrap().is_zero()
-                                && !pool_data[2].to_owned().into_address().unwrap().is_zero()
+                            if !pool_data[1].to_owned().into_address().unwrap().is_zero()
+                                && !pool_data[3].to_owned().into_address().unwrap().is_zero()
                             {
                                 //Update the pool data
-                                if let Some(pair_address) = pairs.get(pool_idx) {
 
                                     let u_pair = UniswapV3Metadata {
-                                        address: hex_to_address_string(pair_address.encode_hex()),
+                                        address: hex_to_address_string(
+                                            pool_data[0]
+                                                .to_owned()
+                                                .into_address()
+                                                .unwrap()
+                                                .encode_hex(),
+                                        ),
                                         token_a: hex_to_address_string(
-                                                pool_data[0]
+                                                pool_data[1]
                                                     .to_owned()
                                                     .into_address()
                                                     .unwrap()
                                                     .encode_hex(),
                                             ),
                                         token_b: hex_to_address_string(
-                                                pool_data[2]
+                                                pool_data[3]
                                                     .to_owned()
                                                     .into_address()
                                                     .unwrap()
                                                     .encode_hex(),
                                             ),
-                                        token_a_decimals: pool_data[1]
+                                        token_a_decimals: pool_data[2]
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
                                             .as_u32() as u8,
-                                        token_b_decimals: pool_data[3]
+                                        token_b_decimals: pool_data[4]
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
                                             .as_u32() as u8,
-                                        liquidity: pool_data[4]
+                                        liquidity: pool_data[5]
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
                                             .into(),
-                                        sqrt_price: pool_data[5]
+                                        sqrt_price: pool_data[6]
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
                                             .into(),
-                                        tick: I256::from_raw(pool_data[6]
+                                        tick: I256::from_raw(pool_data[7]
                                             .to_owned()
                                             .into_int()
                                             .unwrap())
                                             .as_i32(),
-                                        tick_spacing: pool_data[7]
+                                        tick_spacing: pool_data[8]
                                             .to_owned()
                                             .into_int()
                                             .unwrap()
                                             .to_string()
                                             .parse::<i32>()
                                             .unwrap(),
-                                        fee: pool_data[8]
+                                        fee: pool_data[9]
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
                                             .as_u32(),
-                                        liquidity_net: I256::from_raw(pool_data[9]
+                                        liquidity_net: I256::from_raw(pool_data[10]
                                             .to_owned()
                                             .into_int()
                                             .unwrap()),
-                                        token_a_amount: pool_data[10]
+                                        token_a_amount: pool_data[11]
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
                                             .into(),
-                                        token_b_amount: pool_data[11]
+                                        token_b_amount: pool_data[12]
                                             .to_owned()
                                             .into_uint()
                                             .unwrap()
                                             .into(),
-                                        tick_bitmap_x_y: pool_data[12]
+                                        tick_bitmap_x_y: pool_data[13]
                                             .to_owned()
                                             .into_array()
                                             .unwrap()
                                             .into_iter()
                                             .map(|t| UniswapV3TickData::from_tokens(t.into_tuple().unwrap()))
                                             .collect::<Vec<UniswapV3TickData>>(),
-                                        tick_bitmap_y_x: pool_data[13]
+                                        tick_bitmap_y_x: pool_data[14]
                                             .to_owned()
                                             .into_array()
                                             .unwrap()
@@ -279,8 +286,6 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                                     };
                                     final_pairs.push(u_pair);
                                 }
-                            }
-                            pool_idx += 1;
                         }
                     }
                 }

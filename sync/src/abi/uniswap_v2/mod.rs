@@ -9,6 +9,7 @@ use ethers::{
 };
 use ethers_providers::ProviderError::JsonRpcClientError;
 use std::sync::Arc;
+use tracing::info;
 use crate::uniswap_v2::UniswapV2Metadata;
 
 abigen!(
@@ -79,45 +80,91 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
         if let Ok(return_data) = call {
             let return_data_tokens = ethers::abi::decode(
                 &[ParamType::Array(Box::new(ParamType::Tuple(vec![
+                    ParamType::Address,   // address
                     ParamType::Uint(256),  // token a amount
                     ParamType::Uint(256),  // token b amount
+                    ParamType::Uint(256),  // token a balance
+                    ParamType::Uint(256),  // token b balance
                     ParamType::Uint(256),  // block number
+                    ParamType::Address,   // token a
+                    ParamType::Uint(8),   // token a decimals
+                    ParamType::Address,   // token b
+                    ParamType::Uint(8),   // token b decimals
 
                 ])))],
                 &return_data,
             )?;
 
-            let mut pool_idx = 0;
 
             for tokens in return_data_tokens {
                 if let Some(tokens_arr) = tokens.into_array() {
                     for tup in tokens_arr {
                         if let Some(pool_data) = tup.into_tuple() {
-
+                            if !pool_data[0].to_owned().into_address().unwrap().is_zero() {
                                 //Update the pool data
-                                if let Some(_) = pairs.get(pool_idx) {
-                                    let u_pair = UniswapV2Metadata {
-                                        reserve0: pool_data[0]
+                                let u_pair = UniswapV2Metadata {
+                                    address: hex_to_address_string(
+                                        pool_data[0]
                                             .to_owned()
-                                            .into_uint()
+                                            .into_address()
                                             .unwrap()
-                                            .into(),
-                                        reserve1: pool_data[1]
+                                            .encode_hex(),
+                                    ),
+                                    reserve0: pool_data[1]
+                                        .to_owned()
+                                        .into_uint()
+                                        .unwrap()
+                                        .into(),
+                                    reserve1: pool_data[2]
+                                        .to_owned()
+                                        .into_uint()
+                                        .unwrap()
+                                        .into(),
+                                    balance0: pool_data[3]
+                                        .to_owned()
+                                        .into_uint()
+                                        .unwrap()
+                                        .into(),
+                                    balance1: pool_data[4]
+                                        .to_owned()
+                                        .into_uint()
+                                        .unwrap()
+                                        .into(),
+                                    block_number: pool_data[5]
+                                        .to_owned()
+                                        .into_uint()
+                                        .unwrap()
+                                        .as_u64(),
+                                    token0: hex_to_address_string(
+                                        pool_data[6]
                                             .to_owned()
-                                            .into_uint()
+                                            .into_address()
                                             .unwrap()
-                                            .into(),
-                                        block_number: pool_data[2]
+                                            .encode_hex(),
+                                    ),
+                                    token0_decimals: pool_data[7]
+                                        .to_owned()
+                                        .into_uint()
+                                        .unwrap()
+                                        .as_u32()
+                                        as u8,
+                                    token1: hex_to_address_string(
+                                        pool_data[8]
                                             .to_owned()
-                                            .into_uint()
+                                            .into_address()
                                             .unwrap()
-                                            .as_u64(),
-                                        ..Default::default()
-                                    };
-                                    final_pairs.push(u_pair);
-                                }
-
-                            pool_idx += 1;
+                                            .encode_hex(),
+                                    ),
+                                    token1_decimals: pool_data[9]
+                                        .to_owned()
+                                        .into_uint()
+                                        .unwrap()
+                                        .as_u32()
+                                        as u8,
+                                    ..Default::default()
+                                };
+                                final_pairs.push(u_pair);
+                            }
                         }
                     }
                 }
