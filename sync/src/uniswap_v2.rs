@@ -104,7 +104,7 @@ impl LiquidityProvider for UniSwapV2 {
         tokio::spawn(async move {
             let client = reqwest::Client::new();
             let eth_client = Arc::new(
-                Provider::<Ws>::connect("ws://89.58.31.215:8546")
+                Provider::<Ws>::connect("ws://5.9.23.196:8546")
                     .await
                     .unwrap(),
             );
@@ -217,7 +217,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
             rt.block_on(async move {
                 let mut joins = vec![];
                 let clnt = Arc::new(
-                    Provider::<Ws>::connect("ws://89.58.31.215:8546")
+                    Provider::<Ws>::connect("ws://5.9.23.196:8546")
                         .await
                         .unwrap(),
                 );
@@ -347,7 +347,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
 
             rt.block_on(async move {
                 let client = Arc::new(
-                    Provider::<Ws>::connect("ws://89.58.31.215:8546")
+                    Provider::<Ws>::connect("ws://5.9.23.196:8546")
                         .await
                         .unwrap(),
                 );

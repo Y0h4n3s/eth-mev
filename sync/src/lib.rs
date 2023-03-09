@@ -532,7 +532,7 @@ mod tests {
             ..Default::default()
         };
         let eth_client = Arc::new(
-            Provider::<Ws>::connect("ws://89.58.31.215:8546")
+            Provider::<Ws>::connect("ws://5.9.23.196:8546")
                 .await
                 .unwrap(),
         );

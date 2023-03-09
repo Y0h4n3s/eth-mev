@@ -56,7 +56,7 @@ static CONTRACT_ADDRESS: Lazy<Address> = Lazy::new(|| {
 });
 
 static NODE_URL: Lazy<Url> = Lazy::new(|| {
-    let url = std::env::var("ETH_NODE_URL").unwrap_or_else(|_| std::env::args().nth(7).unwrap_or("http://89.58.31.215:8545".to_string()));
+    let url = std::env::var("ETH_NODE_URL").unwrap_or_else(|_| std::env::args().nth(7).unwrap_or("http://5.9.23.196:8545".to_string()));
     Url::parse(&url).unwrap()
 });
 
