@@ -97,6 +97,7 @@ pub async fn start(
     updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PoolUpdateEvent>>>,
     pending_updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>,
     routes: Arc<RwLock<kanal::AsyncSender<(Transaction, Eip1559TransactionRequest)>>>,
+    single_routes: Arc<RwLock<kanal::AsyncSender<Vec<Eip1559TransactionRequest>>>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
     Graph::<String, Pool, Undirected>::new_undirected();
@@ -484,13 +485,15 @@ DETACH DELETE n",
     for i in 0..cores {
         let path_lookup = path_lookup1.clone();
         let routes = routes.read().await.clone();
+        let single_routes = single_routes.read().await.clone();
         let updated_q = updated_q.clone();
         workers.push(tokio::spawn(async move {
             while let Ok(updated_market_event) = updated_q.recv().await {
                 let event = updated_market_event.get_event();
                 let mut updated_market = event.pool;
                 let routes = routes.clone();
-                if let Some((pool, market_routes)) = path_lookup.write().await.iter_mut().find(|(key, _value)| {
+                let single_routes = single_routes.clone();
+                let market_routes = if let Some((pool, market_routes)) = path_lookup.write().await.iter_mut().find(|(key, _value)| {
                     updated_market.address == key.address
                 }) {
                     for mut route in market_routes.iter_mut() {
@@ -502,12 +505,20 @@ DETACH DELETE n",
                         market_routes.len(),
                         updated_market,
                     );
-                    continue
+                    market_routes.clone()
                 }
                 else {
                     debug!("No routes found for {}", updated_market);
                     continue;
                 };
+
+                let mut updated = market_routes.into_par_iter().map(|mut route| {
+                    let transactions = route.get_transactions();
+                    transactions
+                }).flatten().collect::<Vec<Eip1559TransactionRequest>>();
+
+                single_routes.send(updated).await;
+
 
             }
             }));
