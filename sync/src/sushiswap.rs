@@ -200,7 +200,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
             rt.block_on(async move {
                 let mut joins = vec![];
                 let clnt = Arc::new(
-                    Provider::<Ws>::connect("ws://5.9.23.196:8546")
+                    Provider::<Ws>::connect("ws://65.21.198.115:8546")
                         .await
                         .unwrap(),
                 );
@@ -277,7 +277,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
 
             rt.block_on(async move {
                 let client = Arc::new(
-                    Provider::<Ws>::connect("ws://5.9.23.196:8546")
+                    Provider::<Ws>::connect("ws://65.21.198.115:8546")
                         .await
                         .unwrap(),
                 );

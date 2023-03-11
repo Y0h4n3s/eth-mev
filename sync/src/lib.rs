@@ -315,7 +315,7 @@ impl Calculator for CpmmCalculator {
         if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - pool.fee_bps));
+        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 300));
         let numerator = amount_in_with_fee
             .checked_mul(swap_destination_amount)
             .unwrap_or(U256::from(0));
@@ -532,7 +532,7 @@ mod tests {
             ..Default::default()
         };
         let eth_client = Arc::new(
-            Provider::<Ws>::connect("ws://5.9.23.196:8546")
+            Provider::<Ws>::connect("ws://65.21.198.115:8546")
                 .await
                 .unwrap(),
         );

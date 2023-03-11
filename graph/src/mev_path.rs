@@ -976,7 +976,7 @@ impl MevPath {
             for step in &steps_meta[best_route_index] {
                 info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
             }
-            println!("\n\n\n");
+            info!("\n\n\n");
             let mut final_data = "".to_string();
             for ix in instructions[best_route_index].clone() {
                 let end = ix.len() as u8;
@@ -1133,7 +1133,7 @@ impl MevPath {
                             max_priority_fee_per_gas: Some(max_priority_fee),
                             // update later
                             max_fee_per_gas: Some(U256::from(0)),
-                            gas: Some(gas),
+                            gas: Some(U256::from(400000)),
                             // update later
                             nonce: Some(U256::from(0)),
                             value: None,
