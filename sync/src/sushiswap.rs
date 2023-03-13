@@ -33,6 +33,8 @@ use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace};
 use std::cmp::min;
 const SUSHISWAP_ROUTER: &str = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F";
+const TVL_FILTER_LEVEL: i32 = 1;
+
 #[derive(Serialize, Deserialize,Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct SushiSwapMetadata {
     pub factory_address: String,
@@ -165,8 +167,8 @@ impl LiquidityProvider for SushiSwap {
                     provider: LiquidityProviders::SushiSwap(Default::default()),
                 };
                 // atleast 0.1
-                let min_0 = U256::from(10).pow(U256::from(pair.token0_decimals+1));
-                let min_1 = U256::from(10).pow(U256::from(pair.token1_decimals+1));
+                let min_0 = U256::from(10).pow(U256::from(pair.token0_decimals as i32 + TVL_FILTER_LEVEL));
+                let min_1 = U256::from(10).pow(U256::from(pair.token1_decimals as i32 + TVL_FILTER_LEVEL));
                 if pair.balance0.lt(&min_0) || pair.balance1.lt(&min_1) || pair.reserve1.lt(&min_1) || pair.reserve0.lt(&min_0) {
                     continue;
                 }

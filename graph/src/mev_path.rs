@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::str::FromStr;
-use ethers::types::{Eip1559TransactionRequest, U128, U64};
+use ethers::types::{Eip1559TransactionRequest, H160, H256, U128, U64, Address};
 use garb_sync_eth::{
     uniswap_v2::UniswapV2Metadata, uniswap_v3::UniswapV3Metadata, LiquidityProviderId,
     LiquidityProviders, Pool, PoolInfo, UniswapV3Calculator,
@@ -760,7 +760,7 @@ impl MevPath {
                                         let (function, pay_to) = if sender == asset_reciever {
                                             (UNISWAP_V2_EXACT_IN_PAY_TO_SENDER.to_string(), "".to_string())
                                         } else if asset_reciever != contract_address {
-                                            (UNISWAP_V2_EXACT_IN_PAY_TO_ADDRESS.to_string(), asset_reciever[2..].to_string())
+                                            (UNISWAP_V2_EXACT_IN_PAY_TO_ADDRESS.to_string(), Address::from_str(&asset_reciever).unwrap().encode_hex()[2..].to_string())
                                         } else {
                                             (UNISWAP_V2_EXACT_IN_PAY_TO_SELF.to_string(), "".to_string())
                                         };
@@ -768,13 +768,12 @@ impl MevPath {
                                         let packed_debt = Self::encode_packed(d);
                                         instruction.push(
                                             function +
-                                                if pool.x_to_y { "01" } else { "00" } +
-                                                &pool.address[2..] +
-                                                &dt[2..] +
+                                                if pool.x_to_y { "0000000000000000000000000000000000000000000000000000000000000001" } else { "0000000000000000000000000000000000000000000000000000000000000000" } +
+                                                &Address::from_str(&pool.address).unwrap().encode_hex()[2..] +
+                                                &Address::from_str(&dt).unwrap().encode_hex()[2..] +
                                                 &pay_to +
-                                                &(packed_asset.len() as u8).encode_hex()[64..] +
-                                                &packed_asset +
-                                                &packed_debt
+                                                &Self::encode_int(a) +
+                                                &Self::encode_int(d)
                                         )
                                     }
                                     LiquidityProviderId::UniswapV3 => {
@@ -782,16 +781,16 @@ impl MevPath {
                                         let (function, pay_to) = if sender == asset_reciever {
                                             (UNISWAP_V3_EXACT_IN_PAY_TO_SENDER.to_string(), "".to_string())
                                         } else if asset_reciever != contract_address {
-                                            (UNISWAP_V3_EXACT_IN_PAY_TO_ADDRESS.to_string(), asset_reciever[2..].to_string())
+                                            (UNISWAP_V3_EXACT_IN_PAY_TO_ADDRESS.to_string(), Address::from_str(&asset_reciever).unwrap().encode_hex()[2..].to_string())
                                         } else {
                                             (UNISWAP_V3_EXACT_IN_PAY_TO_SELF.to_string(), "".to_string())
                                         };
                                         instruction.push(
                                             function +
-                                                if pool.x_to_y { "01" } else { "00" } +
-                                                &pool.address[2..] +
+                                                if pool.x_to_y { "0000000000000000000000000000000000000000000000000000000000000001" } else { "0000000000000000000000000000000000000000000000000000000000000000" } +
+                                                &Address::from_str(&pool.address).unwrap().encode_hex()[2..] +
                                                 &pay_to +
-                                                &Self::encode_packed(d)
+                                                &Self::encode_int(d)
                                         )
                                     }
                                 }
@@ -816,6 +815,7 @@ impl MevPath {
                                                 &pay_to +
                                                 &(packed_asset.len() as u8).encode_hex()[64..] +
                                                 &packed_asset +
+                                                &(packed_debt.len() as u8).encode_hex()[64..] +
                                                 &packed_debt
                                         )
                                     }
@@ -828,12 +828,14 @@ impl MevPath {
                                         } else {
                                             (UNISWAP_V3_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string())
                                         };
+                                        let packed_asset = Self::encode_packed(a);
                                         instruction.push(
                                             function +
                                                 if pool.x_to_y { "01" } else { "00" } +
                                                 &pool.address[2..] +
                                                 &pay_to +
-                                                &Self::encode_packed(a)
+                                                &(packed_asset.len() as u8).encode_hex()[64..] +
+                                                &packed_asset
                                         )
                                     }
                                 }
@@ -924,7 +926,8 @@ impl MevPath {
                                 (PAY_ADDRESS.to_string(), pool.address.clone()[2..].to_string())
                             };
 
-                            instruction.push(function + &token[2..] + &pay_to + &Self::encode_packed(amount_to_pay));
+                            let packed_amount = Self::encode_packed(amount_to_pay);
+                            instruction.push(function + &token[2..] + &pay_to + &(packed_amount.len() as u8).encode_hex()[64..] + &packed_amount);
                             steps_done.push(index);
                         }
                     }
@@ -969,9 +972,9 @@ impl MevPath {
                 mid = (left + right) / 2.0;
             }
         }
+        info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
 
         if best_route_profit > I256::from(0) {
-            // info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
             info!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
             for step in &steps_meta[best_route_index] {
                 info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
@@ -1005,8 +1008,6 @@ impl MevPath {
 
         let mut final_data = "".to_string();
         for ix in instructions.clone() {
-            let end = ix.len() as u8;
-            final_data += &end.encode_hex()[64..];
             final_data += &ix;
         }
         for (i, step) in path.iter().enumerate().collect::<Vec<(usize, &MevPathStep)>>().into_iter() {
@@ -1027,7 +1028,7 @@ impl MevPath {
         builder += &(title + "() public {\n");
         builder += &format!("\n\tbytes memory data = hex\"{}\";", final_data);
         builder += "\n\tvm.expectRevert();";
-        builder += &format!("\n\tagg.functionName(data);\n}}");
+        builder += &format!("\n\taddress(agg).call(data);\n}}");
         builder
     }
 
@@ -1039,6 +1040,14 @@ impl MevPath {
             _ => ""
         };
         return res.to_string();
+    }
+
+    fn encode_int(amount: I256) -> String {
+        if amount < I256::from(0) {
+            (-amount).encode_hex()[2..].to_string()
+        } else {
+            amount.encode_hex()[2..].to_string()
+        }
     }
 
     fn encode_packed(amount: I256) -> String {

@@ -1,5 +1,53 @@
+#include "./Console.huff"
+
+
+#define function uniswapV3ExactOutPayToSelf_1377F03(bytes calldata) view returns ()
+#define function uniswapV3ExactOutPayToSender_A729BB(bytes calldata) view returns ()
+#define function uniswapV2ExactOutPayToSender_31D5F3(bytes calldata) view returns ()
+#define function uniswapV2ExactOutPayToSelf_12BAA3(bytes calldata) view returns ()
+#define function paySender_7437EA(bytes calldata) view returns ()
+#define function transfer(address,uint256) nonpayable returns ()
 
 #define constant OWNER = FREE_STORAGE_POINTER()
+
+#define event by(bytes)
+
+#define macro NEXT() = takes (0) returns (0) {
+
+
+dup1 __FUNC_SIG(uniswapV3ExactOutPayToSelf_1377F03) eq uv3eops jumpi
+dup1 __FUNC_SIG(uniswapV3ExactOutPayToSender_A729BB) eq uv3eopse jumpi
+dup1 __FUNC_SIG(uniswapV2ExactOutPayToSender_31D5F3) eq uv2eopse jumpi
+dup1 __FUNC_SIG(uniswapV2ExactOutPayToSelf_12BAA3) eq uv2eops jumpi
+dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
+
+0x00 0x00 revert
+    uv3eops:
+        dup2 0x04 add
+        UV3EXACT_OUT_PAY_TO_SELF()
+        0x00 0x00 return
+    uv3eopse:
+        dup2 0x04 add
+        UV3EXACT_OUT_PAY_TO_SENDER()
+        0x00 0x00 return
+
+    uv2eopse:
+        dup2 0x04 add
+        UV2EXACT_OUT_PAY_TO_SENDER()
+        0x00 0x00 return
+
+    uv2eops:
+        dup2 0x04 add
+        UV2EXACT_OUT_PAY_TO_SELF()
+        0x00 0x00 return
+
+    ps:
+        dup2 0x04 add
+        PAY_SENDER()
+        0x00 0x00 return
+
+
+}
 
 #define macro ONLY_OWNER() = takes (0) returns (0) {
     caller                   // [msg.sender]
@@ -12,44 +60,305 @@
 }
 
 #define macro CONSTRUCTOR() = takes (0) returns (0) {
-    // Copy the owner into memory
-    0x20                                // [size] - byte size to copy
-    0x40 codesize sub                   // [offset, size] - offset in the code to copy from
-    0x00                                // [mem, offset, size] - offset in memory to copy to
-    codecopy
-    
-    // Set the new owner
-    0x00 mload                          // [owner]
-    dup1                                // [owner, owner]
-    [OWNER]                             // [OWNER, owner, owner]
-    sstore                              // [owner]
+    origin
+    [OWNER]                             // [OWNER, owner]
+    sstore                              // []
 
+}
+
+#define macro SET_SQRT_PRICE() = takes (0) returns (0) {
+
+    0x24 mload
+    0x1 eq min jumpi
+    max jumpi
+    min:
+        0x1000276A4
+        0x64 mstore
+        cont jumpi
+    max:
+        0xFFFD8963EFD1FC6A506488495D951D5263988D25
+        0x64 mstore
+
+    cont:
+
+}
+
+#define macro PAY_SENDER() = takes (0) returns (0) {
+    dup1 calldataload 0x60 shr                                      // [tokenAddress, stepOffset]
+    dup2 0x14 add calldataload 0xF8 shr                                 // [amountSize, tokenAddress, stepOffset]
+    dup3 0x15 add calldataload dup2 0x4 mul 0x100 sub shr               // [amount, amountSize, tokenAddress, stepOffset]
+    __FUNC_SIG(transfer)                                                // [sig, amount, amountSize, tokenAddress, stepOffset]
+    0x00 mstore                                                         // [amount, amountSize, tokenAddress, stepOffset]
+
+    // store args in memory
+    // address, uint256
+    caller 0x20 mstore                                                  // [amount, amountSize, tokenAddress, stepOffset]
+    0x40 mstore                                                         // [amountSize, tokenAddress, stepOffset]
+
+
+    // make call. return size is zero because we can fetch it after the call
+    0x00                        // [ret_size, stepOffset]
+    dup1                        // [ret_offset, ret_size, stepOffset]
+    0x44                        // [args_size, ret_offset, ret_size, stepOffset]
+    0x1c                        // [args_offset, args_size, ret_offset, ret_size, stepOffset]
+    dup3                        // [value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    dup7                        // [to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    gas                         // [gas, to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    call                        // [successs, stepOffset]
+
+    iszero iszero               // [success, acct_addr, amount, getter_addr]
+    transfer_success jumpi      // [acct_addr, amount, getter_addr]
+    0x00 dup1 revert            // [] - Call failed, revert
+
+    // Resume execution in invoking macro
+    transfer_success:
+}
+
+
+#define macro UV3EXACT_OUT_PAY_TO_SELF() = takes (0) returns (0) {
+    0x128acb08 0xe0 shl 0x00 mstore
+
+    address 0x04 mstore
+
+    dup1 calldataload 0xF8 shr                                          // [zeroForOne, stepOffset]
+    dup2 0x1 add calldataload 0x60 shr                                  // [poolAddress, zeroForOne, stepOffset]
+    dup3 0x15 add calldataload 0xF8 shr                                 // [amountSize, poolAddress, zeroForOne, stepOffset]
+    dup4 0x16 add calldataload dup2 0x4 mul 0x100 sub shr               // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup4 0x24 mstore                                                    // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup1 0x44 mstore                                                    // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup5
+    SET_SQRT_PRICE()
+
+    dup5                                                                // [stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+
+    0xA0 0x84 mstore
+
+    dup1 0x16 add 0x2 dup5 div add calldatasize sub                             // [remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup1                                                                // [remainingData, remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup1 0xA4 mstore
+    dup3 0x16 add 0x2 dup7 div add                                              // [stepOffset + dataUsed, remainingData, remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+
+    0xC4 calldatacopy                                                   // [remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    // memory [functionSelector, recipient, zeroForOne, amount, sqrtPrice, dataLocation, data, poolAddress]
+    0x40                                                  // [retSize, stepOffset]
+    0x300                                               // [retOffset, retSize, stepOffset]
+    dup3 0xC4 add                                       // [argSize, retOffset, retSize, stepOffset]
+    0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
+    0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
+    dup10                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
+    gas
+    call
+
+    iszero iszero cont jumpi
+    stop
+    cont:
+
+
+}
+#define macro UV3EXACT_OUT_PAY_TO_SENDER() = takes (0) returns (0) {
+    0x128acb08 0xe0 shl 0x00 mstore
+    caller 0x04 mstore
+    dup1 calldataload 0xF8 shr                                          // [zeroForOne, stepOffset]
+    dup2 0x1 add calldataload 0x60 shr                                  // [poolAddress, zeroForOne, stepOffset]
+    dup3 0x15 add calldataload 0xF8 shr                                 // [amountSize, poolAddress, zeroForOne, stepOffset]
+    dup4 0x16 add calldataload dup2 0x4 mul 0x100 sub shr               // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup4 0x24 mstore                                                    // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup1 0x44 mstore                                                    // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup5
+    SET_SQRT_PRICE()
+
+    dup5                                                                // [stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+
+    0xA0 0x84 mstore
+
+    dup1 0x16 add 0x2 dup5 div add calldatasize sub                            // [remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup1                                                                // [remainingData, remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup1 0xA4 mstore
+    dup3 0x16 add 0x2 dup7 div add                                      // [stepOffset + dataUsed, remainingData, remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+
+    0xC4 calldatacopy                                                   // [remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+
+    // memory [functionSelector, recipient, zeroForOne, amount, sqrtPrice, dataLocation, data, poolAddress]
+    0x40                                                  // [retSize, stepOffset]
+    0x300                                               // [retOffset, retSize, stepOffset]
+    dup3 0xC4 add                                       // [argSize, retOffset, retSize, stepOffset]
+    0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
+    0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
+    dup10                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
+    gas
+    call
+
+    iszero iszero cont jumpi
+    0x00 dup1 revert
+    cont:
+
+
+}
+
+#define macro UV2EXACT_OUT_PAY_TO_SENDER() = takes (0) returns (0) {
+
+
+    0x022c0d9f 0xe0 shl 0x00 mstore
+    dup1 calldataload
+
+    iszero _Zero_Token_out jumpi
+        0x00 0x04 mstore
+        dup1 0x80 add calldataload 0x24 mstore
+        __Continue_Swap_Call jumpi
+    _Zero_Token_out:
+        dup1 0x80 add calldataload 0x04 mstore
+        0x00 0x24 mstore
+
+    __Continue_Swap_Call:
+
+    caller 0x44 mstore
+
+    0x80 0x64 mstore
+    dup1 0x20 add calldataload 0x200 mstore
+    dup1 0xA0 add calldataload                                 // [nextFunction]
+    0x0 eq simple jumpi
+
+    dup1 0xA0 add calldatasize sub                                 // [remainingData, stepOffset]
+
+        dup1                                                         // [remainingData, remainingData, stepOffset]
+        dup1 0x84 mstore
+        dup3 0xA0 add                                        // [stepOffset + dataUsed, remainingData, remainingData, stepOffset]
+        0xA4 calldatacopy                                   // [remainingData, stepOffset]
+        // memory [functionSelector, recipient, zeroForOne, amount, sqrtPrice, dataLocation, data, poolAddress]
+        0x00                                                  // [retSize, stepOffset]
+        0x00                                               // [retOffset, retSize, stepOffset]
+        dup3 0xc4 add                                                // [argSize, retOffset, retSize, stepOffset]
+        0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
+        0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
+        0x200 mload                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
+        0x1388 gas sub
+        call
+        iszero error jumpi stop
+
+    end jumpi
+
+    simple:                       // [remainingData, stepOffset]
+        // memory [functionSelector, recipient, zeroForOne, amount, sqrtPrice,data, poolAddress]
+        0x00                                                  // [retSize, stepOffset]
+        0x00                                               // [retOffset, retSize, stepOffset]
+        0xc4                                       // [argSize, retOffset, retSize, stepOffset]
+        0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
+        0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
+        0x200 mload                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
+        0x1388 gas sub
+        call
+        iszero error jumpi stop
+
+
+    end:
+}
+
+#define macro UV2EXACT_OUT_PAY_TO_SELF() = takes (0) returns (0) {
+
+
+    0x022c0d9f 0xe0 shl 0x00 mstore
+    dup1 calldataload
+
+    iszero _Zero_Token_out jumpi
+        0x00 0x04 mstore
+        dup1 0x80 add calldataload 0x24 mstore
+        __Continue_Swap_Call jumpi
+    _Zero_Token_out:
+        dup1 0x80 add calldataload 0x04 mstore
+        0x00 0x24 mstore
+
+    __Continue_Swap_Call:
+
+    address 0x44 mstore
+
+    0x80 0x64 mstore
+    dup1 0x20 add calldataload 0x200 mstore
+    dup1 0xA0 add calldataload                                 // [nextFunction]
+    0x0 eq simple jumpi
+
+    dup1 0xA0 add calldatasize sub                                 // [remainingData, stepOffset]
+
+        dup1                                                         // [remainingData, remainingData, stepOffset]
+        dup1 0x84 mstore
+        dup3 0xA0 add                                        // [stepOffset + dataUsed, remainingData, remainingData, stepOffset]
+        0xA4 calldatacopy                                   // [remainingData, stepOffset]
+        // memory [functionSelector, recipient, zeroForOne, amount, sqrtPrice, dataLocation, data, poolAddress]
+        0x00                                                  // [retSize, stepOffset]
+        0x00                                               // [retOffset, retSize, stepOffset]
+        dup3 0xc4 add                                                // [argSize, retOffset, retSize, stepOffset]
+        0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
+        0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
+        0x200 mload                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
+        0x1388 gas sub
+        call
+        iszero error jumpi stop
+
+    end jumpi
+
+    simple:                       // [remainingData, stepOffset]
+        // memory [functionSelector, recipient, zeroForOne, amount, sqrtPrice,data, poolAddress]
+        0x00                                                  // [retSize, stepOffset]
+        0x00                                               // [retOffset, retSize, stepOffset]
+        0xc4                                       // [argSize, retOffset, retSize, stepOffset]
+        0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
+        0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
+        0x200 mload                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
+        0x1388 gas sub
+        call
+        iszero error jumpi stop
+
+
+    end:
+}
+
+#define macro V3_CALLBACK() = takes (0) returns (0) {
+stop
+    0x84                // data start offset
+    0x84 calldataload
+    0xE0 shr
+    NEXT()
+}
+
+#define macro V2_CALLBACK() = takes (0) returns (0) {
+    0xA4                // data start offset
+    0xA4 calldataload
+    0xE0 shr
+    NEXT()
+}
+
+/// @notice Mask bytes to 8 bits
+#define macro MASK_ADDRESS() = takes (1) returns (1) {
+0x00000000000000000000000000000000000000000000000000000000000000ff
+and
+}
+
+#define macro WAGMI() = takes (0) returns (0) {
+0x03 dup1 revert
 }
 
 #define macro MAIN() = takes (0) returns (0) {
-    // Get the function signature from the calldata
-    0x00 calldataload        // [calldata @ 0x00]
-    0xE0 shr                 // [func_sig (calldata @ 0x00 >> 0xE0)]
 
-    // Check if the function signature in the calldata is
-    // a match to our `addWord` function definition.
-    // More about the `__FUNC_SIG` builtin in the `Builtin Functions`
-    // section.
-    __FUNC_SIG(addWord)      // [func_sig(addWord), func_sig]
-    eq                       // [func_sig(addWord) == func_sig]
-    add_word jumpi           // []
 
-    // Revert if no function signature matched
-    0x00 0x00 revert
+    0x00                    // signifies first place
+    0x00 calldataload        // [calldata @ 0x00, 0x48]
 
-    // Create a jump label
-    add_word:
-    // Call the `ADD_WORD` macro with the first calldata
-    // input, store the result in memory, and return it.
-    0x04 calldataload    // [input_num]
-    ADD_WORD()           // [result]
-    0x00 mstore          // []
-    0x20 0x00 return
+    0xE0 shr                 // [func_sig (calldata @ 0x00 >> 0xE0), 0x48]
+
+    dup1 0xfa461e33 eq v3Callback jumpi
+    dup1 0x10d1e85c eq v2Callback jumpi
+
+
+    NEXT()
+    stop
+    error:
+        WAGMI()
+        end jumpi
+    v3Callback:
+        V3_CALLBACK()
+        end jumpi
+
+    v2Callback:
+        V2_CALLBACK()
+        end jumpi
+    end:
 }
-
-#define function uniswapV3ExactOutPayToSender_A729BB(bytes) public

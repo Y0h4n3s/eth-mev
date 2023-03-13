@@ -204,9 +204,9 @@ impl PoolInfo for Pool {
 
     fn supports_callback_payment(&self) -> bool {
         match self.provider.id() {
-            LiquidityProviderId::UniswapV2 => false,
+            LiquidityProviderId::UniswapV2 => true,
             LiquidityProviderId::UniswapV3 => true,
-            LiquidityProviderId::SushiSwap=> false,
+            LiquidityProviderId::SushiSwap=> true,
         }
     }
 

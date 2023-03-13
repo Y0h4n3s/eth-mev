@@ -40,6 +40,7 @@ use std::cmp::min;
 use itertools::Itertools;
 const UNISWAP_V2_ROUTER: &str = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d";
 pub(crate) const UNISWAP_UNIVERSAL_ROUTER: &str = "0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B";
+const TVL_FILTER_LEVEL: i32 = 3;
 
 #[derive(Serialize, Deserialize,Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV2Metadata {
@@ -183,8 +184,8 @@ impl LiquidityProvider for UniSwapV2 {
                     x_to_y: true,
                     provider: LiquidityProviders::UniswapV2(pair.clone()),
                 };
-                let min_0 = U256::from(10).pow(U256::from(pair.token0_decimals+1));
-                let min_1 = U256::from(10).pow(U256::from(pair.token1_decimals+1));
+                let min_0 = U256::from(10).pow(U256::from(pair.token0_decimals as i32 + TVL_FILTER_LEVEL));
+                let min_1 = U256::from(10).pow(U256::from(pair.token1_decimals as i32 + TVL_FILTER_LEVEL));
                 if pair.balance0.lt(&min_0) || pair.balance1.lt(&min_1) || pair.reserve1.lt(&min_1) || pair.reserve0.lt(&min_0) {
                     continue;
                 }

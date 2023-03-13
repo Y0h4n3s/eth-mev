@@ -366,7 +366,7 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
                                 let n = nonce_num.read().await;
                                 let blk = block.read().await;
                                 let base_fee = blk.base_fee_per_gas.unwrap();
-                                tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee.saturating_add(base_fee.checked_div(U256::from(2)).unwrap())).min(U256::from(3).checked_mul(base_fee).unwrap()));
+                                tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee/*.saturating_add(base_fee.checked_div(U256::from(2)).unwrap())*/).min(U256::from(3).checked_mul(base_fee).unwrap()));
                                 tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
                                 tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                                 let blk = blk.number.unwrap().as_u64();

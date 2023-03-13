@@ -44,6 +44,7 @@ use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_T
 use tracing::{info, debug, trace, error};
 use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3TickData};
 
+const TVL_FILTER_LEVEL: i32 = 1;
 // Todo: add word in here to update and remove middleware use in simulate_swap
 #[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV3Metadata {
@@ -666,8 +667,8 @@ impl LiquidityProvider for UniSwapV3 {
                                 if let Ok(mut pairs_data) = pairs_data {
 
                                     for meta in pairs_data {
-                                        let min_0 = U256::from(10).pow(U256::from(meta.token_a_decimals+1));
-                                        let min_1 = U256::from(10).pow(U256::from(meta.token_b_decimals+1));
+                                        let min_0 = U256::from(10).pow(U256::from(meta.token_a_decimals as i32 + TVL_FILTER_LEVEL));
+                                        let min_1 = U256::from(10).pow(U256::from(meta.token_b_decimals as i32 + TVL_FILTER_LEVEL));
                                         if meta.token_a_amount.lt(&min_0) || meta.token_b_amount.lt(&min_1)  {
                                             continue;
                                         }
