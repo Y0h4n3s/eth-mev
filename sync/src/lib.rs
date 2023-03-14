@@ -38,6 +38,7 @@ pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
 });
 
 use nom::FindSubstring;
+use tracing::info;
 use crate::node_dispatcher::NodeDispatcher;
 use crate::sushiswap::SushiSwapMetadata;
 
@@ -484,7 +485,7 @@ pub async fn start(
     }
 
     // Make sure pools are loaded before starting the listener
-    println!("Loading Pools... ");
+    info!("Loading Pools... ");
     for handle in join_handles {
         handle.await?;
     }

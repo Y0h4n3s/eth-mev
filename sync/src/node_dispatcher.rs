@@ -39,7 +39,7 @@ impl NodeDispatcher {
     pub fn next_free(&self) -> String {
         let mut w = self.nodes.lock().unwrap();
 
-        let mut min = 0;
+        let mut min = usize::MAX;
         let mut min_url = "".to_string();
         for (url, used) in w.iter() {
             if *used <= min {

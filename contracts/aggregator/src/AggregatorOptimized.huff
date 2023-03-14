@@ -125,8 +125,13 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
     dup3 0x15 add calldataload 0xF8 shr                                 // [amountSize, poolAddress, zeroForOne, stepOffset]
     dup4 0x16 add calldataload dup2 0x4 mul 0x100 sub shr               // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
     dup4 0x24 mstore                                                    // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
+
+    // amount should be negative for exact out
+    0x00 sub
     dup1 0x44 mstore                                                    // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
+
     dup5
+
     SET_SQRT_PRICE()
 
     dup5                                                                // [stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
@@ -146,12 +151,8 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
     0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
     0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
     dup10                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
-0x1388 gas sub
+    0x1388 gas sub
     call
-
-    iszero iszero cont jumpi
-    stop
-    cont:
 
 
 }
@@ -163,7 +164,10 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
     dup3 0x15 add calldataload 0xF8 shr                                 // [amountSize, poolAddress, zeroForOne, stepOffset]
     dup4 0x16 add calldataload dup2 0x4 mul 0x100 sub shr               // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
     dup4 0x24 mstore                                                    // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    // amount should be negative for exact out
+    0x00 sub
     dup1 0x44 mstore                                                    // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
+
     dup5
     SET_SQRT_PRICE()
 
@@ -188,9 +192,6 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
     gas
     call
 
-    iszero iszero cont jumpi
-    0x00 dup1 revert
-    cont:
 
 
 }
@@ -239,8 +240,6 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
     dup10                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
     0x1388 gas sub
     call
-    iszero error jumpi stop
-
 
 }
 
@@ -281,7 +280,6 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
     dup10                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
     0x1388 gas sub
     call
-    iszero error jumpi stop
 
 }
 
