@@ -811,12 +811,10 @@ impl MevPath {
                                             function +
                                                 if pool.x_to_y { "01" } else { "00" } +
                                                 &pool.address[2..] +
-                                                &dt[2..] +
                                                 &pay_to +
                                                 &(packed_asset.len() as u8).encode_hex()[64..] +
-                                                &packed_asset +
-                                                &(packed_debt.len() as u8).encode_hex()[64..] +
-                                                &packed_debt
+                                                &packed_asset
+
                                         )
                                     }
                                     LiquidityProviderId::UniswapV3 => {
@@ -972,9 +970,10 @@ impl MevPath {
                 mid = (left + right) / 2.0;
             }
         }
-        info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
 
         if best_route_profit > I256::from(0) {
+            info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+
             info!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
             for step in &steps_meta[best_route_index] {
                 info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);

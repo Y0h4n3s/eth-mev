@@ -6,6 +6,10 @@
 #![allow(unused)]
 #![allow(deprecated)]
 
+/*
+0x775c559d9a48ce5a8444c1035c3a8921ab477b8e
+0x00000000003b3cc22af3ae1eac0440bcee416b40
+ */
 // TODO: node url dispacher
 mod abi;
 use serde::{Serialize, Deserialize};
@@ -38,11 +42,12 @@ use ethers::types::{U256, Block, TxHash, BlockId, Eip1559TransactionRequest, Blo
 use ethers::types::transaction::eip2718::TypedTransaction;
 use ethers::utils::keccak256;
 use tokio::time::Duration;
-use ethers_providers::{Http, Middleware};
+use ethers_providers::{Http, Middleware, Ws};
 use ethers_flashbots::{BundleRequest, FlashbotsMiddleware, BundleTransaction};
 use garb_graph_eth::{GraphConfig, Order};
 use rand::Rng;
 use async_trait::async_trait;
+use garb_sync_eth::node_dispatcher::NodeDispatcher;
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
     std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2,3".to_string()))
@@ -92,7 +97,9 @@ pub async fn async_main() -> anyhow::Result<()> {
     let sync_config = SyncConfig {
         providers: PROVIDERS.clone(),
     };
-    garb_sync_eth::start(pools.clone(), update_q_sender, pending_update_q_sender, sync_config)
+
+    let nodes = NodeDispatcher::from_file("nodes").await?;
+    garb_sync_eth::start(pools.clone(), update_q_sender, pending_update_q_sender, nodes.clone(), sync_config)
         .await
         .unwrap();
 
@@ -111,7 +118,7 @@ pub async fn async_main() -> anyhow::Result<()> {
         });
     }));
     joins.push(std::thread::spawn(move || {
-        transactor(&mut routes_receiver, &mut single_routes_receiver ,routes_sender).unwrap();
+        transactor(&mut routes_receiver, &mut single_routes_receiver ,routes_sender, nodes.clone()).unwrap();
     }));
 
     for join in joins {
@@ -154,7 +161,7 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
 
 
 
-pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559TransactionRequest)>, rt: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionRequest>>, _routes_sender: kanal::AsyncSender<(Transaction, Eip1559TransactionRequest)>) -> anyhow::Result<()> {
+pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559TransactionRequest)>, rt: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionRequest>>, _routes_sender: kanal::AsyncSender<(Transaction, Eip1559TransactionRequest)>, nodes: NodeDispatcher) -> anyhow::Result<()> {
     let mut workers = vec![];
     let cores = num_cpus::get();
 
@@ -162,18 +169,27 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
 
         // backruns
         let routes = rts.clone();
+        let node_url = nodes.next_free();
         workers.push(std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             rt.block_on(async move {
                 let mut bundle_handlers = vec![];
                 bundle_handlers.push(BundleHandlers::FlashBots("https://relay.flashbots.net".to_string(), FlashBotsRequestParams::default()));
-                // bundle_handlers.push(BundleHandlers::FlashBots("https://eth-builder.com".to_string(), FlashBotsRequestParams::default()));
+                bundle_handlers.push(BundleHandlers::FlashBots("https://builder0x69.io/".to_string(), FlashBotsRequestParams::default()));
                 bundle_handlers.push(BundleHandlers::FlashBots("https://api.blocknative.com/v1/auction".to_string(), FlashBotsRequestParams::default()));
                 bundle_handlers.push(BundleHandlers::FlashBots("https://api.edennetwork.io/v1/bundle".to_string(), FlashBotsRequestParams::default()));
+                bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.beaverbuild.org/".to_string(), FlashBotsRequestParams::default()));
+                bundle_handlers.push(BundleHandlers::FlashBots("https://eth-builder.com".to_string(), FlashBotsRequestParams::default()));
+                bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.lightspeedbuilder.info/".to_string(), FlashBotsRequestParams::default()));
+                bundle_handlers.push(BundleHandlers::FlashBots("https://api.securerpc.com/v1".to_string(), FlashBotsRequestParams::default()));
+                bundle_handlers.push(BundleHandlers::FlashBots("https://BuildAI.net".to_string(), FlashBotsRequestParams::default()));
+                bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.payload.de".to_string(), FlashBotsRequestParams::default()));
+                bundle_handlers.push(BundleHandlers::FlashBots("https://rsync-builder.xyz/".to_string(), FlashBotsRequestParams::default()));
+                bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.nfactorial.xyz/".to_string(), FlashBotsRequestParams::default()));
                 let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
 
                 let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
-                let provider = ethers_providers::Provider::<Http>::try_from(NODE_URL.clone().to_string()).unwrap();
+                let provider = ethers_providers::Provider::<Ws>::connect(node_url).await.unwrap();
                 let client = Arc::new(
                     SignerMiddleware::new_with_provider_chain(provider.clone(), signer.clone()).await.unwrap());
 

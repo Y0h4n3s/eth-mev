@@ -43,6 +43,7 @@ use uniswap_v3_math::sqrt_price_math::FIXED_POINT_96_RESOLUTION;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
 use tracing::{info, debug, trace, error};
 use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3TickData};
+use crate::node_dispatcher::NodeDispatcher;
 
 const TVL_FILTER_LEVEL: i32 = 1;
 // Todo: add word in here to update and remove middleware use in simulate_swap
@@ -551,15 +552,17 @@ pub struct UniSwapV3 {
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
     subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
     pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>>,
+    nodes: NodeDispatcher
 }
 
 impl UniSwapV3 {
-    pub fn new(metadata: UniswapV3Metadata) -> Self {
+    pub fn new(metadata: UniswapV3Metadata, nodes: NodeDispatcher) -> Self {
         Self {
             metadata,
             pools: Arc::new(RwLock::new(HashMap::new())),
             subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
             pending_subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
+            nodes
         }
     }
 }
@@ -589,11 +592,11 @@ impl LiquidityProvider for UniSwapV3 {
         let metadata = self.metadata.clone();
         let pools = self.pools.clone();
         let factory_address = H160::from_str(&self.metadata.factory_address).unwrap();
-
+        let node_url = self.nodes.next_free();
         tokio::spawn(async move {
             let client = reqwest::Client::new();
             let eth_client = Arc::new(
-                Provider::<Ws>::connect("ws://65.21.198.115:8546")
+                Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap(),
             );
@@ -725,13 +728,15 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
     fn emit(&self) -> std::thread::JoinHandle<()> {
         let pools = self.pools.clone();
         let subscribers = self.subscribers.clone();
+        let node_url = self.nodes.next_free();
+
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             let pools = pools.clone();
             rt.block_on( async move {
                 let mut joins = vec![];
                 let client = Arc::new(
-                    Provider::<Ws>::connect("ws://65.21.198.115:8546")
+                    Provider::<Ws>::connect(&node_url)
                           .await
                           .unwrap(),
                 );
@@ -797,13 +802,15 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
     fn emit(&self) -> std::thread::JoinHandle<()> {
         let pools = self.pools.clone();
         let subscribers = self.pending_subscribers.clone();
+        let node_url = self.nodes.next_free();
+
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             let pools = pools.clone();
 
             rt.block_on(async move {
                 let client = Arc::new(
-                    Provider::<Ws>::connect("ws://65.21.198.115:8546")
+                    Provider::<Ws>::connect(&node_url)
                         .await
                         .unwrap(),
                 );

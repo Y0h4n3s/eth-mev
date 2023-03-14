@@ -146,7 +146,7 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
     0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
     0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
     dup10                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
-    gas
+0x1388 gas sub
     call
 
     iszero iszero cont jumpi
@@ -199,120 +199,93 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
 
 
     0x022c0d9f 0xe0 shl 0x00 mstore
-    dup1 calldataload
+    dup1 calldataload 0xF8 shr                                          // [zeroForOne, stepOffset]
+    dup2 0x1 add calldataload 0x60 shr                                  // [poolAddress, zeroForOne, stepOffset]
+    dup3 0x15 add calldataload 0xF8 shr                                 // [amountSize, poolAddress, zeroForOne, stepOffset]
+    dup4 0x16 add calldataload dup2 0x4 mul 0x100 sub shr               // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
 
+    dup4
     iszero _Zero_Token_out jumpi
+
         0x00 0x04 mstore
-        dup1 0x80 add calldataload 0x24 mstore
-        __Continue_Swap_Call jumpi
+        dup1 0x24 mstore
+
+        __Continue_Swap_Call jump
     _Zero_Token_out:
-        dup1 0x80 add calldataload 0x04 mstore
+
+        dup1 0x04 mstore
         0x00 0x24 mstore
 
     __Continue_Swap_Call:
 
     caller 0x44 mstore
 
+    dup5                                                                    // [stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+
     0x80 0x64 mstore
-    dup1 0x20 add calldataload 0x200 mstore
-    dup1 0xA0 add calldataload                                 // [nextFunction]
-    0x0 eq simple jumpi
 
-    dup1 0xA0 add calldatasize sub                                 // [remainingData, stepOffset]
+    dup1 0x16 add 0x2 dup5 div add calldatasize sub                            // [remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
 
-        dup1                                                         // [remainingData, remainingData, stepOffset]
-        dup1 0x84 mstore
-        dup3 0xA0 add                                        // [stepOffset + dataUsed, remainingData, remainingData, stepOffset]
-        0xA4 calldatacopy                                   // [remainingData, stepOffset]
-        // memory [functionSelector, recipient, zeroForOne, amount, sqrtPrice, dataLocation, data, poolAddress]
-        0x00                                                  // [retSize, stepOffset]
-        0x00                                               // [retOffset, retSize, stepOffset]
-        dup3 0xc4 add                                                // [argSize, retOffset, retSize, stepOffset]
-        0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
-        0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
-        0x200 mload                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
-        0x1388 gas sub
-        call
-        iszero error jumpi stop
+    dup1                                                                // [remainingData, remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup1 0x84 mstore
+    dup3 0x16 add 0x2 dup7 div add                                      // [stepOffset + dataUsed, remainingData, remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
 
-    end jumpi
-
-    simple:                       // [remainingData, stepOffset]
-        // memory [functionSelector, recipient, zeroForOne, amount, sqrtPrice,data, poolAddress]
-        0x00                                                  // [retSize, stepOffset]
-        0x00                                               // [retOffset, retSize, stepOffset]
-        0xc4                                       // [argSize, retOffset, retSize, stepOffset]
-        0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
-        0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
-        0x200 mload                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
-        0x1388 gas sub
-        call
-        iszero error jumpi stop
+    0xA4 calldatacopy                                                   // [remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    0x00                                                  // [retSize, stepOffset]
+    0x00                                               // [retOffset, retSize, stepOffset]
+    dup3 0xc4 add                                                // [argSize, retOffset, retSize, stepOffset]
+    0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
+    0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
+    dup10                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
+    0x1388 gas sub
+    call
+    iszero error jumpi stop
 
 
-    end:
 }
 
 #define macro UV2EXACT_OUT_PAY_TO_SELF() = takes (0) returns (0) {
-
-
     0x022c0d9f 0xe0 shl 0x00 mstore
-    dup1 calldataload
+    dup1 calldataload 0xF8 shr                                          // [zeroForOne, stepOffset]
+    dup2 0x1 add calldataload 0x60 shr                                  // [poolAddress, zeroForOne, stepOffset]
+    dup3 0x15 add calldataload 0xF8 shr                                 // [amountSize, poolAddress, zeroForOne, stepOffset]
+    dup4 0x16 add calldataload dup2 0x4 mul 0x100 sub shr               // [amount, amountSize, poolAddress, zeroForOne, stepOffset]
 
+    dup4
     iszero _Zero_Token_out jumpi
         0x00 0x04 mstore
-        dup1 0x80 add calldataload 0x24 mstore
-        __Continue_Swap_Call jumpi
+        dup1 0x24 mstore
+        __Continue_Swap_Call jump
     _Zero_Token_out:
-        dup1 0x80 add calldataload 0x04 mstore
+        dup1 0x04 mstore
         0x00 0x24 mstore
 
     __Continue_Swap_Call:
 
     address 0x44 mstore
-
+    dup5                                                                    // [stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
     0x80 0x64 mstore
-    dup1 0x20 add calldataload 0x200 mstore
-    dup1 0xA0 add calldataload                                 // [nextFunction]
-    0x0 eq simple jumpi
 
-    dup1 0xA0 add calldatasize sub                                 // [remainingData, stepOffset]
+    dup1 0x16 add 0x2 dup5 div add calldatasize sub                            // [remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
 
-        dup1                                                         // [remainingData, remainingData, stepOffset]
-        dup1 0x84 mstore
-        dup3 0xA0 add                                        // [stepOffset + dataUsed, remainingData, remainingData, stepOffset]
-        0xA4 calldatacopy                                   // [remainingData, stepOffset]
-        // memory [functionSelector, recipient, zeroForOne, amount, sqrtPrice, dataLocation, data, poolAddress]
-        0x00                                                  // [retSize, stepOffset]
-        0x00                                               // [retOffset, retSize, stepOffset]
-        dup3 0xc4 add                                                // [argSize, retOffset, retSize, stepOffset]
-        0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
-        0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
-        0x200 mload                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
-        0x1388 gas sub
-        call
-        iszero error jumpi stop
+    dup1                                                                // [remainingData, remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    dup1 0x84 mstore
+    dup3 0x16 add 0x2 dup7 div add                                      // [stepOffset + dataUsed, remainingData, remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
 
-    end jumpi
+    0xA4 calldatacopy                                                   // [remainingData, stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
+    0x00                                                  // [retSize, stepOffset]
+    0x00                                               // [retOffset, retSize, stepOffset]
+    dup3 0xC4 add                                       // [argSize, retOffset, retSize, stepOffset]
+    0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
+    0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
+    dup10                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
+    0x1388 gas sub
+    call
+    iszero error jumpi stop
 
-    simple:                       // [remainingData, stepOffset]
-        // memory [functionSelector, recipient, zeroForOne, amount, sqrtPrice,data, poolAddress]
-        0x00                                                  // [retSize, stepOffset]
-        0x00                                               // [retOffset, retSize, stepOffset]
-        0xc4                                       // [argSize, retOffset, retSize, stepOffset]
-        0x00                                                // [argOffset, argSize, retOffset, retSize, stepOffset]
-        0x00                                                // [value, argOffset, argSize, retOffset, retSize, stepOffset]
-        0x200 mload                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
-        0x1388 gas sub
-        call
-        iszero error jumpi stop
-
-
-    end:
 }
 
 #define macro V3_CALLBACK() = takes (0) returns (0) {
-stop
     0x84                // data start offset
     0x84 calldataload
     0xE0 shr
@@ -324,12 +297,6 @@ stop
     0xA4 calldataload
     0xE0 shr
     NEXT()
-}
-
-/// @notice Mask bytes to 8 bits
-#define macro MASK_ADDRESS() = takes (1) returns (1) {
-0x00000000000000000000000000000000000000000000000000000000000000ff
-and
 }
 
 #define macro WAGMI() = takes (0) returns (0) {
@@ -352,13 +319,13 @@ and
     stop
     error:
         WAGMI()
-        end jumpi
+        end jump
     v3Callback:
         V3_CALLBACK()
-        end jumpi
+        end jump
 
     v2Callback:
         V2_CALLBACK()
-        end jumpi
+        end jump
     end:
 }

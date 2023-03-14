@@ -11,6 +11,7 @@ pub mod types;
 pub mod uniswap_v2;
 pub mod uniswap_v3;
 pub mod sushiswap;
+pub mod node_dispatcher;
 use crate::events::EventEmitter;
 use crate::uniswap_v2::UniswapV2Metadata;
 use crate::uniswap_v3::UniswapV3Metadata;
@@ -37,6 +38,7 @@ pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
 });
 
 use nom::FindSubstring;
+use crate::node_dispatcher::NodeDispatcher;
 use crate::sushiswap::SushiSwapMetadata;
 
 #[async_trait]
@@ -120,28 +122,28 @@ impl LiquidityProviders {
             _ => panic!("Invalid liquidity provider"),
         }
     }
-    pub fn build(&self) -> BoxedLiquidityProvider {
+    pub fn build(&self, node_providers: NodeDispatcher) -> BoxedLiquidityProvider {
         match self {
             LiquidityProviders::UniswapV2(meta) => {
                 let metadata = UniswapV2Metadata {
                     factory_address: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f".to_string(),
                     ..meta.clone()
                 };
-                Box::new(uniswap_v2::UniSwapV2::new(metadata))
+                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers))
             }
             LiquidityProviders::UniswapV3(meta) => {
                 let metadata = UniswapV3Metadata {
                     factory_address: "0x1F98431c8aD98523631AE4a59f267346ea31F984".to_string(),
                     ..meta.clone()
                 };
-                Box::new(uniswap_v3::UniSwapV3::new(metadata))
+                Box::new(uniswap_v3::UniSwapV3::new(metadata, node_providers))
             }
             LiquidityProviders::SushiSwap(meta) => {
                 let metadata = SushiSwapMetadata {
                     factory_address: "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac".to_string(),
                     ..meta.clone()
                 };
-                Box::new(sushiswap::SushiSwap::new(metadata))
+                Box::new(sushiswap::SushiSwap::new(metadata, node_providers))
             }
             _ => panic!("Invalid liquidity provider"),
         }
@@ -212,7 +214,7 @@ impl PoolInfo for Pool {
 
     fn supports_pre_payment(&self) -> bool {
         match self.provider.id() {
-            LiquidityProviderId::UniswapV2 => true,
+            LiquidityProviderId::UniswapV2 => false,
             LiquidityProviderId::UniswapV3 => false,
             LiquidityProviderId::SushiSwap => false,
         }
@@ -467,13 +469,14 @@ pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>,
     pending_updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>,
+    nodes: NodeDispatcher,
     config: SyncConfig,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
 
     let mut join_handles = vec![];
     let mut amms = vec![];
     for provider in config.providers {
-        let mut amm = provider.build();
+        let mut amm = provider.build(nodes.clone());
         join_handles.push(amm.load_pools(vec![]));
         amm.subscribe(updated_q.clone());
         amm.subscribe(pending_updated_q.clone());

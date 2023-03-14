@@ -64,15 +64,17 @@ pub struct UniSwapV2 {
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
     subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event=PoolUpdateEvent>>>>>>,
     pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>>>>,
+    nodes: NodeDispatcher
 }
 
 impl UniSwapV2 {
-    pub fn new(metadata: UniswapV2Metadata) -> Self {
+    pub fn new(metadata: UniswapV2Metadata, nodes: NodeDispatcher) -> Self {
         Self {
             metadata,
             pools: Arc::new(RwLock::new(HashMap::new())),
             subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
             pending_subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
+            nodes
         }
     }
 }
@@ -102,10 +104,11 @@ impl LiquidityProvider for UniSwapV2 {
         let metadata = self.metadata.clone();
         let pools = self.pools.clone();
         let factory_address = H160::from_str(&self.metadata.factory_address).unwrap();
+        let node_url = self.nodes.next_free();
         tokio::spawn(async move {
             let client = reqwest::Client::new();
             let eth_client = Arc::new(
-                Provider::<Ws>::connect("ws://65.21.198.115:8546")
+                Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap(),
             );
@@ -212,13 +215,16 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
     fn emit(&self) -> std::thread::JoinHandle<()> {
         let pools = self.pools.clone();
         let subscribers = self.subscribers.clone();
+        let node_provider = self.nodes.clone();
+        let node_url = self.nodes.next_free();
+
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             let pls = pools.clone();
             rt.block_on(async move {
                 let mut joins = vec![];
                 let clnt = Arc::new(
-                    Provider::<Ws>::connect("ws://65.21.198.115:8546")
+                    Provider::<Ws>::connect(&node_url)
                         .await
                         .unwrap(),
                 );
@@ -341,6 +347,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
         let pools = self.pools.clone();
         let subscribers = self.pending_subscribers.clone();
         let factory_address = H160::from_str(&self.metadata.factory_address).unwrap();
+        let node_url = self.nodes.next_free();
 
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
@@ -348,7 +355,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
 
             rt.block_on(async move {
                 let client = Arc::new(
-                    Provider::<Ws>::connect("ws://65.21.198.115:8546")
+                    Provider::<Ws>::connect(&node_url)
                         .await
                         .unwrap(),
                 );
@@ -780,6 +787,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
 
 use ethers::abi::AbiDecode;
 use crate::abi::uniswap_v2::get_complete_pool_data_batch_request;
+use crate::node_dispatcher::NodeDispatcher;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct V2ExactInInput {

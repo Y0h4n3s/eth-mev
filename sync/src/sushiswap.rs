@@ -32,6 +32,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace};
 use std::cmp::min;
+use crate::node_dispatcher::NodeDispatcher;
+
 const SUSHISWAP_ROUTER: &str = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F";
 const TVL_FILTER_LEVEL: i32 = 1;
 
@@ -47,15 +49,17 @@ pub struct SushiSwap {
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
     subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
     pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>>,
+    nodes: NodeDispatcher
 }
 
 impl SushiSwap {
-    pub fn new(metadata: SushiSwapMetadata) -> Self {
+    pub fn new(metadata: SushiSwapMetadata, nodes: NodeDispatcher) -> Self {
         Self {
             metadata,
             pools: Arc::new(RwLock::new(HashMap::new())),
             subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
             pending_subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
+            nodes
         }
     }
 }
@@ -84,10 +88,12 @@ impl LiquidityProvider for SushiSwap {
         let metadata = self.metadata.clone();
         let pools = self.pools.clone();
         let factory_address = H160::from_str(&self.metadata.factory_address).unwrap();
+        let node_url = self.nodes.next_free();
+
         tokio::spawn(async move {
             let client = reqwest::Client::new();
             let eth_client = Arc::new(
-                Provider::<Ws>::connect("ws://65.21.198.115:8546")
+                Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap(),
             );
@@ -196,13 +202,15 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
     fn emit(&self) -> std::thread::JoinHandle<()> {
         let pools = self.pools.clone();
         let subscribers = self.subscribers.clone();
+        let node_url = self.nodes.next_free();
+
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             let pls = pools.clone();
             rt.block_on(async move {
                 let mut joins = vec![];
                 let clnt = Arc::new(
-                    Provider::<Ws>::connect("ws://65.21.198.115:8546")
+                    Provider::<Ws>::connect(&node_url)
                         .await
                         .unwrap(),
                 );
@@ -272,6 +280,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
         let pools = self.pools.clone();
         let subscribers = self.pending_subscribers.clone();
         let factory_address = H160::from_str(&self.metadata.factory_address).unwrap();
+        let node_url = self.nodes.next_free();
 
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
@@ -279,7 +288,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
 
             rt.block_on(async move {
                 let client = Arc::new(
-                    Provider::<Ws>::connect("ws://65.21.198.115:8546")
+                    Provider::<Ws>::connect(&node_url)
                         .await
                         .unwrap(),
                 );
