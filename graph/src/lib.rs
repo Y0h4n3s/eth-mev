@@ -265,7 +265,7 @@ DETACH DELETE n",
     let path_lookup1 = Arc::new(RwLock::new(
         HashMap::<Pool, Vec<MevPath>>::new(),
     ));
-        let max_intermidiate_nodes = 4;
+        let max_intermidiate_nodes = 5;
 
         for i in 2..max_intermidiate_nodes {
             info!("Preparing {} step routes ", i);
