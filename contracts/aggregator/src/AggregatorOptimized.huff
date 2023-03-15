@@ -1,26 +1,15 @@
-#include "./Console.huff"
 
-
-#define function uniswapV3ExactOutPayToSelf_1377F03(bytes calldata) view returns ()
-#define function uniswapV3ExactOutPayToSender_A729BB(bytes calldata) view returns ()
-#define function uniswapV2ExactOutPayToSender_31D5F3(bytes calldata) view returns ()
-#define function uniswapV2ExactOutPayToSelf_12BAA3(bytes calldata) view returns ()
-#define function paySender_7437EA(bytes calldata) view returns ()
 #define function transfer(address,uint256) nonpayable returns ()
 
 #define constant OWNER = FREE_STORAGE_POINTER()
 
-#define event by(bytes)
-
 #define macro NEXT() = takes (0) returns (0) {
-
-
-dup1 __FUNC_SIG(uniswapV3ExactOutPayToSelf_1377F03) eq uv3eops jumpi
-dup1 __FUNC_SIG(uniswapV3ExactOutPayToSender_A729BB) eq uv3eopse jumpi
-dup1 __FUNC_SIG(uniswapV2ExactOutPayToSender_31D5F3) eq uv2eopse jumpi
-dup1 __FUNC_SIG(uniswapV2ExactOutPayToSelf_12BAA3) eq uv2eops jumpi
-dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
-
+dup1 0x00000600 eq uv3eops jumpi
+dup1 0x00002000 eq uv3eopse jumpi
+dup1 0x0000000e eq uv2eopse jumpi
+dup1 0x0e000000 eq uv2eops jumpi
+dup1 0x00000080 eq ps jumpi
+dup1 0x00000001 eq wd jumpi
 0x00 0x00 revert
     uv3eops:
         dup2 0x04 add
@@ -45,7 +34,9 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
         dup2 0x04 add
         PAY_SENDER()
         0x00 0x00 return
-
+    wd:
+        WITHDRAW()
+        0x00 0x00 return
 
 }
 
@@ -60,7 +51,7 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
 }
 
 #define macro CONSTRUCTOR() = takes (0) returns (0) {
-    origin
+    caller
     [OWNER]                             // [OWNER, owner]
     sstore                              // []
 
@@ -81,6 +72,39 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
 
     cont:
 
+}
+
+#define macro WITHDRAW() = takes (0) returns (0) {
+    ONLY_OWNER()
+    0x04 calldataload                                                   // [tokenAddress]
+    0x24 calldataload                                                   // [amount, tokenAddress]
+    __FUNC_SIG(transfer)                                                // [sig, amount, tokenAddress]
+
+    0x00 mstore                                                         // [amount, tokenAddress]
+
+
+    // store args in memory
+    // address, uint256
+    caller 0x20 mstore                                                  // [amount, tokenAddress]
+    0x40 mstore                                                         // [tokenAddress]
+
+
+    // make call. return size is zero because we can fetch it after the call
+    0x00                        // [ret_size, stepOffset]
+    dup1                        // [ret_offset, ret_size, stepOffset]
+    0x44                        // [args_size, ret_offset, ret_size, stepOffset]
+    0x1c                        // [args_offset, args_size, ret_offset, ret_size, stepOffset]
+    dup3                        // [value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    dup6                        // [to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    gas                         // [gas, to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    call                        // [successs, stepOffset]
+
+    iszero iszero               // [success, acct_addr, amount, getter_addr]
+    transfer_success jumpi      // [acct_addr, amount, getter_addr]
+    0x00 dup1 revert            // [] - Call failed, revert
+
+    // Resume execution in invoking macro
+    transfer_success:
 }
 
 #define macro PAY_SENDER() = takes (0) returns (0) {
@@ -219,7 +243,7 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
 
     __Continue_Swap_Call:
 
-    caller 0x44 mstore
+    address 0x44 mstore
 
     dup5                                                                    // [stepOffset, amount, amountSize, poolAddress, zeroForOne, stepOffset]
 
@@ -240,6 +264,38 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
     dup10                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
     0x1388 gas sub
     call
+
+    iszero iszero transfer_step jumpi
+    0x00 dup1 revert
+                                                      // [amount, amountSize, tokenAddress, stepOffset]
+
+
+    // store args in memory
+    // address, uint256
+    transfer_step:
+
+    __FUNC_SIG(transfer)                                                // [sig, amount, amountSize, tokenAddress, stepOffset]
+    0x00 mstore
+    caller 0x20 mstore
+    dup4
+    0x40 mstore
+
+
+    0x00                        // [ret_size, stepOffset]
+    dup1                        // [ret_offset, ret_size, stepOffset]
+    0x44                        // [args_size, ret_offset, ret_size, stepOffset]
+    0x1c                        // [args_offset, args_size, ret_offset, ret_size, stepOffset]
+    dup3                        // [value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    dup11                        // [to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    gas                         // [gas, to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    call                        // [successs, stepOffset]
+
+    iszero iszero               // [success, acct_addr, amount, getter_addr]
+    transfer_success jumpi      // [acct_addr, amount, getter_addr]
+    0x00 dup1 revert            // [] - Call failed, revert
+
+    // Resume execution in invoking macro
+    transfer_success:
 
 }
 
@@ -297,9 +353,6 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
     NEXT()
 }
 
-#define macro WAGMI() = takes (0) returns (0) {
-0x03 dup1 revert
-}
 
 #define macro MAIN() = takes (0) returns (0) {
 
@@ -315,9 +368,6 @@ dup1 __FUNC_SIG(paySender_7437EA) eq ps jumpi
 
     NEXT()
     stop
-    error:
-        WAGMI()
-        end jump
     v3Callback:
         V3_CALLBACK()
         end jump

@@ -23,42 +23,42 @@ use ethers::types::transaction::eip2930::AccessList;
 use tracing::{warn, debug, error, info};
 
 const MINIMUM_PATH_LENGTH: usize = 2;
-const UNISWAP_V3_EXACT_OUT_PAY_TO_SENDER: &str = "0000004b";
+const UNISWAP_V3_EXACT_OUT_PAY_TO_SENDER: &str = "00002000";
 const UNISWAP_V3_EXACT_IN_PAY_TO_SENDER: &str = "000000d0";
-const UNISWAP_V3_EXACT_OUT_PAY_TO_SELF: &str = "000000e1";
+const UNISWAP_V3_EXACT_OUT_PAY_TO_SELF: &str = "00000600";
 const UNISWAP_V3_EXACT_IN_PAY_TO_SELF: &str = "000000fc";
 const UNISWAP_V3_EXACT_OUT_PAY_TO_ADDRESS: &str = "000000c9";
 const UNISWAP_V3_EXACT_IN_PAY_TO_ADDRESS: &str = "00000091";
 
-const UNISWAP_V2_EXACT_OUT_PAY_TO_SENDER: &str = "00000015";
+const UNISWAP_V2_EXACT_OUT_PAY_TO_SENDER: &str = "0000000e";
 const UNISWAP_V2_EXACT_IN_PAY_TO_SENDER: &str = "000000cd";
-const UNISWAP_V2_EXACT_OUT_PAY_TO_SELF: &str = "0000003c";
+const UNISWAP_V2_EXACT_OUT_PAY_TO_SELF: &str = "0e000000";
 const UNISWAP_V2_EXACT_IN_PAY_TO_SELF: &str = "00000082";
 const UNISWAP_V2_EXACT_OUT_PAY_TO_ADDRESS: &str = "000000e5";
 const UNISWAP_V2_EXACT_IN_PAY_TO_ADDRESS: &str = "00000059";
 
 const PAY_ADDRESS: &str = "00000081";
-const PAY_SENDER: &str = "000000ea";
+const PAY_SENDER: &str = "00000080";
 
 
 fn hash_to_function_name(hash: &String) -> String {
     match hash.as_str() {
-        "0000004b" => "uniswapV3ExactOutPayToSender_A729BB".to_string(),
+        "00002000" => "uniswapV3ExactOutPayToSender_A729BB".to_string(),
         "000000d0" => "uniswapV3ExactInPayToSender_1993B5C".to_string(),
-        "000000e1" => "uniswapV3ExactOutPayToSelf_1377F03".to_string(),
+        "00000600" => "uniswapV3ExactOutPayToSelf_1377F03".to_string(),
         "000000fc" => "uniswapV3ExactInPayToSelf_A9C0BD".to_string(),
         "000000c9" => "uniswapV3ExactOutPayToAddress_37EB331".to_string(),
         "00000091" => "uniswapV3ExactInPayToAddress_8F71A6".to_string(),
 
-        "00000015" => "uniswapV2ExactOutPayToSender_31D5F3".to_string(),
+        "0000000e" => "uniswapV2ExactOutPayToSender_31D5F3".to_string(),
         "000000cd" => "uniswapV2ExactInPayToSender_120576".to_string(),
-        "0000003c" => "uniswapV2ExactOutPayToSelf_12BAA3".to_string(),
+        "0e000000" => "uniswapV2ExactOutPayToSelf_12BAA3".to_string(),
         "00000082" => "uniswapV2ExactInPayToSelf_FDC770".to_string(),
         "000000e5" => "uniswapV2ExactOutPayToAddress_E0E335".to_string(),
         "00000059" => "uniswapV2ExactInPayToAddress_35CB03".to_string(),
 
         "00000081" => "payAddress_1A718EA".to_string(),
-        "000000ea" => "paySender_7437EA".to_string(),
+        "00000080" => "paySender_7437EA".to_string(),
         _ => "".to_string()
     }
 }
@@ -1033,8 +1033,8 @@ impl MevPath {
 
     fn function_type(function: String) -> String {
         let res = match function.as_str() {
-            "0000004b" | "000000d0" | "00000015" | "000000cd" | "000000ea" => "PayToSender",
-            "000000e1" | "000000fc" | "0000003c" | "00000082" => "PayToSelf",
+            "00002000" | "000000d0" | "0000000e" | "000000cd" | "00000080" => "PayToSender",
+            "00000600" | "000000fc" | "0e000000" | "00000082" => "PayToSelf",
             "000000c9" | "00000091" | "000000e5" | "00000059" | "00000081" => "PayToAddress",
             _ => ""
         };
