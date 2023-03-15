@@ -981,8 +981,6 @@ impl MevPath {
             info!("\n\n\n");
             let mut final_data = "".to_string();
             for ix in instructions[best_route_index].clone() {
-                let end = ix.len() as u8;
-                final_data += &end.encode_hex()[64..];
                 final_data += &ix;
             }
             Ok(PathResult {
@@ -1130,13 +1128,13 @@ impl MevPath {
                         let max_priority_fee = U256::from(data.profit)
                             // .checked_mul(U256::from(10_u128.pow(9)))
                             // .unwrap()
-                            .checked_div(gas).unwrap();
+                            .checked_div(U256::from(400000)).unwrap();
                         let tx_request = Eip1559TransactionRequest {
                             // update later
                             to: None,
                             // update later
                             from: None,
-                            data: Some(tx_data),
+                            data: Some(ethers::types::Bytes::from_str(&data.ix_data).unwrap()),
                             chain_id: Some(U64::from(1)),
                             max_priority_fee_per_gas: Some(max_priority_fee),
                             // update later

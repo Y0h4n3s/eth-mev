@@ -40,7 +40,7 @@ use std::cmp::min;
 use itertools::Itertools;
 const UNISWAP_V2_ROUTER: &str = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d";
 pub(crate) const UNISWAP_UNIVERSAL_ROUTER: &str = "0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B";
-const TVL_FILTER_LEVEL: i32 = 3;
+const TVL_FILTER_LEVEL: i32 = 2;
 
 #[derive(Serialize, Deserialize,Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV2Metadata {
@@ -122,7 +122,7 @@ impl LiquidityProvider for UniSwapV2 {
             let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
-            for i in (pairs_length.as_usize()-80000..pairs_length.as_usize()).step_by(step) {
+            for i in (0..pairs_length.as_usize()).step_by(step) {
                 let mut w = indices.lock().await;
                 w.push_back((i, min(i + step, pairs_length.as_usize() - 1)));
             }

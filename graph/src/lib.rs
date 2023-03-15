@@ -7,6 +7,7 @@
 
 
 pub mod mev_path;
+pub mod backrun;
 use ethers::types::Transaction;
 use async_std::sync::Arc;
 use bb8_bolt::bolt_client::Params;
@@ -265,7 +266,7 @@ DETACH DELETE n",
     let path_lookup1 = Arc::new(RwLock::new(
         HashMap::<Pool, Vec<MevPath>>::new(),
     ));
-        let max_intermidiate_nodes = 6;
+        let max_intermidiate_nodes = 5;
 
         for i in 2..max_intermidiate_nodes {
             info!("Preparing {} step routes ", i);
@@ -513,11 +514,12 @@ DETACH DELETE n",
                 };
 
                 let mut updated = market_routes.into_par_iter().map(|mut route| {
-                    let transactions = route.get_transactions();
-                    transactions
+                    // let transactions = route.get_transactions();
+                    // transactions
+                    vec![]
                 }).flatten().collect::<Vec<Eip1559TransactionRequest>>();
 
-                single_routes.send(updated).await;
+                // single_routes.send(updated).await;
 
 
             }

@@ -57,7 +57,7 @@ static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
 });
 
 static CONTRACT_ADDRESS: Lazy<Address> = Lazy::new(|| {
-    Address::from_str(&std::env::var("ETH_CONTRACT_ADDRESS").unwrap_or_else(|_| std::env::args().nth(6).unwrap_or("0x3fDaA7c06379981c879F7a9617470215f808368F".to_string()))).unwrap()
+    Address::from_str(&std::env::var("ETH_CONTRACT_ADDRESS").unwrap_or_else(|_| std::env::args().nth(6).unwrap_or("0x46B2f7B9a13072BDA6F91EDE396Ff8AF493c6cD4".to_string()))).unwrap()
 });
 
 static NODE_URL: Lazy<Url> = Lazy::new(|| {
@@ -166,26 +166,29 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
     let cores = num_cpus::get();
 
     for i in 0..cores {
+        let mut bundle_handlers = vec![];
+        bundle_handlers.push(BundleHandlers::FlashBots("https://relay.flashbots.net".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://builder0x69.io/".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://api.blocknative.com/v1/auction".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://api.edennetwork.io/v1/bundle".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.beaverbuild.org/".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://eth-builder.com".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.lightspeedbuilder.info/".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://api.securerpc.com/v1".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://BuildAI.net".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.payload.de".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://rsync-builder.xyz/".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.nfactorial.xyz/".to_string(), FlashBotsRequestParams::default()));
 
         // backruns
         let routes = rts.clone();
         let node_url = nodes.next_free();
+        let handlers = bundle_handlers.clone();
+
         workers.push(std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
+            let bundle_handlers = handlers;
             rt.block_on(async move {
-                let mut bundle_handlers = vec![];
-                bundle_handlers.push(BundleHandlers::FlashBots("https://relay.flashbots.net".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://builder0x69.io/".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://api.blocknative.com/v1/auction".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://api.edennetwork.io/v1/bundle".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.beaverbuild.org/".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://eth-builder.com".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.lightspeedbuilder.info/".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://api.securerpc.com/v1".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://BuildAI.net".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.payload.de".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://rsync-builder.xyz/".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.nfactorial.xyz/".to_string(), FlashBotsRequestParams::default()));
                 let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
 
                 let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
@@ -222,20 +225,12 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
                             let mut w = block_update.write().await;
                             *w = b;
                         } else {
-                            println!("transactor > Error getting block number", );
+                            info!("transactor > Error getting block number", );
                         }
                         tokio::time::sleep(Duration::from_millis(200)).await;
                     }
                 }));
 
-                let flashbots_client = Arc::new(SignerMiddleware::new(
-                    FlashbotsMiddleware::new(
-                        provider.clone(),
-                        Url::parse("https://relay.flashbots.net").unwrap(),
-                        bundle_signer.clone(),
-                    ),
-                    signer.clone(),
-                ));
                 let signer = Arc::new(signer);
 
 
@@ -250,7 +245,6 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
                         let block = block.clone();
                         let signer = signer.clone();
                         let client = client.clone();
-                        let flashbots_client = flashbots_client.clone();
                         let mut handler = handler.clone();
                         handles.push(tokio::runtime::Handle::current().spawn(async move {
                             let mut tx_request = order;
@@ -259,7 +253,7 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
                             let n = nonce_num.read().await;
                             let blk = block.read().await;
                             let base_fee = blk.base_fee_per_gas.unwrap();
-                            tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee/*.saturating_add(base_fee.checked_div(U256::from(2)).unwrap())*/).min(U256::from(3).checked_mul(base_fee).unwrap()));
+                            tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee).min(U256::from(30000000000 as u128)));
                             tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
                             tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                             let blk = blk.number.unwrap().as_u64();
@@ -284,7 +278,7 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
                             handler.set_txs(bundle);
                             warn!("Trying {}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                            FlashBotsBundleHandler::submit(handler, blk, blk + 1).await;
+                            FlashBotsBundleHandler::simulate(handler, blk).await;
                             let mut bundle_request = BundleRequest::new();
 
 
@@ -303,12 +297,8 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
         let routes = rt.clone();
         workers.push(std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
+
             rt.block_on(async move {
-                let mut bundle_handlers = vec![];
-                bundle_handlers.push(BundleHandlers::FlashBots("https://relay.flashbots.net".to_string(), FlashBotsRequestParams::default()));
-                // bundle_handlers.push(BundleHandlers::FlashBots("https://eth-builder.com".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://api.blocknative.com/v1/auction".to_string(), FlashBotsRequestParams::default()));
-                bundle_handlers.push(BundleHandlers::FlashBots("https://api.edennetwork.io/v1/bundle".to_string(), FlashBotsRequestParams::default()));
                 let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
 
                 let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
@@ -351,14 +341,6 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
                     }
                 }));
 
-                let flashbots_client = Arc::new(SignerMiddleware::new(
-                    FlashbotsMiddleware::new(
-                        provider.clone(),
-                        Url::parse("https://relay.flashbots.net").unwrap(),
-                        bundle_signer.clone(),
-                    ),
-                    signer.clone(),
-                ));
                 let signer = Arc::new(signer);
 
 
@@ -373,7 +355,6 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
                             let block = block.clone();
                             let signer = signer.clone();
                             let client = client.clone();
-                            let flashbots_client = flashbots_client.clone();
                             let mut handler = handler.clone();
                             handles.push(tokio::runtime::Handle::current().spawn(async move {
                                 let mut tx_request = order;
@@ -382,7 +363,7 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
                                 let n = nonce_num.read().await;
                                 let blk = block.read().await;
                                 let base_fee = blk.base_fee_per_gas.unwrap();
-                                tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee/*.saturating_add(base_fee.checked_div(U256::from(2)).unwrap())*/).min(U256::from(3).checked_mul(base_fee).unwrap()));
+                                tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee).min(U256::from(30000000000 as u128)));
                                 tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
                                 tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                                 let blk = blk.number.unwrap().as_u64();
@@ -406,7 +387,7 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559Transactio
                                 handler.set_txs(bundle);
                                 warn!("Trying {}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                                FlashBotsBundleHandler::submit(handler, blk, blk + 1).await;
+                                FlashBotsBundleHandler::simulate(handler, blk).await;
                             }));
                     }
                 }
@@ -507,7 +488,7 @@ impl FlashBotsBundleHandler {
                 }
             };
 
-            debug!("REquest: {}", serde_json::to_string(&request).unwrap());
+            debug!("Request: {}", serde_json::to_string(&request).unwrap());
             let signature = bundle_signer
                 .sign_message(format!(
                     "0x{:x}",
@@ -587,7 +568,7 @@ impl FlashBotsBundleHandler {
 
             match req.send().await {
                 Ok(res) => {
-                    debug!("Sim ResponseMeta: {:?}", res);
+                    warn!("Sim ResponseMeta: {:?}", res);
                     warn!("Sim Response: {:?}", res.text().await)
                 } Err(e) => {
                     error!("Flashbots Sim Relay Error: {:?}", e)
