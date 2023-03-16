@@ -267,8 +267,10 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                             let n = nonce_num.read().await;
                             let blk = block.read().await;
                             let max_fee = opportunity.profit / gas_cost;
+                            let balance = U256::from(12000000);
+                            let max_possible_fee = balance / gas_cost;
                             let base_fee = blk.base_fee_per_gas.unwrap();
-                            tx_request.max_fee_per_gas = Some(max_fee.max(base_fee));
+                            tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
                             tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
                             tx_request.gas = Some(gas_cost);
                             tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
@@ -382,8 +384,10 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                                 let n = nonce_num.read().await;
                                 let blk = block.read().await;
                                 let max_fee = opportunity.profit / gas_cost;
+                                let balance = U256::from(12000000);
+                                let max_possible_fee = balance / gas_cost;
                                 let base_fee = blk.base_fee_per_gas.unwrap();
-                                tx_request.max_fee_per_gas = Some(max_fee.max(base_fee));
+                                tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
                                 tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
                                 tx_request.gas = Some(gas_cost);
                                 tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
