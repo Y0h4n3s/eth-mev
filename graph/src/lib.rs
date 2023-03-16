@@ -588,7 +588,7 @@ DETACH DELETE n",
         let updated_market_event = updated_q.recv().await.unwrap();
         let event = updated_market_event.get_event();
         let mut updated_market = event.pool;
-        for (_, market_routes) in path_lookup1.write().await.iter_mut().find(|(key, _value)| {
+        if let Some((_, market_routes)) =  path_lookup1.write().await.iter_mut().find(|(key, _value)| {
             updated_market.address == key.address
         }) {
             for mut route in market_routes.iter_mut() {

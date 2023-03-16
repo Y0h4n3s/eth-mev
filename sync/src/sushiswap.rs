@@ -102,7 +102,7 @@ impl LiquidityProvider for SushiSwap {
             let pairs_length: U256 = factory.all_pairs_length().call().await.unwrap();
             let step = 766;
             let cores = num_cpus::get();
-            let permits = Arc::new(Semaphore::new(cores));
+            let permits = Arc::new(Semaphore::new(cores*2));
             let mut pairs = Arc::new(RwLock::new(Vec::<crate::uniswap_v2::UniswapV2Metadata>::new()));
             let mut indices: Arc<Mutex<VecDeque<(usize, usize)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));

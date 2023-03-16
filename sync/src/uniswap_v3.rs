@@ -598,7 +598,7 @@ impl LiquidityProvider for UniSwapV3 {
             let mut handles = vec![];
 
             let cores = num_cpus::get();
-            let permits = Arc::new(Semaphore::new(cores));
+            let permits = Arc::new(Semaphore::new(cores*2));
             let mut indices: Arc<Mutex<VecDeque<(u64, u64)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
