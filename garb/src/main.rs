@@ -279,7 +279,7 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                             drop(blk);
 
                             // profit doesn't cover tx_fees
-                            if tx_request.max_fee_per_gas.unwrap() == base_fee {
+                            if tx_request.max_fee_per_gas.unwrap() <= base_fee {
                                 warn!("Skipping {}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
                                 return
                             }
@@ -396,7 +396,7 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                                 drop(blk);
 
                                 // profit doesn't cover tx_fees
-                                if tx_request.max_fee_per_gas.unwrap() == base_fee {
+                                if tx_request.max_fee_per_gas.unwrap() <= base_fee {
                                     warn!("Skipping {}. ->  {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
                                     return
                                 }

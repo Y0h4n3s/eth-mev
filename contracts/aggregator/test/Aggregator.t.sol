@@ -87,9 +87,10 @@ contract AggregatorTest is Test {
 
     function test_SushiSwapExactOutPayToSelf_SushiSwapExactOutPayToSender_SushiSwapExactOutPayToSender_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_PaybackPayToSender() public {
 
-        bytes memory data = hex"0e000000015022fc362a2cf9ae666d7c1e4bfda1452e8e888e0201";
-        vm.expectRevert();
-        address(agg).call(data);
+        bytes memory data = hex"0e00000001c3d03e4f041fd4cd388c549ee2a29a9e5075882f10068155a43676e000000020000098c8be139d73ac27bd96a0be97f0abf17efcad45122b4d876f66ffa1d5dc0000000e0088c095c8ba2c7a1353cf3d21e692c5d4d0f90793121dc3acb1eb455e4f0a0000000e010d4a11d5eeaac28ec3f61d100daf4d40471f185208286cb1c700000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc21005e2503afa851651";
+//        vm.expectRevert();
+        (bool success, bytes memory res) = address(agg).call(data);
+        require(success);
     }
 
 

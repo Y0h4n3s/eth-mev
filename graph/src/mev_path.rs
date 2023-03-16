@@ -996,7 +996,8 @@ impl MevPath {
         builder += &(title + "() public {\n");
         builder += &format!("\n\tbytes memory data = hex\"{}\";", final_data);
         builder += "\n\tvm.expectRevert();";
-        builder += &format!("\n\taddress(agg).call(data);\n}}");
+        builder += &format!("\n\t(bool success, bytes memory res) = address(agg).call(data);");
+        builder += &format!("\n\trequire(success);\n}}");
         builder
     }
 

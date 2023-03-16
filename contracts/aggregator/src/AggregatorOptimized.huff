@@ -10,7 +10,7 @@ dup1 0x0000000e eq uv2eopse jumpi
 dup1 0x0e000000 eq uv2eops jumpi
 dup1 0x00000080 eq ps jumpi
 dup1 0x00000001 eq wd jumpi
-0x00 0x00 revert
+err jump
     uv3eops:
         dup2 0x04 add
         UV3EXACT_OUT_PAY_TO_SELF()
@@ -101,7 +101,7 @@ dup1 0x00000001 eq wd jumpi
 
     iszero iszero               // [success, acct_addr, amount, getter_addr]
     transfer_success jumpi      // [acct_addr, amount, getter_addr]
-    0x00 dup1 revert            // [] - Call failed, revert
+    err jump
 
     // Resume execution in invoking macro
     transfer_success:
@@ -130,9 +130,9 @@ dup1 0x00000001 eq wd jumpi
     gas                         // [gas, to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
     call                        // [successs, stepOffset]
 
-    iszero iszero               // [success, acct_addr, amount, getter_addr]
-    transfer_success jumpi      // [acct_addr, amount, getter_addr]
-    0x00 dup1 revert            // [] - Call failed, revert
+    iszero iszero
+    transfer_success jumpi
+    err jump
 
     // Resume execution in invoking macro
     transfer_success:
@@ -177,7 +177,12 @@ dup1 0x00000001 eq wd jumpi
     dup10                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
     0x1388 gas sub
     call
+    iszero iszero
+    uv3eops_success jumpi
+    err jump
 
+    // Resume execution in invoking macro
+    uv3eops_success:
 
 }
 #define macro UV3EXACT_OUT_PAY_TO_SENDER() = takes (0) returns (0) {
@@ -215,7 +220,12 @@ dup1 0x00000001 eq wd jumpi
     dup10                                          // [to, argOffset, argSize, retOffset, retSize, stepOffset]
     gas
     call
+    iszero iszero
+    uv3eopse_success jumpi
+    err jump
 
+    // Resume execution in invoking macro
+    uv3eopse_success:
 
 
 }
@@ -265,8 +275,10 @@ dup1 0x00000001 eq wd jumpi
     0x1388 gas sub
     call
 
+
+
     iszero iszero transfer_step jumpi
-    0x00 dup1 revert
+    err jump
                                                       // [amount, amountSize, tokenAddress, stepOffset]
 
 
@@ -290,12 +302,13 @@ dup1 0x00000001 eq wd jumpi
     gas                         // [gas, to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
     call                        // [successs, stepOffset]
 
-    iszero iszero               // [success, acct_addr, amount, getter_addr]
-    transfer_success jumpi      // [acct_addr, amount, getter_addr]
-    0x00 dup1 revert            // [] - Call failed, revert
+    iszero iszero
+    uv2eopse_success jumpi
+    err jump
 
     // Resume execution in invoking macro
-    transfer_success:
+    uv2eopse_success:
+
 
 }
 
@@ -337,6 +350,12 @@ dup1 0x00000001 eq wd jumpi
     0x1388 gas sub
     call
 
+    iszero iszero
+    uv2eops_success jumpi
+    err jump
+    // Resume execution in invoking macro
+    uv2eops_success:
+
 }
 
 #define macro V3_CALLBACK() = takes (0) returns (0) {
@@ -353,7 +372,9 @@ dup1 0x00000001 eq wd jumpi
     NEXT()
 }
 
-
+#define macro REVERT() = takes(0) returns (0) {
+    0x00 0x00 revert
+}
 #define macro MAIN() = takes (0) returns (0) {
 
 
@@ -375,5 +396,9 @@ dup1 0x00000001 eq wd jumpi
     v2Callback:
         V2_CALLBACK()
         end jump
+
+    err:
+        REVERT()
+        stop
     end:
 }
