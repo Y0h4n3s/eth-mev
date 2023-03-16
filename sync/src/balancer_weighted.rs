@@ -10,7 +10,7 @@
 use crate::abi::{uniswap_v3::SwapFilter,IERC20};
 use crate::types::UniSwapV3Pool;
 use crate::types::UniSwapV3Token;
-use crate::{LiquidityProviderId, Meta, PoolUpdateEvent, UniswapV3Calculator};
+use crate::{abi, LiquidityProviderId, Meta, PoolUpdateEvent, UniswapV3Calculator};
 use crate::{Curve, LiquidityProvider, LiquidityProviders};
 use crate::PendingPoolUpdateEvent;
 use crate::{EventEmitter, EventSource, Pool};
@@ -30,7 +30,7 @@ use ethers_providers::Ws;
 use kanal::AsyncSender;
 use num_bigfloat::BigFloat;
 use reqwest;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Deserializer};
 use serde_json::json;
 use std::collections::HashMap;
 use ethers::core::utils::ParseUnits;
@@ -50,33 +50,46 @@ use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v
 use crate::node_dispatcher::NodeDispatcher;
 
 
+fn from_float_str<'de, D>(deserializer: D) -> Result<U256, D::Error>
+    where
+        D: Deserializer<'de>,
+{
+    let s: &str = Deserialize::deserialize(deserializer)?;
+    let float = s.parse::<f64>().unwrap_or(0.0) * 10_f64.powf(9.0);
+    let uint = U256::from(float as u128);
+    Ok(uint * U256::from(10).pow(U256::from(9)))
 
+}
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
+pub struct BalancerWeightedPoolToken {
+    pub address: String,
+    #[serde(deserialize_with = "from_float_str")]
+    pub weight: U256,
+    pub decimals: u8,
+    #[serde(deserialize_with = "from_float_str")]
+    pub balance: U256,
+}
 
+#[serde(rename_all = "camelCase")]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
+pub struct FileBalancerWeigtedMetadata {
+    pub id: String,
+    #[serde(deserialize_with = "from_float_str")]
+    pub swap_fee: U256,
+    pub address: String,
+    pub tokens: Vec<BalancerWeightedPoolToken>,
+}
 
-
-
-const DEPLOYMENT_BLOCK: u64 = 12272147;
-
-pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256(
-    [131, 164, 143, 188, 252, 153, 19, 53, 49, 78, 116, 208, 73, 106, 171, 106, 25, 135, 233, 146, 221, 200, 93, 221, 188, 196, 214, 221, 110, 242, 233, 252]
-);
-
-const TVL_FILTER_LEVEL: i32 = 1;
-// Todo: add word in here to update and remove middleware use in simulate_swap
+#[serde(rename_all = "camelCase")]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct BalancerWeigtedMetadata {
+    pub id: String,
     pub factory_address: String,
+    #[serde(deserialize_with = "from_float_str")]
+    pub swap_fee: U256,
     pub address: String,
-    pub tokens: Vec<String>,
-    pub weights: Vec<u64>,
-    pub token_a: String,
-    pub token_b: String,
-    pub token_a_amount: U256,
-    pub token_b_amount: U256,
-    pub token_a_decimals: u8,
-    pub token_b_decimals: u8,
-    pub fee: u32,
+    pub tokens: Vec<BalancerWeightedPoolToken>,
 }
 
 impl Meta for BalancerWeigtedMetadata {
@@ -118,130 +131,80 @@ impl LiquidityProvider for BalancerWeighted {
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()> {
         let metadata = self.metadata.clone();
         let pools = self.pools.clone();
-        let factory_address = H160::from_str(&self.metadata.factory_address).unwrap();
+        let factory_address = self.metadata.factory_address.clone();
         let node_url = self.nodes.next_free();
         tokio::spawn(async move {
-            let client = reqwest::Client::new();
+            let file_pools = std::fs::read_to_string("balancer_weighted.json").unwrap();
             let eth_client = Arc::new(
                 Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap(),
             );
-            let current_block = eth_client.get_block_number().await.unwrap().0[0];
-
-            let step = 100000_u64;
-            let mut handles = vec![];
-
-            let cores = num_cpus::get();
-            let permits = Arc::new(Semaphore::new(cores));
-            let mut indices: Arc<Mutex<VecDeque<(u64, u64)>>> =
-                Arc::new(Mutex::new(VecDeque::new()));
-
-            for i in (DEPLOYMENT_BLOCK..current_block).step_by(step as usize) {
-                let mut w = indices.lock().await;
-                w.push_back((i, i + step));
-            }
-
-            loop {
-                let permit = permits.clone().acquire_owned().await.unwrap();
-                let mut w = indices.lock().await;
-                if w.len() == 0 {
-                    break;
+            let pairs_data: Vec<FileBalancerWeigtedMetadata> = serde_json::from_str(&file_pools).unwrap();
+            let meta_data = pairs_data.iter().cloned().map(|data| {
+                BalancerWeigtedMetadata {
+                    id: data.id,
+                    factory_address: factory_address.clone(),
+                    swap_fee: data.swap_fee,
+                    address: data.address,
+                    tokens: data.tokens,
                 }
-                let span = w.pop_back();
-                drop(w);
+            }).collect::<Vec<BalancerWeigtedMetadata>>();
 
-                if let Some((from_block, to_block)) = span {
-                    let eth_client = eth_client.clone();
-                    let filter_tokens = filter_tokens.clone();
-                    let pools = pools.clone();
-                    handles.push(tokio::spawn(async move {
-                        if let Ok(logs) = eth_client
-                            .get_logs(
-                                &ethers::types::Filter::new()
-                                    .topic0(ValueOrArray::Value(POOL_CREATED_EVENT_SIGNATURE))
-                                    .address(factory_address)
-                                    .from_block(BlockNumber::Number(ethers::types::U64([
-                                        from_block,
-                                    ])))
-                                    .to_block(BlockNumber::Number(ethers::types::U64([to_block]))),
-                            )
-                            .await
-                        {
-                            for chunk in logs
-                                .iter()
-                                .filter_map(|log| {
-                                    let tokens = ethers::abi::decode(
-                                        &[ParamType::Address],
-                                        &log.data,
-                                    )
-                                        .unwrap();
-                                    match tokens.get(0).unwrap() {
-                                        Token::Address(addr) => Some(addr.clone()),
-                                        _ => Default::default(),
-                                    }
-                                })
-                                .collect::<Vec<H160>>()
-                                .as_slice()
-                                .chunks(9)
-                            {
-                                info!("{:?}", chunk);
 
-                                let pairs_data =
-                                    crate::abi::uniswap_v3::get_complete_pool_data_batch_request(
-                                        chunk.to_vec(),
-                                        eth_client.clone(),
-                                    )
-                                        .await;
-                                if let Ok(mut pairs_data) = pairs_data {
+            for chunk in meta_data.chunks(68) {
+                if let Ok(balances) = abi::balancer::get_complete_pool_data_batch_request(chunk.to_vec(), eth_client.clone()).await {
+                    for status in balances {
 
-                                    for meta in pairs_data {
-                                        let min_0 = U256::from(10).pow(U256::from(meta.token_a_decimals as i32 + TVL_FILTER_LEVEL));
-                                        let min_1 = U256::from(10).pow(U256::from(meta.token_b_decimals as i32 + TVL_FILTER_LEVEL));
-                                        if meta.token_a_amount.lt(&min_0) || meta.token_b_amount.lt(&min_1)  {
-                                            continue;
-                                        }
-                                        let pool = Pool {
-                                            address: meta.address.clone(),
-                                            x_address: meta.token_a.clone(),
-                                            fee_bps: meta.fee as u64,
-                                            y_address: meta.token_b.clone(),
-                                            curve: None,
-                                            curve_type: Curve::Uncorrelated,
-                                            x_amount: meta.token_a_amount,
-                                            y_amount: meta.token_b_amount,
-                                            x_to_y: true,
-                                            provider: LiquidityProviders::UniswapV3(meta),
-                                        };
-
-                                        let mut w = pools.write().await;
-                                        w.insert(pool.address.clone(), pool);
-                                    }
-                                } else {
-                                    info!("{:?}", pairs_data.unwrap_err())
-                                }
-                            }
-                        } else {
-                            error!("No pools")
+                        let data = pairs_data.iter().find(|d| d.id == status.id).unwrap().clone();
+                        let mut tokens = vec![];
+                        for i in 0..status.tokens.len() {
+                            let mut existing = data.tokens.iter().find(|t| t.address == status.tokens[i]).unwrap().clone();
+                            existing.balance = status.balances[i];
+                            tokens.push(existing.clone());
                         }
-                        drop(permit);
-                    }));
+                        let meta = BalancerWeigtedMetadata {
+                            id: data.id,
+                            factory_address: factory_address.clone(),
+                            swap_fee: data.swap_fee,
+                            address: data.address,
+                            tokens: tokens,
+                        };
+
+
+                        let pool = Pool {
+                            address: meta.address.clone(),
+                            x_address: meta.tokens.first().unwrap().address.clone(),
+                            fee_bps: 0,
+                            y_address: meta.tokens.last().unwrap().address.clone(),
+                            curve: None,
+                            curve_type: Curve::Uncorrelated,
+                            x_amount: U256::zero(),
+                            y_amount: U256::zero(),
+                            x_to_y: true,
+                            provider: LiquidityProviders::BalancerWeighted(meta),
+                        };
+
+                        let mut w = pools.write().await;
+                        w.insert(pool.address.clone(), pool);
+                    }
+                } else {
+                    error!("Error loading BalancerWeighted Pool balances");
                 }
+
             }
-            for handle in handles {
-                handle.await;
-            }
+
 
 
             info!(
                 "{:?} Pools: {}",
-                LiquidityProviderId::UniswapV3,
+                LiquidityProviderId::BalancerWeighted,
                 pools.read().await.len()
             );
         })
     }
     fn get_id(&self) -> LiquidityProviderId {
-        LiquidityProviderId::UniswapV3
+        LiquidityProviderId::BalancerWeighted
     }
 }
 fn hex_to_address_string(hex: String) -> String {

@@ -56,7 +56,7 @@ use garb_graph_eth::single_arb::ArbPath;
 use garb_sync_eth::node_dispatcher::NodeDispatcher;
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
-    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2,3".to_string()))
+    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("4".to_string()))
         .split(",")
         .map(|i| LiquidityProviders::from(i))
         .collect()
@@ -78,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
         // will be written to stdout.
-        .with_max_level(tracing::Level::WARN)
+        .with_max_level(tracing::Level::INFO)
         // completes the builder.
         .finish();
 
@@ -172,8 +172,9 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
 pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::AsyncReceiver<Vec<ArbPath>>, nodes: NodeDispatcher) -> anyhow::Result<()> {
     let mut workers = vec![];
     let cores = num_cpus::get();
-
-
+    let n = Arc::new(tokio::sync::RwLock::new(U256::from(0)));
+    let b: Arc<tokio::sync::RwLock<Block<H256>>> = Arc::new(tokio::sync::RwLock::new(Block::default()));
+    let update_started = Arc::new(tokio::sync::RwLock::new(false));
     for i in 0..cores {
         let mut bundle_handlers = vec![];
         bundle_handlers.push(BundleHandlers::FlashBots("https://relay.flashbots.net".to_string(), FlashBotsRequestParams::default()));
@@ -194,6 +195,9 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
         let node_url = nodes.next_free();
         let handlers = bundle_handlers.clone();
 
+        let nonce = n.clone();
+        let block = b.clone();
+        let update_started = update_started.clone();
         workers.push(std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             let bundle_handlers = handlers;
@@ -214,31 +218,38 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                 let nonce_update = nonce.clone();
                 let ap = client.clone();
 
-                join_handles.push(tokio::runtime::Handle::current().spawn(async move {
-                    // keep updating nonce
-                    loop {
-                        if let Ok(n) = ap.get_transaction_count(signer_wallet_address, None).await {
-                            let mut w = nonce_update.write().await;
-                            *w = n;
+                if !*update_started.read().await {
+                    let mut w = update_started.write().await;
+                    *w = true;
+                    drop(w);
+                    join_handles.push(tokio::runtime::Handle::current().spawn(async move {
+                        // keep updating nonce
+                        loop {
+                            if let Ok(n) = ap.get_transaction_count(signer_wallet_address, None).await {
+                                let mut w = nonce_update.write().await;
+                                *w = n;
+                            }
+                            tokio::time::sleep(Duration::from_millis(100)).await;
                         }
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                    }
-                }));
-                let block_update = block.clone();
-                let ap = client.clone();
+                    }));
+                    let block_update = block.clone();
+                    let ap = client.clone();
 
-                join_handles.push(tokio::runtime::Handle::current().spawn(async move {
-                    // keep updating nonce
-                    loop {
-                        if let Ok(Some(b)) = ap.get_block(BlockId::Number(BlockNumber::Latest)).await {
-                            let mut w = block_update.write().await;
-                            *w = b;
-                        } else {
-                            info!("transactor > Error getting block number", );
+                    join_handles.push(tokio::runtime::Handle::current().spawn(async move {
+                        // keep updating nonce
+                        loop {
+                            if let Ok(Some(b)) = ap.get_block(BlockId::Number(BlockNumber::Latest)).await {
+                                let mut w = block_update.write().await;
+                                *w = b;
+                            } else {
+                                info!("transactor > Error getting block number", );
+                            }
+                            tokio::time::sleep(Duration::from_millis(100)).await;
                         }
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                    }
-                }));
+                    }));
+
+                }
+
 
                 let signer = Arc::new(signer);
 
@@ -314,6 +325,8 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
         // single transaction
         let routes = rt.clone();
 
+        let nonce = n.clone();
+        let block = b.clone();
         workers.push(std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
 
@@ -326,39 +339,11 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                     SignerMiddleware::new_with_provider_chain(provider.clone(), signer.clone()).await.unwrap());
 
 
-                let nonce = Arc::new(tokio::sync::RwLock::new(U256::from(0)));
-                let block = Arc::new(tokio::sync::RwLock::new(Block::default()));
-                let mut join_handles = vec![];
 
                 let signer_wallet_address = signer.address();
                 let nonce_update = nonce.clone();
                 let ap = client.clone();
 
-                join_handles.push(tokio::runtime::Handle::current().spawn(async move {
-                    // keep updating nonce
-                    loop {
-                        if let Ok(n) = ap.get_transaction_count(signer_wallet_address, None).await {
-                            let mut w = nonce_update.write().await;
-                            *w = n;
-                        }
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                    }
-                }));
-                let block_update = block.clone();
-                let ap = client.clone();
-
-                join_handles.push(tokio::runtime::Handle::current().spawn(async move {
-                    // keep updating nonce
-                    loop {
-                        if let Ok(Some(b)) = ap.get_block(BlockId::Number(BlockNumber::Latest)).await {
-                            let mut w = block_update.write().await;
-                            *w = b;
-                        } else {
-                            println!("transactor > Error getting block number", );
-                        }
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                    }
-                }));
 
                 let signer = Arc::new(signer);
 
@@ -419,9 +404,7 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                     futures::future::join_all(handles).await;
 
                 }
-                for task in join_handles {
-                    task.await.unwrap();
-                }
+
             });
         }));
     }

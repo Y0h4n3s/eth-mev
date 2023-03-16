@@ -4,6 +4,7 @@
 #![allow(missing_docs)]
 pub mod uniswap_v2;
 pub mod uniswap_v3;
+pub mod balancer;
 use ethers::{abi::AbiDecode, prelude::{Bytes, abigen}};
 
 abigen!(UniswapV2Pair, "src/abi/IUniswapV2Pair.json");
