@@ -7,6 +7,7 @@ pub mod uniswap_v3;
 pub mod balancer;
 use ethers::{abi::AbiDecode, prelude::{Bytes, abigen}};
 
+abigen!(Vault, "src/abi/IVault.json");
 abigen!(UniswapV2Pair, "src/abi/IUniswapV2Pair.json");
 abigen!(UniswapV2Router02, "src/abi/IUniswapV2Router02.json");
 abigen!(UniswapV2Factory, "src/abi/IUniswapV2Factory.json");

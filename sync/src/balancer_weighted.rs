@@ -155,7 +155,10 @@ impl LiquidityProvider for BalancerWeighted {
             for chunk in meta_data.chunks(68) {
                 if let Ok(balances) = abi::balancer::get_complete_pool_data_batch_request(chunk.to_vec(), eth_client.clone()).await {
                     for status in balances {
-
+                        // skip pools with > 2 tokens for now
+                        if status.tokens.len() > 2 {
+                            continue;
+                        }
                         let data = pairs_data.iter().find(|d| d.id == status.id).unwrap().clone();
                         let mut tokens = vec![];
                         for i in 0..status.tokens.len() {
@@ -179,8 +182,8 @@ impl LiquidityProvider for BalancerWeighted {
                             y_address: meta.tokens.last().unwrap().address.clone(),
                             curve: None,
                             curve_type: Curve::Uncorrelated,
-                            x_amount: U256::zero(),
-                            y_amount: U256::zero(),
+                            x_amount: meta.tokens.first().unwrap().balance.clone(),
+                            y_amount: meta.tokens.last().unwrap().balance.clone(),
                             x_to_y: true,
                             provider: LiquidityProviders::BalancerWeighted(meta),
                         };
@@ -224,7 +227,22 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             let pools = pools.clone();
-            rt.block_on(async move {})
+            rt.block_on(async move {
+                let client = Arc::new(
+                    Provider::<Ws>::connect(&node_url)
+                        .await
+                        .unwrap(),
+                );
+
+                let latest_block = client.get_block_number().await.unwrap();
+                let contract = UniswapV3Pool::new(Address::from_str(&pool.address).unwrap(), client.clone());
+
+                let events = contract.events();
+                let mut stream = events.stream().await.unwrap();
+                while let Some(e) = stream.next().await {
+                    info!("{:?}", e);
+                }
+            })
         })
     }
 }
