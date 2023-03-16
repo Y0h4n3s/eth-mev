@@ -44,7 +44,7 @@ use tokio::task::{JoinHandle, LocalSet};
 use uniswap_v3_math::sqrt_price_math::FIXED_POINT_96_RESOLUTION;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
 use tracing::{info, debug, trace, error};
-use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3TickData};
+use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3Pool, UniswapV3TickData};
 use crate::node_dispatcher::NodeDispatcher;
 
 const TVL_FILTER_LEVEL: i32 = 1;
@@ -569,17 +569,7 @@ impl UniSwapV3 {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct PoolsResponse {
-    pools: Vec<UniSwapV3Pool>,
-}
-#[derive(Serialize, Deserialize, Debug)]
-struct ApiResponse<T> {
-    data: T,
-}
 
-// try to load from api and if it fails, load from local cache
-// TODO: combine data and tick bitmap loader solidity script
 #[async_trait]
 impl LiquidityProvider for UniSwapV3 {
     type Metadata = Box<dyn Meta>;
@@ -756,13 +746,12 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
 
                     let pools = pools.clone();
                     joins.push(tokio::runtime::Handle::current().spawn(async move {
-                        let event =
-                              ethers::contract::Contract::event_of_type::<SwapFilter>(client.clone())
-                                    .from_block(latest_block)
-                                    .address(ValueOrArray::Array(vec![pool.address.parse().unwrap()]));
-    
-                        let mut stream = event.subscribe_with_meta().await.unwrap();
-                        while let Some(Ok((log, meta))) = stream.next().await {
+                        let contract = UniswapV3Pool::new(Address::from_str(&pool.address).unwrap(), client.clone());
+
+                        let events = contract.events();
+
+                        let mut stream = events.stream().await.unwrap();
+                        while let Some(e) = stream.next().await {
                             if let Some(mut pool_meta) = match pool.clone().provider {
                                 LiquidityProviders::UniswapV3(pool_meta) => Some(pool_meta),
                                 _ => None
@@ -783,7 +772,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                             }
                             let event = PoolUpdateEvent {
                                 pool: pool.clone(),
-                                block_number: meta.block_number.as_u64(),
+                                block_number: 1,
                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                             };
 
@@ -904,7 +893,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                                         (mutated_pool.x_amount.saturating_sub(amount_out), mutated_pool.y_amount.saturating_add(decoded.amount_in))
                                                     };
                                                     debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
-                                                    info!("V3ExactInput: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
+                                                    debug!("V3ExactInput: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
                                                     let event = PendingPoolUpdateEvent {
                                                         pool: mutated_pool,
                                                         pending_tx: tx.clone(),
@@ -967,7 +956,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                                     };
                                                     let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> UniswapV3 Send Error {:?}", e)).unwrap();
 
-                                                    info!("V3ExactOut: {:?}", decoded)
+                                                    debug!("V3ExactOut: {:?}", decoded)
                                                 } else {
                                                     trace!("Pair {} {} not being tracked", hex_to_address_string(decoded.path[0].encode_hex()), hex_to_address_string(decoded.path[1].encode_hex()));
                                                 }

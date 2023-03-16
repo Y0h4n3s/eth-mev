@@ -282,7 +282,7 @@ impl MevPath {
         for p in path {
             match p.get_pool().provider.id() {
                 LiquidityProviderId::SushiSwap | LiquidityProviderId::UniswapV2 => gas += 150000,
-                LiquidityProviderId::UniswapV3 => gas += 250000
+                LiquidityProviderId::UniswapV3 | LiquidityProviderId::BalancerWeighted => gas += 250000
             }
         }
         gas
@@ -793,6 +793,7 @@ impl MevPath {
                                                 &Self::encode_int(d)
                                         )
                                     }
+                                    _ => ()
                                 }
                             } else {
                                 match pool.provider.id() {
@@ -836,6 +837,8 @@ impl MevPath {
                                                 &packed_asset
                                         )
                                     }
+                                    _ => ()
+
                                 }
                             }
 
@@ -972,13 +975,16 @@ impl MevPath {
         }
 
         if best_route_profit > I256::from(0) {
-            info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+            if best_route_profit > I256::from(12000000) {
+                info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
 
-            info!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
-            for step in &steps_meta[best_route_index] {
-                info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+                info!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
+                for step in &steps_meta[best_route_index] {
+                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+                }
+                info!("\n\n\n");
             }
-            info!("\n\n\n");
+
             let mut final_data = "".to_string();
             for ix in instructions[best_route_index].clone() {
                 final_data += &ix;
@@ -1047,7 +1053,7 @@ impl MevPath {
         }
     }
 
-    fn encode_packed(amount: I256) -> String {
+    pub fn encode_packed(amount: I256) -> String {
         let encoded = if amount < I256::from(0) {
             (-amount).encode_hex()
         } else {

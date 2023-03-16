@@ -9,12 +9,14 @@ mod abi;
 mod events;
 pub mod types;
 pub mod uniswap_v2;
+pub mod balancer_weighted;
 pub mod uniswap_v3;
 pub mod sushiswap;
 pub mod node_dispatcher;
 use crate::events::EventEmitter;
 use crate::uniswap_v2::UniswapV2Metadata;
 use crate::uniswap_v3::UniswapV3Metadata;
+use crate::balancer_weighted::BalancerWeigtedMetadata;
 use async_std::sync::Arc;
 use async_trait::async_trait;
 use bincode::{Decode, Encode};
@@ -56,14 +58,16 @@ pub trait LiquidityProvider: EventEmitter<Box<dyn EventSource<Event = PoolUpdate
 pub enum LiquidityProviders {
     UniswapV2(UniswapV2Metadata),
     UniswapV3(UniswapV3Metadata),
-    SushiSwap(SushiSwapMetadata)
+    SushiSwap(SushiSwapMetadata),
+    BalancerWeighted(BalancerWeigtedMetadata)
 }
 
 #[derive(Deserialize, Serialize,Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
 pub enum LiquidityProviderId {
     UniswapV2,
     UniswapV3,
-    SushiSwap
+    SushiSwap,
+    BalancerWeighted
 }
 
 impl<T: Into<String>> From<T> for LiquidityProviders {
@@ -75,6 +79,7 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
                 ..Default::default()
             }),
             "3" => LiquidityProviders::SushiSwap(Default::default()),
+            "4" => LiquidityProviders::BalancerWeighted(Default::default()),
             val => match val.find_substring("UniswapV2") {
                 Some(v) => serde_json::from_str(val).unwrap(),
                 None => {
@@ -83,7 +88,12 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
                         None => {
                             match val.find_substring("SushiSwap") {
                                 Some(v) => serde_json::from_str(val).unwrap(),
-                                None => panic!("Invalid Liquidity Provider {}", val)
+                                None => {
+                                    match val.find_substring("BalancerWeighted") {
+                                        Some(v) => serde_json::from_str(val).unwrap(),
+                                        None => panic!("Invalid Liquidity Provider {}", val)
+                                    }
+                                },
                             }
                         },
                     }
@@ -99,6 +109,7 @@ impl From<LiquidityProviders> for u8 {
             LiquidityProviders::UniswapV2(_) => 1,
             LiquidityProviders::UniswapV3(_) => 2,
             LiquidityProviders::SushiSwap(_) => 3,
+            LiquidityProviders::BalancerWeighted(_) => 4,
         }
     }
 }
@@ -119,6 +130,7 @@ impl LiquidityProviders {
                 Box::new(UniswapV3Calculator::new(meta.clone()))
             }
             LiquidityProviders::SushiSwap(meta) => Box::new(CpmmCalculator::new()),
+            LiquidityProviders::BalancerWeighted(meta) => Box::new(BalancerWeightedCalculator::new(meta.clone())),
 
             _ => panic!("Invalid liquidity provider"),
         }
@@ -146,6 +158,13 @@ impl LiquidityProviders {
                 };
                 Box::new(sushiswap::SushiSwap::new(metadata, node_providers))
             }
+            LiquidityProviders::BalancerWeighted(meta) => {
+                let metadata = BalancerWeigtedMetadata {
+                    factory_address: "0x8E9aa87E45e92bad84D5F8DD1bff34Fb92637dE9".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(balancer_weighted::BalancerWeighted::new(metadata, node_providers))
+            }
             _ => panic!("Invalid liquidity provider"),
         }
     }
@@ -155,6 +174,7 @@ impl LiquidityProviders {
             LiquidityProviders::UniswapV2(_) => LiquidityProviderId::UniswapV2,
             LiquidityProviders::UniswapV3(_) => LiquidityProviderId::UniswapV3,
             LiquidityProviders::SushiSwap(_) => LiquidityProviderId::SushiSwap,
+            LiquidityProviders::BalancerWeighted(_) => LiquidityProviderId::BalancerWeighted,
 
             
         }
@@ -165,6 +185,7 @@ impl LiquidityProviders {
             LiquidityProviders::UniswapV2(meta) => meta.factory_address.clone(),
             LiquidityProviders::UniswapV3(meta) => meta.factory_address.clone(),
             LiquidityProviders::SushiSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::BalancerWeighted(meta) => meta.factory_address.clone(),
         }
     }
 }
@@ -210,14 +231,16 @@ impl PoolInfo for Pool {
             LiquidityProviderId::UniswapV2 => true,
             LiquidityProviderId::UniswapV3 => true,
             LiquidityProviderId::SushiSwap=> true,
+            LiquidityProviderId::BalancerWeighted=> false,
         }
     }
 
     fn supports_pre_payment(&self) -> bool {
         match self.provider.id() {
-            LiquidityProviderId::UniswapV2 => false,
+            LiquidityProviderId::UniswapV2 => true,
             LiquidityProviderId::UniswapV3 => false,
-            LiquidityProviderId::SushiSwap => false,
+            LiquidityProviderId::SushiSwap => true,
+            LiquidityProviderId::BalancerWeighted => true,
         }
     }
 }
@@ -365,6 +388,18 @@ pub struct UniswapV3Calculator {
     meta: UniswapV3Metadata
 }
 
+pub struct BalancerWeightedCalculator {
+    meta: BalancerWeigtedMetadata
+}
+
+impl BalancerWeightedCalculator {
+    pub fn new(meta: BalancerWeigtedMetadata) -> Self {
+        Self {
+            meta
+        }
+    }
+}
+
 impl UniswapV3Calculator {
     pub const MAX_SQRT_RATIO: &str = "1461446703485210103287273052203988822378723970342";
     pub const MIN_SQRT_RATIO: &str = "4295128739";
@@ -460,6 +495,41 @@ impl Calculator for UniswapV3Calculator {
     
     
     }
+
+
+
+#[async_trait]
+impl Calculator for BalancerWeightedCalculator {
+    fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
+        } else {
+            (pool.y_amount, pool.x_amount)
+        };
+
+        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) {
+            return Err(Error::msg("Insufficient Liquidity"))
+        }
+        Ok(swap_destination_amount)
+    }
+
+    fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
+        } else {
+            (pool.y_amount, pool.x_amount)
+        };
+        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) || out_ >= swap_destination_amount{
+            return Err(Error::msg("Insufficient Liquidity"))
+        }
+        Ok(swap_destination_amount)
+
+    }
+
+
+
+
+}
 pub trait Meta {}
 
 pub struct SyncConfig {

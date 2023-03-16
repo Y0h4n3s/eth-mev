@@ -36,6 +36,7 @@ use std::hash::Hash;
 use std::iter::from_fn;
 use ethers::abi::AbiEncode;
 use ethers::types::{Eip1559TransactionRequest, U256};
+use itertools::Itertools;
 use tokio::runtime::Runtime;
 use tokio::sync::{RwLock, Semaphore};
 use tokio::time::Duration;
@@ -98,6 +99,7 @@ pub async fn start(
     updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PoolUpdateEvent>>>,
     pending_updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>,
     routes: Arc<RwLock<kanal::AsyncSender<(Transaction, Eip1559TransactionRequest)>>>,
+    pools_sender: kanal::AsyncSender<Pool>,
     single_routes: Arc<RwLock<kanal::AsyncSender<Vec<Eip1559TransactionRequest>>>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
@@ -462,17 +464,24 @@ DETACH DELETE n",
         // }
     }
     info!("Found {} routes", total_paths);
-//	return Ok(());
-//     info!("Registering Gas consumption for transactions");
-//     for (_pool, paths) in path_lookup1.read().await.clone() {
-//         for mut route in paths.iter() {
-//             let mut r = route.clone();
-//             for pool in route.pools.iter() {
-//                r.update(pool.clone());
-//             }
-//         }
-//         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-//     }
+    let mut uniq = path_lookup1
+        .read()
+        .await
+        .clone()
+        .iter()
+        .map(|(pool, path)| path.iter().map(|p| p.pools.clone()).flatten().collect::<Vec<Pool>>())
+        .flatten()
+        .unique()
+        .collect::<Vec<Pool>>();
+    //	return Ok(());
+    info!("Registering Gas consumption for {} pool transactions", uniq.len());
+    for pool in uniq {
+        pools_sender.send(pool).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    // wait a few secs
+    tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
+
     info!("Starting Listener thread");
     info!("Clearing {} cached events", updated_q.len() + pending_updated_q.len());
 
