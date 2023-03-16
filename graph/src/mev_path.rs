@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::str::FromStr;
-use ethers::types::{Eip1559TransactionRequest, H160, H256, U128, U64, Address};
+use ethers::types::{Eip1559TransactionRequest, H160, H256, U128, U64, Address, Transaction};
 use garb_sync_eth::{
     uniswap_v2::UniswapV2Metadata, uniswap_v3::UniswapV3Metadata, LiquidityProviderId,
     LiquidityProviders, Pool, PoolInfo, UniswapV3Calculator,
@@ -21,6 +21,7 @@ use itertools::Itertools;
 use ethers::types::{U256, I256};
 use ethers::types::transaction::eip2930::AccessList;
 use tracing::{warn, debug, error, info};
+use crate::backrun::Backrun;
 
 const MINIMUM_PATH_LENGTH: usize = 2;
 const UNISWAP_V3_EXACT_OUT_PAY_TO_SENDER: &str = "00002000";
@@ -65,7 +66,7 @@ fn hash_to_function_name(hash: &String) -> String {
 
 #[derive(Hash, PartialEq, Eq, Debug, Clone, Default)]
 pub struct MevPath {
-    pub paths: Vec<Vec<MevPathStep>>,
+    pub path: Vec<MevPathStep>,
     pub pools: Vec<Pool>,
     pub input_token: String,
 
@@ -214,57 +215,21 @@ struct PathResult {
 }
 
 impl MevPath {
-    pub fn new(pools: &Vec<Pool>, input_token: &String) -> Self {
+    pub fn new(pools: &Vec<Pool>, input_token: &String) -> Option<Self> {
         let mut re = pools.clone();
         re.reverse();
-        let mut expanded = vec![];
+        let path = re.iter().map(|p| MevPathStep::ExactOut(p.clone(), StepInput::default(), StepOutput::default())).collect::<Vec<MevPathStep>>();
 
-        expanded.push(re.iter().map(|p| MevPathStep::ExactOut(p.clone(), StepInput::default(), StepOutput::default())).collect::<Vec<MevPathStep>>());
-        // for (index, pls) in [/*pools.clone(),*/ re].iter().enumerate() {
-        //     for i in 0..2_u64.pow(pls.len() as u32) {
-        //         expanded.push(vec![]);
-        //     }
-        //     let input = StepInput::default();
-        //     let output = ;
-        //     for j in 0..pls.len() {
-        //         let mut count = 0;
-        //         let mut to_zero = false;
-        //         let mut first_to_zero = true;
-        //         for i in 0..2_u64.pow(pls.len() as u32) {
-        //             if count < (2_u64.pow((pls.len() - j) as u32)) / 2 && !to_zero {
-        //                 count += 1;
-        //                 expanded[i as usize + index * 2_u64.pow(pls.len() as u32) as usize].push(MevPathStep::ExactIn(pls[j].clone(), input.clone(), output.clone()));
-        //             } else {
-        //                 if first_to_zero {
-        //                     to_zero = true;
-        //                     first_to_zero = false;
-        //                 }
-        //
-        //                 count -= 1;
-        //                 expanded[i as usize + index * 2_u64.pow(pls.len() as u32) as usize].push(MevPathStep::ExactOut(pls[j].clone(), input.clone(), output.clone()));
-        //                 if count == 0 {
-        //                     to_zero = false;
-        //                     first_to_zero = true;
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
-        //
-        let mut paths = vec![];
-        for nxt in expanded {
-            if let Ok(path) = Self::process_path(nxt, input_token) {
-                paths.push(path)
-            }
+        if let Ok(path) = Self::process_path(path, input_token) {
+           Some(Self {
+               input_token: input_token.clone(),
+               path,
+               pools: pools.clone(),
+           })
+        } else {
+            None
         }
-        // sort by path length
-        paths.sort_by(|a, b| if a.len() > b.len() { Ordering::Greater } else { Ordering::Less });
 
-        Self {
-            input_token: input_token.clone(),
-            paths,
-            pools: pools.clone(),
-        }
     }
 
     fn print_balance(balance: &HashMap<String, HashMap<String, I256>>) {
@@ -1075,105 +1040,101 @@ impl MevPath {
         };
     }
     pub fn update(&mut self, updated_pool: Pool) {
-        for path in self.paths.iter_mut() {
             // check if the path has positive outcome
-            for mut step in (*path).iter_mut() {
+            for mut step in (*self.path).iter_mut() {
                 if step.contains_pool(&updated_pool) {
                     step.update_pool(&updated_pool);
                 }
             }
-        }
     }
-    pub fn get_transactions_mut(&mut self, updated_pool: Pool) -> Vec<Eip1559TransactionRequest> {
-        for path in self.paths.iter_mut() {
-            // check if the path has positive outcome
-            for mut step in (*path).iter_mut() {
-                // update first
-                if step.contains_pool(&updated_pool) {
-                    step.update_pool(&updated_pool);
+
+    pub fn get_transaction(&self) -> Option<(U256,Eip1559TransactionRequest)> {
+        let is_good = self.validate_path(self.path.clone());
+        match &is_good {
+            Ok(data) => {
+                if !data.is_good {
+                    return None;
+                } else {
+                    let function_name = hash_to_function_name(&data.ix_data[2..10].to_string());
+                    debug!("Entry function {}", function_name);
+                    let call_function = ethers::abi::Function {
+                        name: function_name,
+                        inputs: vec![
+                            ethers::abi::Param {
+                                name: "data".to_string(),
+                                kind: ParamType::Bytes,
+                                internal_type: None,
+                            },
+                        ],
+                        outputs: vec![],
+                        constant: None,
+                        state_mutability: StateMutability::View,
+                    };
+
+
+                    let tx_data = ethers::contract::encode_function_data(&call_function, Token::Bytes(ethers::types::Bytes::from_str(&data.ix_data).unwrap().to_vec())).unwrap();
+
+
+                    let tx_request = Eip1559TransactionRequest {
+                        // update later
+                        to: None,
+                        // update later
+                        from: None,
+                        data: Some(ethers::types::Bytes::from_str(&data.ix_data).unwrap()),
+                        chain_id: Some(U64::from(1)),
+                        max_priority_fee_per_gas: None,
+                        // update later
+                        max_fee_per_gas: None,
+                        gas: None,
+                        // update later
+                        nonce: None,
+                        value: None,
+                        access_list: AccessList::default(),
+                    };
+                    return Some((U256::from(data.profit), tx_request));
                 }
             }
-        }
-        self.get_transactions()
-    }
-    pub fn get_transactions(&self) -> Vec<Eip1559TransactionRequest> {
-        let mut transactions = vec![];
-        for (index, path) in self
-            .paths
-            .iter()
-            .enumerate()
-            .collect::<Vec<(usize, &Vec<MevPathStep>)>>()
-        {
-            let is_good = self.validate_path(path.clone());
-            match &is_good {
-                Ok(data) => {
-                    if !data.is_good {
-                        continue;
-                    } else {
-                        let function_name = hash_to_function_name(&data.ix_data[2..10].to_string());
-                        debug!("Entry function {}", function_name);
-                        let call_function = ethers::abi::Function {
-                            name: function_name,
-                            inputs: vec![
-                                ethers::abi::Param {
-                                    name: "data".to_string(),
-                                    kind: ParamType::Bytes,
-                                    internal_type: None,
-                                },
-                            ],
-                            outputs: vec![],
-                            constant: None,
-                            state_mutability: StateMutability::View,
-                        };
-
-
-                        let tx_data = ethers::contract::encode_function_data(&call_function, Token::Bytes(ethers::types::Bytes::from_str(&data.ix_data).unwrap().to_vec())).unwrap();
-
-                        // gas * max_priority_fee_per_gas  <= profit amount
-                        let gas = U256::from(MevPath::estimate_gas_cost(path));
-                        let max_priority_fee = U256::from(data.profit)
-                            // .checked_mul(U256::from(10_u128.pow(9)))
-                            // .unwrap()
-                            .checked_div(U256::from(400000)).unwrap();
-                        let tx_request = Eip1559TransactionRequest {
-                            // update later
-                            to: None,
-                            // update later
-                            from: None,
-                            data: Some(ethers::types::Bytes::from_str(&data.ix_data).unwrap()),
-                            chain_id: Some(U64::from(1)),
-                            max_priority_fee_per_gas: Some(max_priority_fee),
-                            // update later
-                            max_fee_per_gas: Some(U256::from(0)),
-                            gas: Some(U256::from(400000)),
-                            // update later
-                            nonce: Some(U256::from(0)),
-                            value: None,
-                            access_list: AccessList::default(),
-                        };
-                        transactions.push(tx_request);
-                        info!("Data: {:?}", data)
-                    }
-                }
-                Err(e) => {
-                    debug!("{:?}", e);
-                }
+            Err(e) => {
+                debug!("{:?}", e);
+                None
             }
         }
-        transactions
+
     }
 
-    pub fn get_transaction_for_pending_update(&self, updated_pool: Pool) -> Vec<Eip1559TransactionRequest>{
+    pub fn get_backrun_for_update(&self, pending_tx: Transaction, updated_pool: Pool, gas_lookup: &HashMap<String, U256>) -> Option<Backrun> {
         let mut mock = self.clone();
-        return mock.get_transactions_mut(updated_pool);
+        mock.update(updated_pool);
+        if let Some((profit, tx)) = mock.get_transaction() {
+            let gas_cost = gas_lookup.iter().filter_map(|(pl, amount)| {
+                if mock.pools.iter().any(|p | &p.address == pl) {
+
+                    Some(amount)
+                } else {
+                    None
+                }
+            }).cloned()
+                .reduce(|a, b| a + b)
+                .unwrap_or(U256::from(400000));
+
+            Some(Backrun {
+                tx,
+                pending_tx,
+                path: mock,
+                profit,
+                gas_cost
+            })
+        } else {
+            None
+        }
     }
 
     pub fn is_valid(&self) -> bool {
-        if self.paths.len() <= 0 {
+        if self.path.len() <= 0 {
             return false;
         }
 
-        let is_good = self.validate_path(self.paths.get(0).unwrap().clone());
+        let is_good = self.validate_path(self.path.clone());
         match &is_good {
             Ok(_) => (true),
             Err(e) => {

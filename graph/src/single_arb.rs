@@ -2,10 +2,10 @@ use ethers::types::{Eip1559TransactionRequest, Transaction, U256};
 use crate::mev_path::MevPath;
 
 #[derive(Clone, Debug)]
-pub struct Backrun {
-    pub pending_tx: Transaction,
+pub struct ArbPath {
     pub tx: Eip1559TransactionRequest,
     pub path: MevPath,
     pub profit: U256,
     pub gas_cost: U256
+
 }

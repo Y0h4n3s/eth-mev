@@ -50,7 +50,9 @@ use garb_graph_eth::{GraphConfig, Order};
 use rand::Rng;
 use async_trait::async_trait;
 use futures::future::err;
+use garb_graph_eth::backrun::Backrun;
 use garb_graph_eth::mev_path::MevPath;
+use garb_graph_eth::single_arb::ArbPath;
 use garb_sync_eth::node_dispatcher::NodeDispatcher;
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
@@ -76,7 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let subscriber = tracing_subscriber::FmtSubscriber::builder()
         // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
         // will be written to stdout.
-        .with_max_level(tracing::Level::INFO)
+        .with_max_level(tracing::Level::WARN)
         // completes the builder.
         .finish();
 
@@ -95,9 +97,9 @@ pub async fn async_main() -> anyhow::Result<()> {
     // routes holds the routes that pass through an updated pool
     // this will be populated by the graph module when there is an updated pool
     let (routes_sender, mut routes_receiver) =
-        kanal::bounded_async::<(Transaction, Eip1559TransactionRequest)>(10000);
+        kanal::bounded_async::<Backrun>(10000);
     let (single_routes_sender, mut single_routes_receiver) =
-        kanal::bounded_async::<Vec<Eip1559TransactionRequest>>(10000);
+        kanal::bounded_async::<Vec<ArbPath>>(10000);
     let (pool_sender, mut pool_receiver) =
         kanal::bounded_async::<Pool>(10000);
     let sync_config = SyncConfig {
@@ -120,11 +122,11 @@ pub async fn async_main() -> anyhow::Result<()> {
         let rt = Runtime::new().unwrap();
 
         rt.block_on(async move {
-            garb_graph_eth::start(pools.clone(), update_q_receiver,  pending_update_q_receiver,Arc::new(RwLock::new(graph_routes)), pool_sender, Arc::new(RwLock::new(single_routes_sender)),graph_conifg).await.unwrap();
+            garb_graph_eth::start(pools.clone(), update_q_receiver,  pending_update_q_receiver,Arc::new(RwLock::new(graph_routes)), Arc::new(RwLock::new(single_routes_sender)),graph_conifg).await.unwrap();
         });
     }));
     joins.push(std::thread::spawn(move || {
-        transactor(&mut pool_receiver, &mut routes_receiver, &mut single_routes_receiver ,routes_sender, nodes.clone()).unwrap();
+        transactor( &mut routes_receiver, &mut single_routes_receiver , nodes.clone()).unwrap();
     }));
 
     for join in joins {
@@ -167,91 +169,11 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
 
 
 
-pub fn transactor(pl: &mut kanal::AsyncReceiver<Pool>, rts: &mut kanal::AsyncReceiver<(Transaction, Eip1559TransactionRequest)>, rt: &mut kanal::AsyncReceiver<Vec<Eip1559TransactionRequest>>, _routes_sender: kanal::AsyncSender<(Transaction, Eip1559TransactionRequest)>, nodes: NodeDispatcher) -> anyhow::Result<()> {
+pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::AsyncReceiver<Vec<ArbPath>>, nodes: NodeDispatcher) -> anyhow::Result<()> {
     let mut workers = vec![];
     let cores = num_cpus::get();
 
-    // register gas
-    let gas_map: Arc<Mutex<HashMap<String, U256>>> = Arc::new(Mutex::new(HashMap::new()));
-    let node_url = nodes.next_free();
-    let pl = pl.clone();
-    workers.push(std::thread::spawn(move || {
-        let mut rt = Runtime::new().unwrap();
-        rt.block_on(async move {
-            let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
-            let signer_wallet_address = signer.address();
-            let provider = ethers_providers::Provider::<Ws>::connect(node_url).await.unwrap();
-            let block = U64::from(16836347);
-            let nonce = provider.get_transaction_count(signer_wallet_address, None).await.unwrap();
 
-            let mut client = Arc::new(SignerMiddleware::new(
-                FlashbotsMiddleware::new(
-                    provider,
-                    Url::parse("https://relay.flashbots.net").unwrap(),
-                    BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap()
-                ),
-                signer.clone()
-            ));
-
-            let mut join_handles = vec![];
-
-            while let Ok(pool) = pl.recv().await {
-                let signer = signer.clone();
-                let client = client.clone();
-                let gas_map = gas_map.clone();
-                join_handles.push(tokio::runtime::Handle::current().spawn(async move {
-                    let client = client.clone();
-                    let function = match pool.provider.id() {
-                        LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap => {
-                            "0e000000".to_string()
-                        }
-                        LiquidityProviderId::UniswapV3 | LiquidityProviderId::BalancerWeighted => {
-                            "00000600".to_string()
-                        }
-                    };
-
-                    let packed_asset = MevPath::encode_packed(I256::from(1));
-                    let ix_data = function + if pool.x_to_y { "01" } else { "00" } +
-                        &pool.address[2..] +
-                        &(packed_asset.len() as u8).encode_hex()[64..] +
-                        &packed_asset;
-                    let tx_request = Eip1559TransactionRequest {
-                        to: Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone())),
-                        from: None,
-                        data: Some(ethers::types::Bytes::from_str(&ix_data).unwrap()),
-                        chain_id: Some(U64::from(1)),
-                        max_priority_fee_per_gas: None,
-                        // update later
-                        max_fee_per_gas: Some(U256::from(22500000000 as u128)),
-                        gas: Some(U256::from(500000)),
-                        nonce: Some(nonce),
-                        value: None,
-                        access_list: AccessList::default(),
-                    };
-
-                    let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
-                    let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
-                    let signed_tx = typed_tx.rlp_signed(&tx_sig);
-                    let mut bundle = BundleRequest::new();
-                    bundle = bundle.push_transaction(signed_tx).set_block(block).set_simulation_block(block).set_simulation_timestamp(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
-
-                    let simulation_result = client.inner().simulate_bundle(&bundle).await;
-
-                    if let Ok(res) = simulation_result {
-                        let gas_used = res.transactions.get(0).unwrap().gas_used;
-                        let mut w = gas_map.lock().unwrap();
-                        w.insert(pool.address.clone(), gas_used + U256::from(20000));
-                        debug!("{} uses {:?}", pool.address, gas_used + U256::from(20000))
-                    } else {
-                        error!("Failed to estimate gas for {} {:?}", pool.address, simulation_result.unwrap_err())
-                    }
-                }));
-            }
-            for task in join_handles {
-                task.await.unwrap();
-            }
-        })
-    }));
     for i in 0..cores {
         let mut bundle_handlers = vec![];
         bundle_handlers.push(BundleHandlers::FlashBots("https://relay.flashbots.net".to_string(), FlashBotsRequestParams::default()));
@@ -271,7 +193,6 @@ pub fn transactor(pl: &mut kanal::AsyncReceiver<Pool>, rts: &mut kanal::AsyncRec
         let routes = rts.clone();
         let node_url = nodes.next_free();
         let handlers = bundle_handlers.clone();
-        let gas_map = gas_map.lock().unwrap().clone();
 
         workers.push(std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
@@ -324,7 +245,12 @@ pub fn transactor(pl: &mut kanal::AsyncReceiver<Pool>, rts: &mut kanal::AsyncRec
 
                 let sent = Arc::new(RwLock::new(false));
                 let signer = Arc::new(signer);
-                while let Ok((pair_tx, order)) = routes.recv().await {
+                while let Ok(opportunity) = routes.recv().await {
+                    let pair_tx = opportunity.pending_tx;
+                    let order = opportunity.tx;
+                    let path = opportunity.path;
+                    let gas_cost = opportunity.gas_cost;
+
                     let mut handles = vec![];
                     for handler in &bundle_handlers {
                         let order = order.clone();
@@ -340,9 +266,11 @@ pub fn transactor(pl: &mut kanal::AsyncReceiver<Pool>, rts: &mut kanal::AsyncRec
                             tx_request.from = Some(signer_wallet_address);
                             let n = nonce_num.read().await;
                             let blk = block.read().await;
+                            let max_fee = opportunity.profit / gas_cost;
                             let base_fee = blk.base_fee_per_gas.unwrap();
-                            tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee).min(U256::from(30000000000 as u128)));
+                            tx_request.max_fee_per_gas = Some(max_fee.max(base_fee));
                             tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
+                            tx_request.gas = Some(gas_cost);
                             tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                             let blk = blk.number.unwrap().as_u64();
                             drop(n);
@@ -383,6 +311,7 @@ pub fn transactor(pl: &mut kanal::AsyncReceiver<Pool>, rts: &mut kanal::AsyncRec
 
         // single transaction
         let routes = rt.clone();
+
         workers.push(std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
 
@@ -436,9 +365,11 @@ pub fn transactor(pl: &mut kanal::AsyncReceiver<Pool>, rts: &mut kanal::AsyncRec
                 let signer = Arc::new(signer);
                 while let Ok(orders) = routes.recv().await {
                     let mut handles = vec![];
-                    for order in orders {
+
+                    for opportunity in orders {
+                        let gas_cost = opportunity.gas_cost;
                         for handler in &bundle_handlers {
-                            let order = order.clone();
+                            let order = opportunity.tx.clone();
                             let nonce_num = nonce.clone();
                             let block = block.clone();
                             let signer = signer.clone();
@@ -450,9 +381,11 @@ pub fn transactor(pl: &mut kanal::AsyncReceiver<Pool>, rts: &mut kanal::AsyncRec
                                 tx_request.from = Some(signer_wallet_address);
                                 let n = nonce_num.read().await;
                                 let blk = block.read().await;
+                                let max_fee = opportunity.profit / gas_cost;
                                 let base_fee = blk.base_fee_per_gas.unwrap();
-                                tx_request.max_fee_per_gas = Some(tx_request.max_priority_fee_per_gas.unwrap().max(base_fee).min(U256::from(30000000000 as u128)));
+                                tx_request.max_fee_per_gas = Some(max_fee.max(base_fee));
                                 tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
+                                tx_request.gas = Some(gas_cost);
                                 tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                                 let blk = blk.number.unwrap().as_u64();
                                 drop(n);

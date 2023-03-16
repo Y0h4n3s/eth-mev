@@ -237,9 +237,9 @@ impl PoolInfo for Pool {
 
     fn supports_pre_payment(&self) -> bool {
         match self.provider.id() {
-            LiquidityProviderId::UniswapV2 => true,
+            LiquidityProviderId::UniswapV2 => false,
             LiquidityProviderId::UniswapV3 => false,
-            LiquidityProviderId::SushiSwap => true,
+            LiquidityProviderId::SushiSwap => false,
             LiquidityProviderId::BalancerWeighted => true,
         }
     }

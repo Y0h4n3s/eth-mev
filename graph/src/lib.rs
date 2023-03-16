@@ -8,8 +8,8 @@
 
 pub mod mev_path;
 pub mod backrun;
-use ethers::types::Transaction;
-use async_std::sync::Arc;
+pub mod single_arb;
+use std::sync::Arc;
 use bb8_bolt::bolt_client::Params;
 use bb8_bolt::{
     bb8::Pool as BPool,
@@ -17,7 +17,7 @@ use bb8_bolt::{
     bolt_proto::{version::*, Value},
     Manager,
 };
-use tracing::{debug, info};
+use tracing::{debug, info, error};
 use rayon::prelude::*;
 use bolt_proto::value::{Node, Relationship};
 use bolt_proto::Message;
@@ -34,13 +34,34 @@ use petgraph::{
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::iter::from_fn;
-use ethers::abi::AbiEncode;
-use ethers::types::{Eip1559TransactionRequest, U256};
 use itertools::Itertools;
 use tokio::runtime::Runtime;
 use tokio::sync::{RwLock, Semaphore};
-use tokio::time::Duration;
+use crate::backrun::Backrun;
 use crate::mev_path::MevPath;
+use ethers::types::Address;
+use crate::single_arb::ArbPath;
+use ethers::abi::{AbiEncode, ParamType, StateMutability, Token};
+use ethers_providers::{ProviderExt, Middleware, Http};
+use ethers::types::{Bytes, I256};
+use std::time::{SystemTime,UNIX_EPOCH};
+use ethers::signers::Signer;
+use url::Url;
+use ethers::prelude::SignerMiddleware;
+use ethers::prelude::LocalWallet;
+use ethers::types::{U256, Block, TxHash, BlockId, Eip1559TransactionRequest, BlockNumber, U64, NameOrAddress, transaction::eip2930::AccessList, Transaction};
+use ethers::types::transaction::eip2718::TypedTransaction;
+use ethers::utils::keccak256;
+use tokio::time::Duration;
+use ethers_flashbots::{BundleRequest, FlashbotsMiddleware, BundleTransaction};
+use std::sync::Mutex;
+use std::str::FromStr;
+static PRIVATE_KEY: Lazy<String> = Lazy::new(|| std::env::var("ETH_PRIVATE_KEY").unwrap());
+static BUNDLE_SIGNER_PRIVATE_KEY: Lazy<String> = Lazy::new(|| std::env::var("ETH_BUNDLE_SIGNER_PRIVATE_KEY").unwrap());
+
+static CONTRACT_ADDRESS: Lazy<Address> = Lazy::new(|| {
+    Address::from_str(&std::env::var("ETH_CONTRACT_ADDRESS").unwrap_or_else(|_| std::env::args().nth(6).unwrap_or("0x46B2f7B9a13072BDA6F91EDE396Ff8AF493c6cD4".to_string()))).unwrap()
+});
 
 static NEO4J_USER: Lazy<String> =
     Lazy::new(|| std::env::var("ETH_NEO4J_USER").unwrap_or("neo4j".to_string()));
@@ -98,9 +119,8 @@ pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PoolUpdateEvent>>>,
     pending_updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>,
-    routes: Arc<RwLock<kanal::AsyncSender<(Transaction, Eip1559TransactionRequest)>>>,
-    pools_sender: kanal::AsyncSender<Pool>,
-    single_routes: Arc<RwLock<kanal::AsyncSender<Vec<Eip1559TransactionRequest>>>>,
+    routes: Arc<RwLock<kanal::AsyncSender<Backrun>>>,
+    single_routes: Arc<RwLock<kanal::AsyncSender<Vec<ArbPath>>>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
     Graph::<String, Pool, Undirected>::new_undirected();
@@ -369,16 +389,20 @@ DETACH DELETE n",
                                     if seen_count != 2 {
                                         None
                                     } else {
-                                        let mut path = MevPath::new(&r, &CHECKED_COIN.clone());
-                                        for pool in r {
-                                            path.update(pool);
-                                        }
-                                        if path.is_valid() {
+                                        if let Some(mut path) = MevPath::new(&r, &CHECKED_COIN.clone()) {
+                                            for pool in r {
+                                                path.update(pool);
+                                            }
+                                            if path.is_valid() {
 
-                                            Some(path)
+                                                Some(path)
+                                            } else {
+                                                None
+                                            }
                                         } else {
                                             None
                                         }
+
                                     }
                                 }
                                 _ => None
@@ -434,7 +458,7 @@ DETACH DELETE n",
             let mut total_paths = 0;
             for (_pool, paths) in path_lookup1.read().await.clone() {
                 for path in paths {
-                    total_paths += path.paths.len();
+                    total_paths += path.path.len();
                 }
                 // for (forf, path) in paths {
                 //     info!("`````````````````````` Tried Route ``````````````````````");
@@ -452,7 +476,7 @@ DETACH DELETE n",
     let mut total_paths = 0;
     for (_pool, paths) in path_lookup1.read().await.clone() {
         for path in paths {
-            total_paths += path.paths.len();
+            total_paths += path.path.len();
         }
 
         // for (forf, path) in paths {
@@ -475,12 +499,83 @@ DETACH DELETE n",
         .collect::<Vec<Pool>>();
     //	return Ok(());
     info!("Registering Gas consumption for {} pool transactions", uniq.len());
+    let gas_map: Arc<Mutex<HashMap<String, U256>>> = Arc::new(Mutex::new(HashMap::new()));
+    let node_url = "https://rpc.flashbots.net".to_string();
+    let gas_lookup = gas_map.clone();
+
+    let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
+    let signer_wallet_address = signer.address();
+    let provider = ethers_providers::Provider::<Http>::connect(&node_url).await;
+    let block = U64::from(16836347);
+    let nonce = provider.get_transaction_count(signer_wallet_address, None).await.unwrap();
+
+    let mut client = Arc::new(
+        FlashbotsMiddleware::new(
+            provider,
+            Url::parse("https://relay.flashbots.net").unwrap(),
+            BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap()
+        ));
+
+    let mut join_handles = vec![];
     for pool in uniq {
-        pools_sender.send(pool).await;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let signer = signer.clone();
+        let client = client.clone();
+        let gas_lookup = gas_lookup.clone();
+        join_handles.push(tokio::runtime::Handle::current().spawn(async move {
+            let client = client.clone();
+            let function = match pool.provider.id() {
+                LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap => {
+                    "0e000000".to_string()
+                }
+                LiquidityProviderId::UniswapV3 | LiquidityProviderId::BalancerWeighted => {
+                    "00000600".to_string()
+                }
+            };
+
+            let packed_asset = MevPath::encode_packed(I256::from(1));
+            let ix_data = function + if pool.x_to_y { "01" } else { "00" } +
+                &pool.address[2..] +
+                &(packed_asset.len() as u8).encode_hex()[64..] +
+                &packed_asset;
+            let tx_request = Eip1559TransactionRequest {
+                to: Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone())),
+                from: None,
+                data: Some(ethers::types::Bytes::from_str(&ix_data).unwrap()),
+                chain_id: Some(U64::from(1)),
+                max_priority_fee_per_gas: None,
+                // update later
+                max_fee_per_gas: Some(U256::from(22500000000 as u128)),
+                gas: Some(U256::from(500000)),
+                nonce: Some(nonce),
+                value: None,
+                access_list: AccessList::default(),
+            };
+
+            let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
+            let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
+            let signed_tx = typed_tx.rlp_signed(&tx_sig);
+            let mut bundle = BundleRequest::new();
+            bundle = bundle.push_transaction(signed_tx).set_block(block).set_simulation_block(block).set_simulation_timestamp(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+
+            let simulation_result = client.simulate_bundle(&bundle).await;
+
+            if let Ok(res) = simulation_result {
+                let gas_used = res.transactions.get(0).unwrap().gas_used;
+                let mut w = gas_lookup.lock().unwrap();
+                w.insert(pool.address.clone(), gas_used + U256::from(20000));
+                debug!("{} uses {:?}", pool.address, gas_used + U256::from(20000))
+            } else {
+                error!("Failed to estimate gas for {} {:?}", pool.address, simulation_result.unwrap_err())
+            }
+        }));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
     }
+    for task in join_handles {
+        task.await.unwrap();
+    }
+
     // wait a few secs
-    tokio::time::sleep(std::time::Duration::from_millis(5000)).await;
 
     info!("Starting Listener thread");
     info!("Clearing {} cached events", updated_q.len() + pending_updated_q.len());
@@ -489,19 +584,32 @@ DETACH DELETE n",
         drop(pending_updated_q.recv().await);
     }
 
+    while !updated_q.is_empty() {
+        let updated_market_event = updated_q.recv().await.unwrap();
+        let event = updated_market_event.get_event();
+        let mut updated_market = event.pool;
+        for (_, market_routes) in path_lookup1.write().await.iter_mut().find(|(key, _value)| {
+            updated_market.address == key.address
+        }) {
+            for mut route in market_routes.iter_mut() {
+                route.update(updated_market.clone());
+            }
+        }
+    }
+
     let mut workers = vec![];
     let cores = num_cpus::get();
 
+    let gas_lookup = gas_map.clone();
     for i in 0..cores {
+        let gas_lookup = gas_lookup.lock().unwrap().clone();
         let path_lookup = path_lookup1.clone();
-        let routes = routes.read().await.clone();
         let single_routes = single_routes.read().await.clone();
         let updated_q = updated_q.clone();
         workers.push(tokio::spawn(async move {
             while let Ok(updated_market_event) = updated_q.recv().await {
                 let event = updated_market_event.get_event();
                 let mut updated_market = event.pool;
-                let routes = routes.clone();
                 let single_routes = single_routes.clone();
                 let market_routes = if let Some((pool, market_routes)) = path_lookup.write().await.iter_mut().find(|(key, _value)| {
                     updated_market.address == key.address
@@ -522,20 +630,41 @@ DETACH DELETE n",
                     continue;
                 };
 
-                let mut updated = market_routes.into_par_iter().map(|mut route| {
-                    // let transactions = route.get_transactions();
-                    // transactions
-                    vec![]
-                }).flatten().collect::<Vec<Eip1559TransactionRequest>>();
+                let mut updated = market_routes.into_par_iter().filter_map(|mut route| {
+                    if let Some((profit, tx)) = route.get_transaction() {
+                        let gas_cost = gas_lookup.iter().filter_map(|(pl, amount)| {
+                            if route.pools.iter().any(|p | &p.address == pl) {
 
-                // single_routes.send(updated).await;
+                                Some(amount)
+                            } else {
+                                None
+                            }
+                        }).cloned()
+                            .reduce(|a, b| a + b)
+                            .unwrap_or(U256::from(400000));
+
+                        Some(ArbPath {
+                            path: route,
+                            tx,
+                            profit,
+                            gas_cost
+                        })
+                    } else {
+                        None
+                    }
+                }).collect::<Vec<ArbPath>>();
+
+                single_routes.send(updated).await;
 
 
             }
             }));
     }
 
+    let gas_lookup = gas_map.clone();
     for i in 0..cores {
+        let gas_lookup = gas_lookup.lock().unwrap().clone();
+
         let path_lookup = path_lookup1.clone();
         let routes = routes.read().await.clone();
         let pending_updated_q = pending_updated_q.clone();
@@ -561,13 +690,12 @@ DETACH DELETE n",
                     debug!("No routes found for pending update {}", updated_market);
                     continue;
                 };
-                let mut updated = market_routes.into_par_iter().map(|mut route| {
-                    let transactions = route.get_transaction_for_pending_update(updated_market.clone());
-                  transactions
-                }).flatten().collect::<Vec<Eip1559TransactionRequest>>();
+                let mut updated = market_routes.into_par_iter().filter_map(|mut route| {
+                    route.get_backrun_for_update(event.pending_tx.clone(), updated_market.clone(), &gas_lookup)
+                }).collect::<Vec<Backrun>>();
 
-                for tx in updated {
-                    routes.send((event.pending_tx.clone(), tx)).await;
+                for opportunity in updated {
+                    routes.send(opportunity).await;
 
                 }
             }
