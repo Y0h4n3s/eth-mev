@@ -216,7 +216,7 @@ err jump
     dup1 0xA4 mstore
 
     // deadline
-    0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF 0xC4 mstore
+    0xFFFFFFFFFFFFFFFFFFFFFFFFFFF 0xC4 mstore
 
     //singleswap
     dup7 0xE4 mstore
@@ -267,7 +267,7 @@ err jump
     dup1 0xA4 mstore
 
     // deadline
-    0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF 0xC4 mstore
+    0xFFFFFFFFFFFFFFFFFFFFFFFFFFF 0xC4 mstore
 
     //singleswap
     dup7 0xE4 mstore
@@ -540,7 +540,8 @@ err jump
     dup1 0x10d1e85c eq v2Callback jumpi
     // solidly
     dup1 0x9a7bff79 eq v2Callback jumpi
-
+    //pancake
+    dup1 0x84800812 eq v2Callback jumpi
 
     NEXT()
     stop

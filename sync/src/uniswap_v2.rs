@@ -34,6 +34,7 @@ use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use byte_slice_cast::AsByteSlice;
 use ethers::types::serde_helpers;
+use ethers::types::U64;
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace, warn};
 use std::cmp::min;
@@ -64,17 +65,19 @@ pub struct UniSwapV2 {
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
     subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event=PoolUpdateEvent>>>>>>,
     pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>>>>,
-    nodes: NodeDispatcher
+    nodes: NodeDispatcher,
+    id: LiquidityProviderId
 }
 
 impl UniSwapV2 {
-    pub fn new(metadata: UniswapV2Metadata, nodes: NodeDispatcher) -> Self {
+    pub fn new(metadata: UniswapV2Metadata, nodes: NodeDispatcher, id: LiquidityProviderId) -> Self {
         Self {
             metadata,
             pools: Arc::new(RwLock::new(HashMap::new())),
             subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
             pending_subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
-            nodes
+            nodes,
+            id
         }
     }
 }
@@ -105,6 +108,7 @@ impl LiquidityProvider for UniSwapV2 {
         let pools = self.pools.clone();
         let factory_address = H160::from_str(&self.metadata.factory_address).unwrap();
         let node_url = self.nodes.next_free();
+        let id = self.id.clone();
         tokio::spawn(async move {
             let client = reqwest::Client::new();
             let eth_client = Arc::new(
@@ -197,13 +201,13 @@ impl LiquidityProvider for UniSwapV2 {
             }
             info!(
                 "{:?} Pools: {}",
-                LiquidityProviderId::UniswapV2,
+                id,
                 pools.read().await.len()
             );
         })
     }
     fn get_id(&self) -> LiquidityProviderId {
-        LiquidityProviderId::UniswapV2
+        self.id.clone()
     }
 }
 
@@ -276,7 +280,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                                 block_number: updated_meta.block_number,
                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                             };
-                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| info!("sync_service> UniswapV2 Send Error {:?}", e)).unwrap();
+                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| info!("sync_service> UniswapV2 Send Error {:?}", e));
                         }
                     }));
                 }
@@ -438,6 +442,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                             debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                             debug!("swapExactEthForTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
                                             let event = PendingPoolUpdateEvent {
+                                                block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                                 pool: mutated_pool,
                                                 pending_tx: tx,
                                                 timestamp: 0,
@@ -486,6 +491,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                             debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                             debug!("swapExactTokensForTokens: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
                                             let event = PendingPoolUpdateEvent {
+                                                block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                                 pool: mutated_pool,
                                                 pending_tx: tx,
                                                 timestamp: 0,
@@ -530,6 +536,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                             debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                             debug!("swapExactTokensForEth: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
                                             let event = PendingPoolUpdateEvent {
+                                                block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                                 pool: mutated_pool,
                                                 pending_tx: tx,
                                                 timestamp: 0,
@@ -572,6 +579,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                             };
                                             debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                             let event = PendingPoolUpdateEvent {
+                                                block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                                 pool: mutated_pool,
                                                 pending_tx: tx,
                                                 timestamp: 0,
@@ -616,6 +624,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                             };
                                             debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                             let event = PendingPoolUpdateEvent {
+                                                block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                                 pool: mutated_pool,
                                                 pending_tx: tx,
                                                 timestamp: 0,
@@ -661,6 +670,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                             debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                             debug!("swapEthForExactTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_in);
                                             let event = PendingPoolUpdateEvent {
+                                                block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                                 pool: mutated_pool,
                                                 pending_tx: tx,
                                                 timestamp: 0,
@@ -719,6 +729,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                                     debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                                     debug!("V2ExactInput: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
                                                     let event = PendingPoolUpdateEvent {
+                                                        block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                                         pool: mutated_pool,
                                                         pending_tx: tx.clone(),
                                                         timestamp: 0,
@@ -760,6 +771,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                                     };
                                                     debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                                     let event = PendingPoolUpdateEvent {
+                                                        block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                                         pool: mutated_pool,
                                                         pending_tx: tx.clone(),
                                                         timestamp: 0,

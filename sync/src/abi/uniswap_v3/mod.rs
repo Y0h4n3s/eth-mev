@@ -169,6 +169,7 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                     ParamType::Int(128),  // liquidityNet
                     ParamType::Uint(256),  // token a amount
                     ParamType::Uint(256),  // token b amount
+                    ParamType::Uint(256),  // block number
                     ParamType::Array(Box::new(ParamType::Tuple(vec![
                         ParamType::Bool,
                         ParamType::Int(24),
@@ -267,14 +268,19 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                                             .into_uint()
                                             .unwrap()
                                             .into(),
-                                        tick_bitmap_x_y: pool_data[13]
+                                        block_number: pool_data[13]
+                                            .to_owned()
+                                            .into_uint()
+                                            .unwrap()
+                                            .as_u64(),
+                                        tick_bitmap_x_y: pool_data[14]
                                             .to_owned()
                                             .into_array()
                                             .unwrap()
                                             .into_iter()
                                             .map(|t| UniswapV3TickData::from_tokens(t.into_tuple().unwrap()))
                                             .collect::<Vec<UniswapV3TickData>>(),
-                                        tick_bitmap_y_x: pool_data[14]
+                                        tick_bitmap_y_x: pool_data[15]
                                             .to_owned()
                                             .into_array()
                                             .unwrap()

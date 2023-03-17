@@ -7,5 +7,6 @@ pub struct Backrun {
     pub tx: Eip1559TransactionRequest,
     pub path: MevPath,
     pub profit: U256,
-    pub gas_cost: U256
+    pub gas_cost: U256,
+    pub block_number: u64
 }

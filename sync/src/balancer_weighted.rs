@@ -171,7 +171,7 @@ impl LiquidityProvider for BalancerWeighted {
             }).collect::<Vec<BalancerWeigtedMetadata>>();
 
 
-            for chunk in meta_data.chunks(68) {
+            for chunk in meta_data.chunks(65) {
                 if let Ok(balances) = abi::balancer::get_complete_pool_data_batch_request(chunk.to_vec(), eth_client.clone()).await {
                     for status in balances {
                         // skip pools with > 2 tokens for now
@@ -314,7 +314,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
 
                                         let event = PoolUpdateEvent {
                                             pool: pool.clone(),
-                                            block_number: 1,
+                                            block_number: status.block_number,
                                             timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                                         };
 

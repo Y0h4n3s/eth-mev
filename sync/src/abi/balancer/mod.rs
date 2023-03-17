@@ -23,7 +23,8 @@ abigen!(
 pub struct BalancerWeightedPoolStatus {
     pub id: String,
     pub tokens: Vec<String>,
-    pub balances: Vec<U256>
+    pub balances: Vec<U256>,
+    pub block_number: u64
 }
 
 pub async fn get_complete_pool_data_batch_request<M: Middleware>(
@@ -49,7 +50,8 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                 &[ParamType::Array(Box::new(ParamType::Tuple(vec![
                     ParamType::Uint(256),  // block number
                     ParamType::Array(Box::new(ParamType::Address)),
-                    ParamType::Array(Box::new(ParamType::Uint(256)))
+                    ParamType::Array(Box::new(ParamType::Uint(256))),
+                    ParamType::Uint(256)
 
                 ])))],
                 &return_data,
@@ -82,7 +84,11 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                                         .into_iter()
                                         .map(|t| t.into_uint().unwrap().into())
                                         .collect::<Vec<U256>>(),
-
+                                    block_number: pool_data[3]
+                                        .to_owned()
+                                        .into_uint()
+                                        .unwrap()
+                                        .as_u64(),
                                 };
                                 final_pairs.push(u_pair);
                             }

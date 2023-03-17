@@ -62,6 +62,7 @@ pub struct UniswapV3Metadata {
     pub fee: u32,
     pub liquidity: U256,
     pub sqrt_price: U256,
+    pub block_number: u64,
     pub tick: i32,
     pub tick_spacing: i32,
     pub liquidity_net: I256,
@@ -753,6 +754,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
 
                         let mut stream = events.stream().await.unwrap();
                         while let Some(e) = stream.next().await {
+                            let mut block = 0;
                             if let Some(mut pool_meta) = match pool.clone().provider {
                                 LiquidityProviders::UniswapV3(pool_meta) => Some(pool_meta),
                                 _ => None
@@ -764,6 +766,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                                     .unwrap()
                                     .to_owned();
                                 updated_meta.factory_address = pool_meta.factory_address;
+                                block = updated_meta.block_number;
 
                                 pool.x_amount = updated_meta.token_a_amount;
                                 pool.y_amount = updated_meta.token_b_amount;
@@ -773,7 +776,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                             }
                             let event = PoolUpdateEvent {
                                 pool: pool.clone(),
-                                block_number: 1,
+                                block_number: block,
                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                             };
 
@@ -898,6 +901,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                                     debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                                     debug!("V3ExactInput: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
                                                     let event = PendingPoolUpdateEvent {
+                                                        block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                                         pool: mutated_pool,
                                                         pending_tx: tx.clone(),
                                                         timestamp: 0,
@@ -953,6 +957,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                                                     };
                                                     debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                                     let event = PendingPoolUpdateEvent {
+                                                        block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                                         pool: mutated_pool,
                                                         pending_tx: tx.clone(),
                                                         timestamp: 0,

@@ -249,7 +249,7 @@ impl MevPath {
         let mut gas = 0;
         for p in path {
             match p.get_pool().provider.id() {
-                LiquidityProviderId::SushiSwap | LiquidityProviderId::UniswapV2  | LiquidityProviderId::Solidly => gas += 150000,
+                LiquidityProviderId::SushiSwap | LiquidityProviderId::UniswapV2  | LiquidityProviderId::Solidly | LiquidityProviderId::Pancakeswap=> gas += 150000,
                 LiquidityProviderId::UniswapV3 | LiquidityProviderId::BalancerWeighted => gas += 250000
             }
         }
@@ -718,7 +718,7 @@ impl MevPath {
                             }
 
                                 match pool.provider.id() {
-                                    LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap | LiquidityProviderId::Solidly => {
+                                    LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap | LiquidityProviderId::Solidly | LiquidityProviderId::Pancakeswap => {
                                         // update with reserves
                                         let (function, pay_to, token) = if sender == asset_reciever {
                                             (UNISWAP_V2_EXACT_OUT_PAY_TO_SENDER.to_string(), "".to_string(), asset_token[2..].to_string())
@@ -1097,7 +1097,7 @@ impl MevPath {
 
     }
 
-    pub fn get_backrun_for_update(&self, pending_tx: Transaction, updated_pool: Pool, gas_lookup: &HashMap<String, U256>) -> Option<Backrun> {
+    pub fn get_backrun_for_update(&self, pending_tx: Transaction, updated_pool: Pool, gas_lookup: &HashMap<String, U256>, block_number: u64) -> Option<Backrun> {
         let mut mock = self.clone();
         mock.update(updated_pool);
         if let Some((profit, tx)) = mock.get_transaction() {
@@ -1117,7 +1117,8 @@ impl MevPath {
                 pending_tx,
                 path: mock,
                 profit,
-                gas_cost
+                gas_cost,
+                block_number
             })
         } else {
             None

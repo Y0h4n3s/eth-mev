@@ -307,7 +307,7 @@ DETACH DELETE n",
 
             }
             let query= format!("MATCH path=(t:Token{{address: '{}'}}){}->(t) WHERE {} return nodes(path);", CHECKED_COIN.clone(), steps, where_clause);
-            info!("{}", query);
+            debug!("{}", query);
             let res = conn.run(query, None, None).await?;
             let pull_meta = Metadata::from_iter(vec![("n", 10000)]);
             let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
@@ -479,7 +479,7 @@ DETACH DELETE n",
     let provider = ethers_providers::Provider::<Http>::connect(&node_url).await;
     let block = U64::from(16836347);
     let latest_block = provider.get_block_number().await.unwrap();
-    let nonce = provider.get_transaction_count(signer_wallet_address, Some(BlockId::from(latest_block))).await.unwrap();
+    let nonce = provider.get_transaction_count(signer_wallet_address, Some(BlockId::from(latest_block))).await.unwrap() - U256::from(1);
 
     let mut client = Arc::new(
         FlashbotsMiddleware::new(
@@ -496,11 +496,14 @@ DETACH DELETE n",
         join_handles.push(tokio::runtime::Handle::current().spawn(async move {
             let client = client.clone();
             let function = match pool.provider.id() {
-                LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap | LiquidityProviderId::Solidly => {
+                LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap | LiquidityProviderId::Solidly | LiquidityProviderId::Pancakeswap => {
                     "0e000000".to_string()
                 }
-                LiquidityProviderId::UniswapV3 | LiquidityProviderId::BalancerWeighted => {
+                LiquidityProviderId::UniswapV3  => {
                     "00000600".to_string()
+                }
+                LiquidityProviderId::BalancerWeighted => {
+                    "10000000".to_string()
                 }
             };
 
@@ -619,7 +622,8 @@ DETACH DELETE n",
                             path: route,
                             tx,
                             profit,
-                            gas_cost
+                            gas_cost,
+                            block_number: event.block_number
                         })
                     } else {
                         None
@@ -663,7 +667,7 @@ DETACH DELETE n",
                     continue;
                 };
                 let mut updated = market_routes.into_par_iter().filter_map(|mut route| {
-                    route.get_backrun_for_update(event.pending_tx.clone(), updated_market.clone(), &gas_lookup)
+                    route.get_backrun_for_update(event.pending_tx.clone(), updated_market.clone(), &gas_lookup, event.block_number)
                 }).collect::<Vec<Backrun>>();
 
                 for opportunity in updated {

@@ -25,6 +25,7 @@ contract BalancerWeightedDataAggregator {
         bytes32 id;
         address[] tokens;
         uint256[] balances;
+        uint256 blockNumber;
     }
 
     constructor(bytes32[] memory poolIds) {
@@ -43,6 +44,7 @@ contract BalancerWeightedDataAggregator {
             }
             data.tokens = token;
             data.id = id;
+            data.blockNumber = block.number;
 
             allPoolData[i] = data;
         }
@@ -53,7 +55,7 @@ contract BalancerWeightedDataAggregator {
         // Return from the start of the data (discarding the original data address)
         // up to the end of the memory used
             let dataStart := add(_abiEncodedData, 0x20)
-//        return (dataStart, sub(msize(), dataStart))
+        return (dataStart, sub(msize(), dataStart))
         }
     }
 

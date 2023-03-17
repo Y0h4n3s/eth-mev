@@ -85,6 +85,7 @@ contract UniswapV3DataAggregator {
         int128 liquidityNet;
         uint256 tokenAAmount;
         uint256 tokenBAmount;
+        uint256 blockNumber;
         TickData[] tickBitmapXY;
         TickData[] tickBitmapYX;
     }
@@ -182,6 +183,8 @@ contract UniswapV3DataAggregator {
             poolData.tickBitmapYX = getTickBitmap(poolAddress, tick, false, poolData.tickSpacing);
             poolData.tokenAAmount = IERC20(poolData.tokenA).balanceOf(poolAddress);
             poolData.tokenBAmount = IERC20(poolData.tokenB).balanceOf(poolAddress);
+            poolData.blockNumber = block.number;
+
             allPoolData[i] = poolData;
         }
 
@@ -191,7 +194,7 @@ contract UniswapV3DataAggregator {
         // Return from the start of the data (discarding the original data address)
         // up to the end of the memory used
             let dataStart := add(_abiEncodedData, 0x20)
-            //return (dataStart, sub(msize(), dataStart))
+            return (dataStart, sub(msize(), dataStart))
         }
     }
     function getTickBitmap(address pool, int24 currentTick, bool zeroForOne, int24 tickSpacing) public returns (TickData[] memory tickData) {

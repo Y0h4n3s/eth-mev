@@ -62,7 +62,8 @@ pub enum LiquidityProviders {
     UniswapV3(UniswapV3Metadata),
     SushiSwap(SushiSwapMetadata),
     BalancerWeighted(BalancerWeigtedMetadata),
-    Solidly(UniswapV2Metadata)
+    Solidly(UniswapV2Metadata),
+    Pancakeswap(UniswapV2Metadata)
 }
 
 #[derive(Deserialize, Serialize,Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
@@ -71,7 +72,8 @@ pub enum LiquidityProviderId {
     UniswapV3,
     SushiSwap,
     BalancerWeighted,
-    Solidly
+    Solidly,
+    Pancakeswap
 }
 
 impl<T: Into<String>> From<T> for LiquidityProviders {
@@ -85,6 +87,7 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
             "3" => LiquidityProviders::SushiSwap(Default::default()),
             "4" => LiquidityProviders::BalancerWeighted(Default::default()),
             "5" => LiquidityProviders::Solidly(Default::default()),
+            "6" => LiquidityProviders::Pancakeswap(Default::default()),
             val => match val.find_substring("UniswapV2") {
                 Some(v) => serde_json::from_str(val).unwrap(),
                 None => {
@@ -98,7 +101,17 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
                                         Some(v) => {
                                             serde_json::from_str(val).unwrap()
                                         },
-                                        None => panic!("Invalid Liquidity Provider {}", val)
+                                        None => match val.find_substring("Solidly") {
+                                            Some(v) => {
+                                                serde_json::from_str(val).unwrap()
+                                            },
+                                            None => match val.find_substring("Pancake") {
+                                                Some(v) => {
+                                                    serde_json::from_str(val).unwrap()
+                                                },
+                                                None => panic!("Invalid Liquidity Provider {}", val)
+                                            }
+                                        }
                                     }
                                 },
                             }
@@ -118,6 +131,7 @@ impl From<LiquidityProviders> for u8 {
             LiquidityProviders::SushiSwap(_) => 3,
             LiquidityProviders::BalancerWeighted(_) => 4,
             LiquidityProviders::Solidly(_) => 5,
+            LiquidityProviders::Pancakeswap(_) => 6,
         }
     }
 }
@@ -135,6 +149,7 @@ impl LiquidityProviders {
         match self {
             LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::Solidly(meta) => Box::new(CpmmCalculator::new()),
+            LiquidityProviders::Pancakeswap(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::UniswapV3(meta) => {
                 Box::new(UniswapV3Calculator::new(meta.clone()))
             }
@@ -151,14 +166,21 @@ impl LiquidityProviders {
                     factory_address: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f".to_string(),
                     ..meta.clone()
                 };
-                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers))
+                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers, LiquidityProviderId::UniswapV2))
             }
              LiquidityProviders::Solidly(meta) => {
                 let metadata = UniswapV2Metadata {
                     factory_address: "0x777de5Fe8117cAAA7B44f396E93a401Cf5c9D4d6".to_string(),
                     ..meta.clone()
                 };
-                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers))
+                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers, LiquidityProviderId::Solidly))
+            }
+            LiquidityProviders::Pancakeswap(meta) => {
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0x1097053Fd2ea711dad45caCcc45EfF7548fCB362".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers, LiquidityProviderId::Pancakeswap))
             }
             LiquidityProviders::UniswapV3(meta) => {
                 let metadata = UniswapV3Metadata {
@@ -192,6 +214,7 @@ impl LiquidityProviders {
             LiquidityProviders::SushiSwap(_) => LiquidityProviderId::SushiSwap,
             LiquidityProviders::BalancerWeighted(_) => LiquidityProviderId::BalancerWeighted,
             LiquidityProviders::Solidly(_) => LiquidityProviderId::Solidly,
+            LiquidityProviders::Pancakeswap(_) => LiquidityProviderId::Pancakeswap,
 
             
         }
@@ -204,6 +227,7 @@ impl LiquidityProviders {
             LiquidityProviders::SushiSwap(meta) => meta.factory_address.clone(),
             LiquidityProviders::BalancerWeighted(meta) => meta.factory_address.clone(),
             LiquidityProviders::Solidly(meta) => meta.factory_address.clone(),
+            LiquidityProviders::Pancakeswap(meta) => meta.factory_address.clone(),
         }
     }
 }
@@ -248,6 +272,7 @@ impl PoolInfo for Pool {
         match self.provider.id() {
             LiquidityProviderId::UniswapV2 => true,
             LiquidityProviderId::Solidly => true,
+            LiquidityProviderId::Pancakeswap => true,
             LiquidityProviderId::UniswapV3 => true,
             LiquidityProviderId::SushiSwap=> true,
             LiquidityProviderId::BalancerWeighted=> false,
@@ -258,6 +283,7 @@ impl PoolInfo for Pool {
         match self.provider.id() {
             LiquidityProviderId::UniswapV2 => false,
             LiquidityProviderId::Solidly => false,
+            LiquidityProviderId::Pancakeswap => false,
             LiquidityProviderId::UniswapV3 => false,
             LiquidityProviderId::SushiSwap => false,
             LiquidityProviderId::BalancerWeighted => false,
@@ -302,7 +328,8 @@ pub struct PoolUpdateEvent {
 pub struct PendingPoolUpdateEvent {
     pub pool: Pool,
     pub pending_tx: Transaction,
-    pub timestamp: u128
+    pub timestamp: u128,
+    pub block_number: u64
 }
 
 impl EventSource for PoolUpdateEvent {

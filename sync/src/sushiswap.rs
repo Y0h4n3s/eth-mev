@@ -8,7 +8,7 @@ use crate::abi::IERC20;
 use crate::abi::{SyncFilter, UniswapV2Factory};
 use bincode::{Decode, Encode};
 use ethers::core::types::ValueOrArray;
-use ethers::prelude::{abigen, Abigen, H160, H256, U256};
+use ethers::prelude::{abigen, Abigen, H160, H256, U256, U64};
 use ethers_providers::{Middleware, Provider, StreamExt, Ws};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock, Semaphore};
@@ -367,6 +367,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                     debug!("Sushiswap: swapExactEthForTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
                                     let event = PendingPoolUpdateEvent {
                                         pool: mutated_pool,
+                                        block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                         pending_tx: tx,
                                         timestamp: 0,
                                     };
@@ -414,6 +415,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                     debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     debug!("Sushiswap: swapExactTokensForTokens: {} {:?} {} {:?}", decoded.amount_in, decoded, pool, amount_out);
                                     let event = PendingPoolUpdateEvent {
+                                        block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                         pool: mutated_pool,
                                         pending_tx: tx,
                                         timestamp: 0,
@@ -460,6 +462,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                     debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     debug!("Sushiswap: swapExactTokensForEth: {} {:?} {} {:?}", tx.value, decoded, pool, amount_out);
                                     let event = PendingPoolUpdateEvent {
+                                        block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                         pool: mutated_pool,
                                         pending_tx: tx,
                                         timestamp: 0,
@@ -504,6 +507,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                     };
                                     debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     let event = PendingPoolUpdateEvent {
+                                        block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                         pool: mutated_pool,
                                         pending_tx: tx,
                                         timestamp: 0,
@@ -549,6 +553,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                     };
                                     debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     let event = PendingPoolUpdateEvent {
+                                        block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                         pool: mutated_pool,
                                         pending_tx: tx,
                                         timestamp: 0,
@@ -594,6 +599,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                                     debug!("Pre balance X: {} Y: {}\nPost balance X: {} Y: {}", pool.x_amount, pool.y_amount, mutated_pool.x_amount, mutated_pool.y_amount);
                                     debug!("Sushiswap: swapEthForExactTokens: {} {:?} {} {:?}", tx.value, decoded, pool, amount_in);
                                     let event = PendingPoolUpdateEvent {
+                                        block_number: tx.block_number.unwrap_or(U64::from(0)).as_u64(),
                                         pool: mutated_pool,
                                         pending_tx: tx,
                                         timestamp: 0,
