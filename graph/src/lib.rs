@@ -477,9 +477,8 @@ DETACH DELETE n",
     let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
     let signer_wallet_address = signer.address();
     let provider = ethers_providers::Provider::<Http>::connect(&node_url).await;
-    let block = U64::from(16836347);
     let latest_block = provider.get_block_number().await.unwrap();
-    let nonce = provider.get_transaction_count(signer_wallet_address, Some(BlockId::from(latest_block))).await.unwrap() - U256::from(1);
+    let nonce = provider.get_transaction_count(signer_wallet_address, Some(BlockId::from(latest_block))).await.unwrap();
 
     let mut client = Arc::new(
         FlashbotsMiddleware::new(
@@ -519,7 +518,7 @@ DETACH DELETE n",
                 chain_id: Some(U64::from(1)),
                 max_priority_fee_per_gas: None,
                 // update later
-                max_fee_per_gas: Some(U256::from(22500000000 as u128)),
+                max_fee_per_gas: Some(U256::from(32500000000 as u128)),
                 gas: Some(U256::from(500000)),
                 nonce: Some(nonce),
                 value: None,
@@ -530,7 +529,7 @@ DETACH DELETE n",
             let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
             let signed_tx = typed_tx.rlp_signed(&tx_sig);
             let mut bundle = BundleRequest::new();
-            bundle = bundle.push_transaction(signed_tx).set_block(block).set_simulation_block(block).set_simulation_timestamp(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+            bundle = bundle.push_transaction(signed_tx).set_block(latest_block).set_simulation_block(latest_block).set_simulation_timestamp(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
 
             let simulation_result = client.simulate_bundle(&bundle).await;
 

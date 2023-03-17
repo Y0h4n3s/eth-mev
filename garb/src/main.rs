@@ -522,16 +522,16 @@ impl FlashBotsBundleHandler {
             match req.send().await {
                 Ok(res) => {
                     debug!("ResponseMeta: {:?}", res);
-                    warn!("Response: {:?}", res.text().await)
+                    warn!("{}: Response: {:?}",handler_meta.endpoint(), res.text().await)
                 } Err(e) => {
-                    error!("Flashbots Relay Error: {:?}", e)
+                    error!("{}: Flashbots Relay Error: {:?}",handler_meta.endpoint(), e)
                 }
             }
 
         }
     }
 
-    async fn simulate(handler_meta: BundleHandlers, block: u64) {
+    async fn simulate(handler_meta: BundleHandlers, block: u64, only_successful: bool) {
         let node_url = "http://65.21.198.115:8545".to_string();
 
         let provider = ethers_providers::Provider::<Http>::connect(&node_url).await;
@@ -560,7 +560,15 @@ impl FlashBotsBundleHandler {
                     let simulation_result = client.simulate_bundle(&bundle).await;
 
                     if let Ok(res) = simulation_result {
-                        info!("{}: {:?}", handler_meta.endpoint(), res);
+                        if only_successful {
+                            if res.transactions.iter().all(|tx| tx.error.is_none()) {
+                                info!("{}: {:?}", handler_meta.endpoint(), res);
+                                
+                            }
+                        } else {
+                            info!("{}: {:?}", handler_meta.endpoint(), res);
+
+                        }
                     } else {
                         error!("{}: Failed to simulate transaction {:?}",handler_meta.endpoint(), simulation_result.unwrap_err())
                     }
