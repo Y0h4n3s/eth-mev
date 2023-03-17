@@ -39,6 +39,7 @@ pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
           .unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
 });
 
+pub const POLL_INTERVAL: u64 = 100;
 use nom::FindSubstring;
 use num_bigfloat::{BigFloat, RoundingMode};
 use tracing::info;
@@ -259,7 +260,7 @@ impl PoolInfo for Pool {
             LiquidityProviderId::Solidly => false,
             LiquidityProviderId::UniswapV3 => false,
             LiquidityProviderId::SushiSwap => false,
-            LiquidityProviderId::BalancerWeighted => true,
+            LiquidityProviderId::BalancerWeighted => false,
         }
     }
 }
@@ -526,8 +527,17 @@ impl Calculator for BalancerWeightedCalculator {
         let exponent = self.div_down(wi, wo);
         let power = self.pow_up(base,exponent);
         let amount_out = self.mul_down(bo, power.sub(&BigFloat::from(1)));
-        let amount_out_uint = U256::from(amount_out.to_u128().unwrap());
-        Ok(amount_out_uint)
+        let amount_out_with_fee = self.div_up(
+            amount_out,
+            BigFloat::from(1).sub(&BigFloat::from_str(&self.meta.swap_fee.to_string()).unwrap().div(&BigFloat::from(10).pow(&BigFloat::from(18)))));
+
+        if let Some(amount_out_uint) = amount_out_with_fee.to_u128() {
+            Ok(U256::from(amount_out_uint))
+
+        } else {
+            Err(Error::msg("Casting Error"))
+
+        }
     }
 
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
@@ -554,8 +564,16 @@ impl Calculator for BalancerWeightedCalculator {
         let power = self.pow_up(base, exponent);
         // info!("bo: {} bi: {} ao: {} base: {} exponent: {} power: {}", bo.to_u128().unwrap(), bi.to_u128().unwrap(), ao.to_u128().unwrap(), base, exponent, power);
         let amount_in = self.mul_up(bi, power.sub(&BigFloat::from(1)));
-        let amount_in_uint = U256::from(amount_in.to_u128().unwrap());
-        Ok(amount_in_uint)
+        let amount_in_with_fee = self.div_up(
+            amount_in,
+            BigFloat::from(1).sub(&BigFloat::from_str(&self.meta.swap_fee.to_string()).unwrap().div(&BigFloat::from(10).pow(&BigFloat::from(18)))));
+        if let Some(amount_in_uint) = amount_in_with_fee.to_u128() {
+            Ok(U256::from(amount_in_uint))
+
+        } else {
+            Err(Error::msg("Casting Error"))
+
+        }
 
     }
 

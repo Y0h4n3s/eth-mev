@@ -17,7 +17,7 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
 
 use crate::types::UniSwapV2Pair;
-use crate::{CpmmCalculator, LiquidityProviderId, Meta, PendingPoolUpdateEvent, PoolUpdateEvent};
+use crate::{CpmmCalculator, LiquidityProviderId, Meta, PendingPoolUpdateEvent, POLL_INTERVAL, PoolUpdateEvent};
 use crate::{Curve, LiquidityProvider, LiquidityProviders};
 use crate::{EventEmitter, EventSource, Pool};
 use async_std::sync::Arc;
@@ -223,12 +223,14 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
             let pls = pools.clone();
             rt.block_on(async move {
                 let mut joins = vec![];
-                let clnt = Arc::new(
-                    Provider::<Ws>::connect(&node_url)
-                        .await
-                        .unwrap(),
-                );
 
+                let mut provider = Provider::<Ws>::connect(&node_url)
+                    .await
+                    .unwrap();
+                provider.set_interval(Duration::from_millis(POLL_INTERVAL));
+                let clnt = Arc::new(
+                    provider
+                );
                 let latest_block = clnt.get_block_number().await.unwrap();
 
                 for pool in pls.read().await.values() {
@@ -354,10 +356,12 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
             let pools = pools.clone();
 
             rt.block_on(async move {
+                let mut provider = Provider::<Ws>::connect(&node_url)
+                    .await
+                    .unwrap();
+                provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let client = Arc::new(
-                    Provider::<Ws>::connect(&node_url)
-                        .await
-                        .unwrap(),
+                    provider
                 );
 
                 let latest_block = client.get_block_number().await.unwrap();

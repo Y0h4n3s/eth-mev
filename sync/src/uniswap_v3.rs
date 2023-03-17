@@ -46,7 +46,7 @@ use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_T
 use tracing::{info, debug, trace, error};
 use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3Pool, UniswapV3TickData};
 use crate::node_dispatcher::NodeDispatcher;
-
+use crate::POLL_INTERVAL;
 const TVL_FILTER_LEVEL: i32 = 1;
 // Todo: add word in here to update and remove middleware use in simulate_swap
 #[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
@@ -727,12 +727,13 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
             let pools = pools.clone();
             rt.block_on( async move {
                 let mut joins = vec![];
+                let mut provider = Provider::<Ws>::connect(&node_url)
+                    .await
+                    .unwrap();
+                provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let client = Arc::new(
-                    Provider::<Ws>::connect(&node_url)
-                          .await
-                          .unwrap(),
+                    provider
                 );
-    
                 let latest_block = client.get_block_number().await.unwrap();
     
                 
@@ -800,10 +801,12 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
             let pools = pools.clone();
 
             rt.block_on(async move {
+                let mut provider = Provider::<Ws>::connect(&node_url)
+                    .await
+                    .unwrap();
+                provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let client = Arc::new(
-                    Provider::<Ws>::connect(&node_url)
-                        .await
-                        .unwrap(),
+                    provider
                 );
                 let latest_block = client.get_block_number().await.unwrap();
                 let pending_stream = client.watch_pending_transactions().await.unwrap();

@@ -20,7 +20,7 @@ use ethers::abi::{AbiEncode, ParamType, StateMutability, Token};
 use itertools::Itertools;
 use ethers::types::{U256, I256};
 use ethers::types::transaction::eip2930::AccessList;
-use tracing::{warn, trace, error, info};
+use tracing::{debug, warn, trace, error, info};
 use crate::backrun::Backrun;
 
 const MINIMUM_PATH_LENGTH: usize = 2;
@@ -37,6 +37,9 @@ const UNISWAP_V2_EXACT_OUT_PAY_TO_SELF: &str = "0e000000";
 const UNISWAP_V2_EXACT_IN_PAY_TO_SELF: &str = "00000082";
 const UNISWAP_V2_EXACT_OUT_PAY_TO_ADDRESS: &str = "000000e5";
 const UNISWAP_V2_EXACT_IN_PAY_TO_ADDRESS: &str = "00000059";
+
+const BALANCER_EXACT_OUT_PAY_TO_SENDER: &str = "20000000";
+const BALANCER_EXACT_OUT_PAY_TO_SELF: &str = "10000000";
 
 const PAY_ADDRESS: &str = "00000081";
 const PAY_SENDER: &str = "00000080";
@@ -412,7 +415,7 @@ impl MevPath {
                                     balance
                                         .get_mut(&pool.address)
                                         .unwrap()
-                                        .insert(debt_token, sub_i256(bal, debt));
+                                        .insert(debt_token.clone(), sub_i256(bal, debt));
                                     let bal = *balance
                                         .get(&asset_reciever)
                                         .unwrap()
@@ -421,7 +424,7 @@ impl MevPath {
                                     balance
                                         .get_mut(&asset_reciever)
                                         .unwrap()
-                                        .insert(asset_token, bal + (asset));
+                                        .insert(asset_token.clone(), bal + (asset));
                                 } else {
                                     right = mid;
                                     mid = (left + right) / 2.0;
@@ -570,7 +573,7 @@ impl MevPath {
                                     balance
                                         .get_mut(&pool.address)
                                         .unwrap()
-                                        .insert(debt_token, sub_i256(bal, debt));
+                                        .insert(debt_token.clone(), sub_i256(bal, debt));
                                     let bal = *balance
                                         .get(&asset_reciever)
                                         .unwrap()
@@ -579,7 +582,7 @@ impl MevPath {
                                     balance
                                         .get_mut(&asset_reciever)
                                         .unwrap()
-                                        .insert(asset_token, bal + (asset));
+                                        .insert(asset_token.clone(), bal + (asset));
                                 } else {
                                     right = mid;
                                     mid = (left + right) / 2.0;
@@ -643,7 +646,7 @@ impl MevPath {
                                     balance
                                         .get_mut(&asset_reciever)
                                         .unwrap()
-                                        .insert(asset_token, bal + (asset));
+                                        .insert(asset_token.clone(), bal + (asset));
                                 } else {
                                     right = mid;
                                     mid = (left + right) / 2.0;
@@ -685,7 +688,7 @@ impl MevPath {
                                     balance
                                         .get_mut(&pool.address)
                                         .unwrap()
-                                        .insert(debt_token, sub_i256(bal, debt));
+                                        .insert(debt_token.clone(), sub_i256(bal, debt));
                                     let bal = *balance
                                         .get(&asset_reciever)
                                         .unwrap()
@@ -694,7 +697,7 @@ impl MevPath {
                                     balance
                                         .get_mut(&asset_reciever)
                                         .unwrap()
-                                        .insert(asset_token, bal + (asset));
+                                        .insert(asset_token.clone(), bal + (asset));
                                 }
                                 else {
                                     right = mid;
@@ -714,83 +717,22 @@ impl MevPath {
                                 }
                             }
 
-                            if step.is_exact_in() {
                                 match pool.provider.id() {
                                     LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap | LiquidityProviderId::Solidly => {
                                         // update with reserves
-                                        let (function, pay_to) = if sender == asset_reciever {
-                                            (UNISWAP_V2_EXACT_IN_PAY_TO_SENDER.to_string(), "".to_string())
+                                        let (function, pay_to, token) = if sender == asset_reciever {
+                                            (UNISWAP_V2_EXACT_OUT_PAY_TO_SENDER.to_string(), "".to_string(), asset_token[2..].to_string())
                                         } else if asset_reciever != contract_address {
-                                            (UNISWAP_V2_EXACT_IN_PAY_TO_ADDRESS.to_string(), Address::from_str(&asset_reciever).unwrap().encode_hex()[2..].to_string())
+                                            (UNISWAP_V2_EXACT_OUT_PAY_TO_ADDRESS.to_string(), asset_reciever[2..].to_string(), asset_token[2..].to_string())
                                         } else {
-                                            (UNISWAP_V2_EXACT_IN_PAY_TO_SELF.to_string(), "".to_string())
-                                        };
-                                        let packed_asset = Self::encode_packed(a);
-                                        let packed_debt = Self::encode_packed(d);
-                                        instruction.push(
-                                            function +
-                                                if pool.x_to_y { "0000000000000000000000000000000000000000000000000000000000000001" } else { "0000000000000000000000000000000000000000000000000000000000000000" } +
-                                                &Address::from_str(&pool.address).unwrap().encode_hex()[2..] +
-                                                &Address::from_str(&dt).unwrap().encode_hex()[2..] +
-                                                &pay_to +
-                                                &Self::encode_int(a) +
-                                                &Self::encode_int(d)
-                                        )
-                                    }
-                                    LiquidityProviderId::UniswapV3 => {
-                                        // update with ...
-                                        let (function, pay_to) = if sender == asset_reciever {
-                                            (UNISWAP_V3_EXACT_IN_PAY_TO_SENDER.to_string(), "".to_string())
-                                        } else if asset_reciever != contract_address {
-                                            (UNISWAP_V3_EXACT_IN_PAY_TO_ADDRESS.to_string(), Address::from_str(&asset_reciever).unwrap().encode_hex()[2..].to_string())
-                                        } else {
-                                            (UNISWAP_V3_EXACT_IN_PAY_TO_SELF.to_string(), "".to_string())
-                                        };
-                                        instruction.push(
-                                            function +
-                                                if pool.x_to_y { "0000000000000000000000000000000000000000000000000000000000000001" } else { "0000000000000000000000000000000000000000000000000000000000000000" } +
-                                                &Address::from_str(&pool.address).unwrap().encode_hex()[2..] +
-                                                &pay_to +
-                                                &Self::encode_int(d)
-                                        )
-                                    }
-                                    LiquidityProviderId::BalancerWeighted => {
-                                        // update with ...
-                                        let (function, pay_to) = if sender == asset_reciever {
-                                            (UNISWAP_V3_EXACT_OUT_PAY_TO_SENDER.to_string(), "".to_string())
-                                        } else if asset_reciever != contract_address {
-                                            (UNISWAP_V3_EXACT_OUT_PAY_TO_ADDRESS.to_string(), asset_reciever[2..].to_string())
-                                        } else {
-                                            (UNISWAP_V3_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string())
-                                        };
-                                        let packed_asset = Self::encode_packed(a);
-                                        instruction.push(
-                                            function +
-                                                if pool.x_to_y { "01" } else { "00" } +
-                                                &pool.address[2..] +
-                                                &pay_to +
-                                                &(packed_asset.len() as u8).encode_hex()[64..] +
-                                                &packed_asset
-                                        )
-                                    }
-
-                                }
-                            } else {
-                                match pool.provider.id() {
-                                    LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap | LiquidityProviderId::Solidly => {
-                                        // update with reserves
-                                        let (function, pay_to) = if sender == asset_reciever {
-                                            (UNISWAP_V2_EXACT_OUT_PAY_TO_SENDER.to_string(), "".to_string())
-                                        } else if asset_reciever != contract_address {
-                                            (UNISWAP_V2_EXACT_OUT_PAY_TO_ADDRESS.to_string(), asset_reciever[2..].to_string())
-                                        } else {
-                                            (UNISWAP_V2_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string())
+                                            (UNISWAP_V2_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string(), "".to_string())
                                         };
                                         let packed_asset = Self::encode_packed(a);
                                         let packed_debt = Self::encode_packed(d);
                                         instruction.push(
                                             function +
                                                 if pool.x_to_y { "01" } else { "00" } +
+                                                &token +
                                                 &pool.address[2..] +
                                                 &pay_to +
                                                 &(packed_asset.len() as u8).encode_hex()[64..] +
@@ -820,25 +762,32 @@ impl MevPath {
                                     LiquidityProviderId::BalancerWeighted => {
                                         // update with ...
                                         let (function, pay_to) = if sender == asset_reciever {
-                                            (UNISWAP_V3_EXACT_OUT_PAY_TO_SENDER.to_string(), "".to_string())
+                                            (BALANCER_EXACT_OUT_PAY_TO_SENDER.to_string(), "".to_string())
                                         } else if asset_reciever != contract_address {
-                                            (UNISWAP_V3_EXACT_OUT_PAY_TO_ADDRESS.to_string(), asset_reciever[2..].to_string())
+                                            (BALANCER_EXACT_OUT_PAY_TO_SENDER.to_string(), asset_reciever[2..].to_string())
                                         } else {
-                                            (UNISWAP_V3_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string())
+                                            (BALANCER_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string())
                                         };
                                         let packed_asset = Self::encode_packed(a);
+                                        let packed_debt = Self::encode_packed(d);
+                                        let meta = match &pool.provider {
+                                            LiquidityProviders::BalancerWeighted(meta) => meta,
+                                            _ => panic!()
+                                        };
                                         instruction.push(
                                             function +
-                                                if pool.x_to_y { "01" } else { "00" } +
-                                                &pool.address[2..] +
-                                                &pay_to +
+                                                &meta.id[2..] +
+                                                &debt_token[2..] +
+                                                &asset_token[2..] +
                                                 &(packed_asset.len() as u8).encode_hex()[64..] +
-                                                &packed_asset
+                                                &packed_asset +
+                                                &(packed_debt.len() as u8).encode_hex()[64..] +
+                                                &packed_debt
                                         )
                                     }
 
                                 }
-                            }
+
 
 
                             // step is complete if we got here
@@ -977,22 +926,24 @@ impl MevPath {
                 mid = (left + right) / 2.0;
             }
         }
+        // debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+        //
         // if steps_meta.len() > 0 {
-        //     info!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
+        //     debug!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
         //     for step in &steps_meta[best_route_index] {
-        //         info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+        //         debug!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
         //     }
-        //     info!("\n\n\n");
+        //     debug!("\n\n\n");
         // }
 
         if best_route_profit > I256::from(0) {
-                info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+                debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
 
-                info!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
+                debug!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
                 for step in &steps_meta[best_route_index] {
-                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+                    debug!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
                 }
-                info!("\n\n\n");
+                debug!("\n\n\n");
 
             let mut final_data = "".to_string();
             for ix in instructions[best_route_index].clone() {

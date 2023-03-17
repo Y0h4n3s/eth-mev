@@ -49,7 +49,7 @@ use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_T
 use tracing::{info, debug, trace, error, warn};
 use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3Pool, UniswapV3TickData};
 use crate::node_dispatcher::NodeDispatcher;
-
+use crate::POLL_INTERVAL;
 
 fn from_float_str<'de, D>(deserializer: D) -> Result<U256, D::Error>
     where
@@ -247,12 +247,13 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
             let mut rt = Runtime::new().unwrap();
             let pools = pools.clone();
             rt.block_on(async move {
+                let mut provider = Provider::<Ws>::connect(&node_url)
+                    .await
+                    .unwrap();
+                provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let client = Arc::new(
-                    Provider::<Ws>::connect(&node_url)
-                        .await
-                        .unwrap(),
+                    provider
                 );
-
                 let latest_block = client.get_block_number().await.unwrap();
                 let contract = Vault::new(Address::from_str("0xBA12222222228d8Ba445958a75a0704d566BF2C8").unwrap(), client.clone());
 
@@ -261,6 +262,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
 
                 while let Some(Ok(e)) = stream.next().await {
                     let client = client.clone();
+
                     let pools = pools.clone();
                     let factory_address = factory_address.clone();
                     let subscribers = subscribers.read().unwrap();

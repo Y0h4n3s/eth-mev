@@ -274,14 +274,14 @@ DETACH DELETE n",
     let path_lookup1 = Arc::new(RwLock::new(
         HashMap::<Pool, Vec<MevPath>>::new(),
     ));
-        let max_intermidiate_nodes = 3;
+        let max_intermidiate_nodes = 4;
 
         for i in 2..max_intermidiate_nodes {
             info!("Preparing {} step routes ", i);
             let path_lookup = path_lookup.clone();
             let pool = pool.clone();
             let mut conn = pool.get().await?;
-            let permits = Arc::new(Semaphore::new(1));
+            let permits = Arc::new(Semaphore::new(30));
             // OLD MATCHER: match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)
             let mut steps = "".to_string();
             let mut where_clause = "1 = 1".to_string();
@@ -445,13 +445,6 @@ DETACH DELETE n",
                 for path in paths {
                     total_paths += path.path.len();
                 }
-                // for (forf, path) in paths {
-                //     info!("`````````````````````` Tried Route ``````````````````````");
-                //     for (i, pool) in path.iter().enumerate() {
-                //         info!("{}. {}", i + 1, pool);
-                //     }
-                //     info!("\n\n");
-                // }
             }
             info!("Done {} step {}", i, total_paths);
         }
@@ -464,13 +457,6 @@ DETACH DELETE n",
             total_paths += path.path.len();
         }
 
-        // for (forf, path) in paths {
-        //     info!("`````````````````````` Tried Route ``````````````````````");
-        //     for (i, pool) in path.iter().enumerate() {
-        //         info!("{}. {}", i + 1, pool);
-        //     }
-        //     info!("\n\n");
-        // }
     }
     info!("Found {} routes", total_paths);
     let mut uniq = path_lookup1
@@ -485,14 +471,15 @@ DETACH DELETE n",
     //	return Ok(());
     info!("Registering Gas consumption for {} pool transactions", uniq.len());
     let gas_map: Arc<Mutex<HashMap<String, U256>>> = Arc::new(Mutex::new(HashMap::new()));
-    let node_url = "https://rpc.flashbots.net".to_string();
+    let node_url = "http://65.21.198.115:8545".to_string();
     let gas_lookup = gas_map.clone();
 
     let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
     let signer_wallet_address = signer.address();
     let provider = ethers_providers::Provider::<Http>::connect(&node_url).await;
     let block = U64::from(16836347);
-    let nonce = provider.get_transaction_count(signer_wallet_address, None).await.unwrap();
+    let latest_block = provider.get_block_number().await.unwrap();
+    let nonce = provider.get_transaction_count(signer_wallet_address, Some(BlockId::from(latest_block))).await.unwrap();
 
     let mut client = Arc::new(
         FlashbotsMiddleware::new(

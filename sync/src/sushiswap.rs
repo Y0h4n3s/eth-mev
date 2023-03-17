@@ -13,7 +13,7 @@ use ethers_providers::{Middleware, Provider, StreamExt, Ws};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
-
+use crate::POLL_INTERVAL;
 use crate::types::UniSwapV2Pair;
 use crate::{CpmmCalculator, LiquidityProviderId, Meta, PendingPoolUpdateEvent, PoolUpdateEvent};
 use crate::{Curve, LiquidityProvider, LiquidityProviders};
@@ -209,10 +209,12 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
             let pls = pools.clone();
             rt.block_on(async move {
                 let mut joins = vec![];
+                let mut provider = Provider::<Ws>::connect(&node_url)
+                    .await
+                    .unwrap();
+                provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let clnt = Arc::new(
-                    Provider::<Ws>::connect(&node_url)
-                        .await
-                        .unwrap(),
+                    provider
                 );
 
                 let latest_block = clnt.get_block_number().await.unwrap();
@@ -287,10 +289,12 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
             let pools = pools.clone();
 
             rt.block_on(async move {
+                let mut provider = Provider::<Ws>::connect(&node_url)
+                    .await
+                    .unwrap();
+                provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let client = Arc::new(
-                    Provider::<Ws>::connect(&node_url)
-                        .await
-                        .unwrap(),
+                    provider
                 );
 
                 let latest_block = client.get_block_number().await.unwrap();
