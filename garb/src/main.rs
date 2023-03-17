@@ -63,7 +63,7 @@ static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
 });
 
 static CONTRACT_ADDRESS: Lazy<Address> = Lazy::new(|| {
-    Address::from_str(&std::env::var("ETH_CONTRACT_ADDRESS").unwrap_or_else(|_| std::env::args().nth(6).unwrap_or("0x46B2f7B9a13072BDA6F91EDE396Ff8AF493c6cD4".to_string()))).unwrap()
+    Address::from_str(&std::env::var("ETH_CONTRACT_ADDRESS").unwrap_or_else(|_| std::env::args().nth(6).unwrap_or("0xA46356ba716631d87Ab3081635F06136662ae3C0".to_string()))).unwrap()
 });
 
 static NODE_URL: Lazy<Url> = Lazy::new(|| {
@@ -176,18 +176,18 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
     let update_started = Arc::new(tokio::sync::RwLock::new(false));
     for i in 0..cores {
         let mut bundle_handlers = vec![];
-        bundle_handlers.push(BundleHandlers::FlashBots("https://relay.flashbots.net".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://relay.flashbots.net".to_string(), FlashBotsRequestParams::default())); // simulates
         // bundle_handlers.push(BundleHandlers::FlashBots("https://builder0x69.io/".to_string(), FlashBotsRequestParams::default()));
-        bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.beaverbuild.org/".to_string(), FlashBotsRequestParams::default()));
+        // bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.beaverbuild.org/".to_string(), FlashBotsRequestParams::default()));
         // bundle_handlers.push(BundleHandlers::FlashBots("https://rsync-builder.xyz/".to_string(), FlashBotsRequestParams::default()));
-        // bundle_handlers.push(BundleHandlers::FlashBots("https://api.blocknative.com/v1/auction".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://api.blocknative.com/v1/auction".to_string(), FlashBotsRequestParams::default())); // simulates
         // bundle_handlers.push(BundleHandlers::FlashBots("https://api.edennetwork.io/v1/bundle".to_string(), FlashBotsRequestParams::default()));
         // bundle_handlers.push(BundleHandlers::FlashBots("https://eth-builder.com".to_string(), FlashBotsRequestParams::default()));
-        // bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.lightspeedbuilder.info/".to_string(), FlashBotsRequestParams::default()));
-        // bundle_handlers.push(BundleHandlers::FlashBots("https://api.securerpc.com/v1".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.lightspeedbuilder.info/".to_string(), FlashBotsRequestParams::default())); // simulates
+        bundle_handlers.push(BundleHandlers::FlashBots("https://api.securerpc.com/v1".to_string(), FlashBotsRequestParams::default()));  // simulates
         // bundle_handlers.push(BundleHandlers::FlashBots("https://BuildAI.net".to_string(), FlashBotsRequestParams::default()));
         // bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.payload.de".to_string(), FlashBotsRequestParams::default()));
-        // bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.nfactorial.xyz/".to_string(), FlashBotsRequestParams::default()));
+        bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.nfactorial.xyz/".to_string(), FlashBotsRequestParams::default()));   // simulates
 
         // backruns
         let routes = rts.clone();
