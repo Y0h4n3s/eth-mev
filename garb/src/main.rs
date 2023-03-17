@@ -44,8 +44,8 @@ use ethers::types::{U256, Block, TxHash, BlockId, Eip1559TransactionRequest, Blo
 use ethers::types::transaction::eip2718::TypedTransaction;
 use ethers::utils::keccak256;
 use tokio::time::Duration;
-use ethers_providers::{Http, Middleware, ProviderExt, Ws};
-use ethers_flashbots::{BundleRequest, FlashbotsMiddleware, BundleTransaction};
+use ethers_providers::{Http, Middleware, Provider, ProviderExt, Ws};
+use ethers_flashbots::{BundleRequest, FlashbotsMiddleware, BundleTransaction, FlashbotsMiddlewareError, RelayError};
 use garb_graph_eth::{GraphConfig, Order};
 use rand::Rng;
 use async_trait::async_trait;
@@ -277,10 +277,10 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                             if blk.base_fee_per_gas.is_none() {
                                 return
                             }
+                            let base_fee = calculate_next_block_base_fee(blk.clone()).unwrap();
                             let max_fee = opportunity.profit / gas_cost;
                             let balance = U256::from(50000000000000000 as u128);
                             let max_possible_fee = balance / gas_cost;
-                            let base_fee = blk.base_fee_per_gas.unwrap();
                             tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
                             tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
                             tx_request.gas = Some(gas_cost);
@@ -307,8 +307,9 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                             handler.set_txs(bundle);
                             warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                            FlashBotsBundleHandler::simulate(handler, blk).await;
-                            let mut bundle_request = BundleRequest::new();
+                            // FlashBotsBundleHandler::simulate(handler, blk, true).await;
+                            FlashBotsBundleHandler::submit(handler, blk, blk+1).await;
+
 
 
                         }));
@@ -373,7 +374,7 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                                 let max_fee = opportunity.profit / gas_cost;
                                 let balance = U256::from(50000000000000000 as u128);
                                 let max_possible_fee = balance / gas_cost;
-                                let base_fee = blk.base_fee_per_gas.unwrap();
+                                let base_fee = calculate_next_block_base_fee(blk.clone()).unwrap();
                                 tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
                                 tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
                                 tx_request.gas = Some(gas_cost);
@@ -399,7 +400,8 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                                 handler.set_txs(bundle);
                                 warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                                FlashBotsBundleHandler::simulate(handler, blk).await;
+                                // FlashBotsBundleHandler::simulate(handler, blk, true).await;
+                                FlashBotsBundleHandler::submit(handler, blk, blk+1).await;
                             }));
                     }
                 }
@@ -563,14 +565,28 @@ impl FlashBotsBundleHandler {
                         if only_successful {
                             if res.transactions.iter().all(|tx| tx.error.is_none()) {
                                 info!("{}: {:?}", handler_meta.endpoint(), res);
-                                
+
                             }
                         } else {
                             info!("{}: {:?}", handler_meta.endpoint(), res);
 
                         }
                     } else {
-                        error!("{}: Failed to simulate transaction {:?}",handler_meta.endpoint(), simulation_result.unwrap_err())
+                        let err = simulation_result.unwrap_err();
+                        match &err {
+                            FlashbotsMiddlewareError::RelayError(e) => {
+                               match e {
+                                   RelayError::JsonRpcError(err) => {
+                                       if err.message == "header not found".to_string() {
+                                           return
+                                       }
+                                   }
+                                   _ => {}
+                               }
+                            }
+                            _ => {}
+                        }
+                        error!("{}: Failed to simulate transaction {:?}",handler_meta.endpoint(), err)
                     }
                 }
                 _ => {

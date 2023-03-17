@@ -536,8 +536,8 @@ DETACH DELETE n",
             if let Ok(res) = simulation_result {
                 let gas_used = res.transactions.get(0).unwrap().gas_used;
                 let mut w = gas_lookup.lock().unwrap();
-                w.insert(pool.address.clone(), gas_used + U256::from(20000));
-                debug!("{} uses {:?}", pool.address, gas_used + U256::from(20000))
+                w.insert(pool.address.clone(), gas_used + U256::from(30000));
+                debug!("{} uses {:?}", pool.address, gas_used + U256::from(30000))
             } else {
                 error!("Failed to estimate gas for {} {:?}", pool.address, simulation_result.unwrap_err())
             }
