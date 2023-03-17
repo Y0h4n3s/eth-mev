@@ -209,20 +209,6 @@ DETACH DELETE n",
         let pull_meta = Metadata::from_iter(vec![("n", -1)]);
         let (records, response) = conn.pull(Some(pull_meta)).await?;
 
-        // relationship between tokens as liquidity pool
-        // let res = conn
-        //           .run(
-        // 	          "MATCH (a:Token), (b:Token) WHERE a.address = $x_address  AND b.address = $y_address  MERGE (a)-[r:LP { pool: $pool_address, bn: $provider }]->(b) RETURN type(r)",
-        // 	          Some(Params::from_iter(vec![
-        // 		          ("x_address", pool.x_address.clone()),
-        // 		          ("y_address", pool.y_address.clone()),
-        // 		          ("pool_address", pool.address.clone()),
-        // 		          ("provider", serde_json::to_string(&pool.provider).unwrap())])),
-        // 	          None).await?;
-        //
-        // let pull_meta = Metadata::from_iter(vec![("n", -1)]);
-        // let (records, response) = conn.pull(Some(pull_meta)).await?;
-
         let res = conn
             .run(
                 "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $y_address  MERGE (a)-[r:ASSET]->(b) RETURN type(r)",
@@ -288,15 +274,14 @@ DETACH DELETE n",
     let path_lookup1 = Arc::new(RwLock::new(
         HashMap::<Pool, Vec<MevPath>>::new(),
     ));
-        let max_intermidiate_nodes = 5;
+        let max_intermidiate_nodes = 3;
 
         for i in 2..max_intermidiate_nodes {
             info!("Preparing {} step routes ", i);
             let path_lookup = path_lookup.clone();
             let pool = pool.clone();
             let mut conn = pool.get().await?;
-            let cores = num_cpus::get();
-            let permits = Arc::new(Semaphore::new(25));
+            let permits = Arc::new(Semaphore::new(1));
             // OLD MATCHER: match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)
             let mut steps = "".to_string();
             let mut where_clause = "1 = 1".to_string();
@@ -524,7 +509,7 @@ DETACH DELETE n",
         join_handles.push(tokio::runtime::Handle::current().spawn(async move {
             let client = client.clone();
             let function = match pool.provider.id() {
-                LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap => {
+                LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap | LiquidityProviderId::Solidly => {
                     "0e000000".to_string()
                 }
                 LiquidityProviderId::UniswapV3 | LiquidityProviderId::BalancerWeighted => {

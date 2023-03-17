@@ -40,6 +40,7 @@ pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
 });
 
 use nom::FindSubstring;
+use num_bigfloat::{BigFloat, RoundingMode};
 use tracing::info;
 use crate::node_dispatcher::NodeDispatcher;
 use crate::sushiswap::SushiSwapMetadata;
@@ -59,7 +60,8 @@ pub enum LiquidityProviders {
     UniswapV2(UniswapV2Metadata),
     UniswapV3(UniswapV3Metadata),
     SushiSwap(SushiSwapMetadata),
-    BalancerWeighted(BalancerWeigtedMetadata)
+    BalancerWeighted(BalancerWeigtedMetadata),
+    Solidly(UniswapV2Metadata)
 }
 
 #[derive(Deserialize, Serialize,Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
@@ -67,7 +69,8 @@ pub enum LiquidityProviderId {
     UniswapV2,
     UniswapV3,
     SushiSwap,
-    BalancerWeighted
+    BalancerWeighted,
+    Solidly
 }
 
 impl<T: Into<String>> From<T> for LiquidityProviders {
@@ -80,6 +83,7 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
             }),
             "3" => LiquidityProviders::SushiSwap(Default::default()),
             "4" => LiquidityProviders::BalancerWeighted(Default::default()),
+            "5" => LiquidityProviders::Solidly(Default::default()),
             val => match val.find_substring("UniswapV2") {
                 Some(v) => serde_json::from_str(val).unwrap(),
                 None => {
@@ -90,7 +94,9 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
                                 Some(v) => serde_json::from_str(val).unwrap(),
                                 None => {
                                     match val.find_substring("BalancerWeighted") {
-                                        Some(v) => serde_json::from_str(val).unwrap(),
+                                        Some(v) => {
+                                            serde_json::from_str(val).unwrap()
+                                        },
                                         None => panic!("Invalid Liquidity Provider {}", val)
                                     }
                                 },
@@ -110,6 +116,7 @@ impl From<LiquidityProviders> for u8 {
             LiquidityProviders::UniswapV3(_) => 2,
             LiquidityProviders::SushiSwap(_) => 3,
             LiquidityProviders::BalancerWeighted(_) => 4,
+            LiquidityProviders::Solidly(_) => 5,
         }
     }
 }
@@ -126,6 +133,7 @@ impl LiquidityProviders {
     pub fn build_calculator(&self) -> Box<dyn Calculator> {
         match self {
             LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new()),
+            LiquidityProviders::Solidly(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::UniswapV3(meta) => {
                 Box::new(UniswapV3Calculator::new(meta.clone()))
             }
@@ -140,6 +148,13 @@ impl LiquidityProviders {
             LiquidityProviders::UniswapV2(meta) => {
                 let metadata = UniswapV2Metadata {
                     factory_address: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers))
+            }
+             LiquidityProviders::Solidly(meta) => {
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0x777de5Fe8117cAAA7B44f396E93a401Cf5c9D4d6".to_string(),
                     ..meta.clone()
                 };
                 Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers))
@@ -175,6 +190,7 @@ impl LiquidityProviders {
             LiquidityProviders::UniswapV3(_) => LiquidityProviderId::UniswapV3,
             LiquidityProviders::SushiSwap(_) => LiquidityProviderId::SushiSwap,
             LiquidityProviders::BalancerWeighted(_) => LiquidityProviderId::BalancerWeighted,
+            LiquidityProviders::Solidly(_) => LiquidityProviderId::Solidly,
 
             
         }
@@ -186,6 +202,7 @@ impl LiquidityProviders {
             LiquidityProviders::UniswapV3(meta) => meta.factory_address.clone(),
             LiquidityProviders::SushiSwap(meta) => meta.factory_address.clone(),
             LiquidityProviders::BalancerWeighted(meta) => meta.factory_address.clone(),
+            LiquidityProviders::Solidly(meta) => meta.factory_address.clone(),
         }
     }
 }
@@ -229,6 +246,7 @@ impl PoolInfo for Pool {
     fn supports_callback_payment(&self) -> bool {
         match self.provider.id() {
             LiquidityProviderId::UniswapV2 => true,
+            LiquidityProviderId::Solidly => true,
             LiquidityProviderId::UniswapV3 => true,
             LiquidityProviderId::SushiSwap=> true,
             LiquidityProviderId::BalancerWeighted=> false,
@@ -238,6 +256,7 @@ impl PoolInfo for Pool {
     fn supports_pre_payment(&self) -> bool {
         match self.provider.id() {
             LiquidityProviderId::UniswapV2 => false,
+            LiquidityProviderId::Solidly => false,
             LiquidityProviderId::UniswapV3 => false,
             LiquidityProviderId::SushiSwap => false,
             LiquidityProviderId::BalancerWeighted => true,
@@ -398,6 +417,40 @@ impl BalancerWeightedCalculator {
             meta
         }
     }
+
+    // TODO
+    pub fn mul_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
+        (x * y).round(18, RoundingMode::Up)
+
+    }
+
+    pub fn mul_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
+        (x * y).round(18, RoundingMode::Down)
+    }
+
+    pub fn div_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
+
+        (x/y).round(18, RoundingMode::Up)
+    }
+    pub fn div_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
+        (x/y).round(18, RoundingMode::Down)
+    }
+
+    pub fn pow_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
+
+        if y == BigFloat::from(1) {
+            x
+        } else if y == BigFloat::from(2) {
+            self.mul_up(x, x)
+        } else if y == BigFloat::from(4) {
+            let square = self.mul_up(x, x);
+            self.mul_up(square, square)
+        } else {
+             x.pow(&y)
+        }
+
+
+    }
 }
 
 impl UniswapV3Calculator {
@@ -406,55 +459,6 @@ impl UniswapV3Calculator {
     pub fn new(meta: UniswapV3Metadata) -> Self {
         Self {
             meta,
-        }
-    }
-    pub fn _get_amount_0_delta(
-        &self,
-        mut sqrt_ratio_a_x_96: U256,
-        mut sqrt_ratio_b_x_96: U256,
-        liquidity: u128,
-        round_up: bool,
-    ) -> anyhow::Result<U256> {
-        if sqrt_ratio_a_x_96 > sqrt_ratio_b_x_96 {
-            (sqrt_ratio_a_x_96, sqrt_ratio_b_x_96) = (sqrt_ratio_b_x_96, sqrt_ratio_a_x_96)
-        };
-        
-        let numerator_1 = U256::from(liquidity) << 96;
-        let numerator_2 = sqrt_ratio_b_x_96 - sqrt_ratio_a_x_96;
-
-        
-        if round_up {
-            let numerator_partial = uniswap_v3_math::full_math::mul_div_rounding_up(numerator_1, numerator_2, sqrt_ratio_b_x_96)?;
-            Ok(uniswap_v3_math::unsafe_math::div_rounding_up(numerator_partial, sqrt_ratio_a_x_96))
-        } else {
-            Ok(uniswap_v3_math::full_math::mul_div(numerator_1, numerator_2, sqrt_ratio_b_x_96)? / sqrt_ratio_a_x_96)
-        }
-    }
-    
-    
-    pub fn _get_amount_1_delta(
-        &self,
-        mut sqrt_ratio_a_x_96: U256,
-        mut sqrt_ratio_b_x_96: U256,
-        liquidity: u128,
-        round_up: bool,
-    ) -> anyhow::Result<U256> {
-        if sqrt_ratio_a_x_96 > sqrt_ratio_b_x_96 {
-            (sqrt_ratio_a_x_96, sqrt_ratio_b_x_96) = (sqrt_ratio_b_x_96, sqrt_ratio_a_x_96)
-        };
-        
-        if round_up {
-            Ok(uniswap_v3_math::full_math::mul_div_rounding_up(
-                U256::from(liquidity),
-                sqrt_ratio_b_x_96 - sqrt_ratio_a_x_96,
-                U256::from("0x1000000000000000000000000"),
-            ).unwrap_or(U256::from(0)))
-        } else {
-            Ok(uniswap_v3_math::full_math::mul_div(
-                U256::from(liquidity),
-                sqrt_ratio_b_x_96 - sqrt_ratio_a_x_96,
-                U256::from("0x1000000000000000000000000"),
-            ).unwrap_or(U256::from(0)))
         }
     }
 }
@@ -501,28 +505,57 @@ impl Calculator for UniswapV3Calculator {
 #[async_trait]
 impl Calculator for BalancerWeightedCalculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
-            (pool.x_amount, pool.y_amount)
+        let (source_token, dest_token) = if pool.x_to_y {
+            (self.meta.tokens.first().unwrap(), self.meta.tokens.last().unwrap())
         } else {
-            (pool.y_amount, pool.x_amount)
+            (self.meta.tokens.last().unwrap(), self.meta.tokens.first().unwrap())
         };
-
         if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        Ok(swap_destination_amount)
+
+        let bo = BigFloat::from_str(&dest_token.balance.to_string()).unwrap();
+        let bi = BigFloat::from_str(&source_token.balance.to_string()).unwrap();
+        let ai = BigFloat::from_str(&in_.to_string()).unwrap();
+        let wo = BigFloat::from_str(&dest_token.weight.to_string()).unwrap();
+        let wi = BigFloat::from_str(&source_token.weight.to_string()).unwrap();
+
+
+        let denominator = bi + ai;
+        let base = self.div_up(bi, denominator);
+        let exponent = self.div_down(wi, wo);
+        let power = self.pow_up(base,exponent);
+        let amount_out = self.mul_down(bo, power.sub(&BigFloat::from(1)));
+        let amount_out_uint = U256::from(amount_out.to_u128().unwrap());
+        Ok(amount_out_uint)
     }
 
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
-            (pool.x_amount, pool.y_amount)
+        let (source_token, dest_token) = if pool.x_to_y {
+            (self.meta.tokens.first().unwrap(), self.meta.tokens.last().unwrap())
         } else {
-            (pool.y_amount, pool.x_amount)
+            (self.meta.tokens.last().unwrap(), self.meta.tokens.first().unwrap())
         };
-        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) || out_ >= swap_destination_amount{
+
+        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) || out_ >= dest_token.balance {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        Ok(swap_destination_amount)
+
+
+        let bo = BigFloat::from_str(&dest_token.balance.to_string()).unwrap();
+        let bi = BigFloat::from_str(&source_token.balance.to_string()).unwrap();
+        let ao = BigFloat::from_str(&out_.to_string()).unwrap();
+        let wo = BigFloat::from_str(&dest_token.weight.to_string()).unwrap();
+        let wi = BigFloat::from_str(&source_token.weight.to_string()).unwrap();
+
+
+        let base = self.div_up(bo, bo.sub(&ao));
+        let exponent = self.div_up(wo, wi);
+        let power = self.pow_up(base, exponent);
+        // info!("bo: {} bi: {} ao: {} base: {} exponent: {} power: {}", bo.to_u128().unwrap(), bi.to_u128().unwrap(), ao.to_u128().unwrap(), base, exponent, power);
+        let amount_in = self.mul_up(bi, power.sub(&BigFloat::from(1)));
+        let amount_in_uint = U256::from(amount_in.to_u128().unwrap());
+        Ok(amount_in_uint)
 
     }
 

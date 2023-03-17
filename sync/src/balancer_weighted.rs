@@ -7,7 +7,8 @@
 #![allow(unreachable_patterns)]
 #![allow(unused)]
 
-use crate::abi::{uniswap_v3::SwapFilter,IERC20};
+use crate::abi::{ IERC20, Vault};
+use crate::abi::VaultEvents::{SwapFilter, PoolBalanceChangedFilter, ExternalBalanceTransferFilter, PoolRegisteredFilter,PoolBalanceManagedFilter, FlashLoanFilter, };
 use crate::types::UniSwapV3Pool;
 use crate::types::UniSwapV3Token;
 use crate::{abi, LiquidityProviderId, Meta, PoolUpdateEvent, UniswapV3Calculator};
@@ -30,7 +31,7 @@ use ethers_providers::Ws;
 use kanal::AsyncSender;
 use num_bigfloat::BigFloat;
 use reqwest;
-use serde::{Deserialize, Serialize, Deserializer};
+use serde::{Deserialize, Serialize, Deserializer, Serializer};
 use serde_json::json;
 use std::collections::HashMap;
 use ethers::core::utils::ParseUnits;
@@ -45,7 +46,7 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
 use uniswap_v3_math::sqrt_price_math::FIXED_POINT_96_RESOLUTION;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
-use tracing::{info, debug, trace, error};
+use tracing::{info, debug, trace, error, warn};
 use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3Pool, UniswapV3TickData};
 use crate::node_dispatcher::NodeDispatcher;
 
@@ -61,8 +62,9 @@ fn from_float_str<'de, D>(deserializer: D) -> Result<U256, D::Error>
 
 }
 
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
-pub struct BalancerWeightedPoolToken {
+pub struct FileBalancerWeightedPoolToken {
     pub address: String,
     #[serde(deserialize_with = "from_float_str")]
     pub weight: U256,
@@ -78,15 +80,32 @@ pub struct FileBalancerWeigtedMetadata {
     #[serde(deserialize_with = "from_float_str")]
     pub swap_fee: U256,
     pub address: String,
-    pub tokens: Vec<BalancerWeightedPoolToken>,
+    pub tokens: Vec<FileBalancerWeightedPoolToken>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
+pub struct BalancerWeightedPoolToken {
+    pub address: String,
+    pub weight: U256,
+    pub decimals: u8,
+    pub balance: U256,
+}
+
+impl From<FileBalancerWeightedPoolToken> for BalancerWeightedPoolToken {
+    fn from(f: FileBalancerWeightedPoolToken) -> Self {
+        Self {
+            address: f.address,
+            weight: f.weight,
+            decimals: f.decimals,
+            balance: f.balance
+        }
+    }
+}
 #[serde(rename_all = "camelCase")]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct BalancerWeigtedMetadata {
     pub id: String,
     pub factory_address: String,
-    #[serde(deserialize_with = "from_float_str")]
     pub swap_fee: U256,
     pub address: String,
     pub tokens: Vec<BalancerWeightedPoolToken>,
@@ -147,7 +166,7 @@ impl LiquidityProvider for BalancerWeighted {
                     factory_address: factory_address.clone(),
                     swap_fee: data.swap_fee,
                     address: data.address,
-                    tokens: data.tokens,
+                    tokens: data.tokens.into_iter().map(|t| BalancerWeightedPoolToken::from(t)).collect::<Vec<BalancerWeightedPoolToken>>(),
                 }
             }).collect::<Vec<BalancerWeigtedMetadata>>();
 
@@ -171,7 +190,7 @@ impl LiquidityProvider for BalancerWeighted {
                             factory_address: factory_address.clone(),
                             swap_fee: data.swap_fee,
                             address: data.address,
-                            tokens: tokens,
+                            tokens: tokens.into_iter().map(|t| BalancerWeightedPoolToken::from(t)).collect::<Vec<BalancerWeightedPoolToken>>(),
                         };
 
 
@@ -187,7 +206,6 @@ impl LiquidityProvider for BalancerWeighted {
                             x_to_y: true,
                             provider: LiquidityProviders::BalancerWeighted(meta),
                         };
-
                         let mut w = pools.write().await;
                         w.insert(pool.address.clone(), pool);
                     }
@@ -223,6 +241,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
         let pools = self.pools.clone();
         let subscribers = self.subscribers.clone();
         let node_url = self.nodes.next_free();
+        let factory_address = self.metadata.factory_address.clone();
 
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
@@ -235,12 +254,77 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
                 );
 
                 let latest_block = client.get_block_number().await.unwrap();
-                let contract = UniswapV3Pool::new(Address::from_str(&pool.address).unwrap(), client.clone());
+                let contract = Vault::new(Address::from_str("0xBA12222222228d8Ba445958a75a0704d566BF2C8").unwrap(), client.clone());
 
                 let events = contract.events();
                 let mut stream = events.stream().await.unwrap();
-                while let Some(e) = stream.next().await {
-                    info!("{:?}", e);
+
+                while let Some(Ok(e)) = stream.next().await {
+                    let client = client.clone();
+                    let pools = pools.clone();
+                    let factory_address = factory_address.clone();
+                    let subscribers = subscribers.read().unwrap();
+                    let sub = subscribers.first().unwrap().clone();
+                    tokio::runtime::Handle::current().spawn(async move {
+                        let pool_id = match e {
+                            SwapFilter(data) => {
+                                data.pool_id
+                            }
+                            PoolBalanceChangedFilter(data) => {
+                                data.pool_id
+                            }
+                            PoolBalanceManagedFilter(data) => {
+                                data.pool_id
+                            }
+                            _ => return
+                        };
+                        let hex_id = U256::from(pool_id).encode_hex();
+                        let mut r = pools.read().await.clone();
+                        if let Some((_, mut pool)) = r.iter_mut().find(|(_, p)| {
+                            match &p.provider {
+                                LiquidityProviders::BalancerWeighted(meta) => meta.id == hex_id,
+                                _ => false
+                            }
+                        }) {
+                            match pool.provider.clone() {
+                                LiquidityProviders::BalancerWeighted(data) => {
+                                    if let Ok(res) =  abi::balancer::get_complete_pool_data_batch_request(vec![data.clone()], client).await {
+                                        let status = res.first().unwrap();
+                                        let mut tokens = vec![];
+                                        for i in 0..status.tokens.len() {
+                                            let mut existing = data.tokens.iter().find(|t| t.address == status.tokens[i]).unwrap().clone();
+                                            existing.balance = status.balances[i];
+                                            tokens.push(existing.clone());
+                                        }
+                                        let meta = BalancerWeigtedMetadata {
+                                            id: data.id,
+                                            factory_address: factory_address.clone(),
+                                            swap_fee: data.swap_fee,
+                                            address: data.address,
+                                            tokens: tokens,
+                                        };
+                                        pool.x_amount = meta.tokens.first().unwrap().balance;
+                                        pool.y_amount = meta.tokens.last().unwrap().balance;
+
+                                        pool.provider = LiquidityProviders::BalancerWeighted(meta);
+                                        let mut w = pools.write().await;
+                                        w.insert(pool.address.clone(), pool.clone());
+
+                                        let event = PoolUpdateEvent {
+                                            pool: pool.clone(),
+                                            block_number: 1,
+                                            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
+                                        };
+
+                                        let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> Balancer Weighted Send Error {:?}", e));
+
+                                    }
+                                }
+                                _ => ()
+                            }
+
+                        }
+                    });
                 }
             })
         })
