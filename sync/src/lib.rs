@@ -61,7 +61,7 @@ pub trait LiquidityProvider: EventEmitter<Box<dyn EventSource<Event = PoolUpdate
 pub enum LiquidityProviders {
     UniswapV2(UniswapV2Metadata),
     UniswapV3(UniswapV3Metadata),
-    SushiSwap(SushiSwapMetadata),
+    SushiSwap(UniswapV2Metadata),
     BalancerWeighted(BalancerWeigtedMetadata),
     Solidly(UniswapV2Metadata),
     Pancakeswap(UniswapV2Metadata)
@@ -191,7 +191,7 @@ impl LiquidityProviders {
                 Box::new(uniswap_v3::UniSwapV3::new(metadata, node_providers))
             }
             LiquidityProviders::SushiSwap(meta) => {
-                let metadata = SushiSwapMetadata {
+                let metadata = UniswapV2Metadata {
                     factory_address: "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac".to_string(),
                     ..meta.clone()
                 };

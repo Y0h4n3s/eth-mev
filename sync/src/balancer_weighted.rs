@@ -176,7 +176,7 @@ impl LiquidityProvider for BalancerWeighted {
 
 
             for chunk in meta_data.chunks(65) {
-                if let Ok(balances) = abi::balancer::get_complete_pool_data_batch_request(chunk.to_vec(), eth_client.clone()).await {
+                if let Ok(balances) = abi::balancer::get_complete_pool_data_batch_request(chunk.to_vec(), &eth_client).await {
                     for status in balances {
                         // skip pools with > 2 tokens for now
                         if status.tokens.len() > 2 {
@@ -246,11 +246,11 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
         let subscribers = self.subscribers.clone();
         let node_url = self.nodes.next_free();
         let factory_address = self.metadata.factory_address.clone();
-
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             let pools = pools.clone();
-            rt.block_on(async move {
+            rt.block_on( async move {
+                let mut joins = vec![];
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();
@@ -259,81 +259,70 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
                     provider
                 );
                 let latest_block = client.get_block_number().await.unwrap();
-                let contract = Vault::new(Address::from_str("0xBA12222222228d8Ba445958a75a0704d566BF2C8").unwrap(), client.clone());
 
-                let events = contract.events();
-                let mut stream = events.stream().await.unwrap();
 
-                while let Some(Ok(e)) = stream.next().await {
+                for pool in pools.read().await.values() {
+                    let subscribers = subscribers.clone();
+                    let mut pool = pool.clone();
                     let client = client.clone();
-
-                    let pools = pools.clone();
-                    let factory_address = factory_address.clone();
                     let subscribers = subscribers.read().unwrap();
                     let sub = subscribers.first().unwrap().clone();
-                    tokio::runtime::Handle::current().spawn(async move {
-                        let pool_id = match e {
-                            SwapFilter(data) => {
-                                data.pool_id
-                            }
-                            PoolBalanceChangedFilter(data) => {
-                                data.pool_id
-                            }
-                            PoolBalanceManagedFilter(data) => {
-                                data.pool_id
-                            }
-                            _ => return
-                        };
-                        let hex_id = U256::from(pool_id).encode_hex();
-                        let mut r = pools.read().await.clone();
-                        if let Some((_, mut pool)) = r.iter_mut().find(|(_, p)| {
-                            match &p.provider {
-                                LiquidityProviders::BalancerWeighted(meta) => meta.id == hex_id,
-                                _ => false
-                            }
-                        }) {
-                            match pool.provider.clone() {
-                                LiquidityProviders::BalancerWeighted(data) => {
-                                    if let Ok(res) =  abi::balancer::get_complete_pool_data_batch_request(vec![data.clone()], client).await {
-                                        let status = res.first().unwrap();
-                                        let mut tokens = vec![];
-                                        for i in 0..status.tokens.len() {
-                                            let mut existing = data.tokens.iter().find(|t| t.address == status.tokens[i]).unwrap().clone();
-                                            existing.balance = status.balances[i];
-                                            tokens.push(existing.clone());
-                                        }
-                                        let meta = BalancerWeigtedMetadata {
-                                            id: data.id,
-                                            factory_address: factory_address.clone(),
-                                            swap_fee: data.swap_fee,
-                                            address: data.address,
-                                            tokens: tokens,
-                                        };
-                                        pool.x_amount = meta.tokens.first().unwrap().balance;
-                                        pool.y_amount = meta.tokens.last().unwrap().balance;
+                    drop(subscribers);
 
-                                        pool.provider = LiquidityProviders::BalancerWeighted(meta);
-                                        let mut w = pools.write().await;
-                                        w.insert(pool.address.clone(), pool.clone());
+                    let pools = pools.clone();
+                    joins.push(tokio::runtime::Handle::current().spawn(async move {
 
-                                        let event = PoolUpdateEvent {
-                                            pool: pool.clone(),
-                                            block_number: status.block_number,
-                                            timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
-                                        };
+                        loop {
+                            tokio::time::sleep(Duration::from_millis(POLL_INTERVAL)).await;
 
-                                        let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> Balancer Weighted Send Error {:?}", e));
-
+                            let mut block = 0;
+                            if let Some(mut data) = match pool.clone().provider {
+                                LiquidityProviders::BalancerWeighted(pool_meta) => Some(pool_meta),
+                                _ => None
+                            } {
+                                if let Ok(res) = abi::balancer::get_complete_pool_data_batch_request(vec![data.clone()], &client).await {
+                                    let status = res.first().unwrap();
+                                    let mut tokens = vec![];
+                                    for i in 0..status.tokens.len() {
+                                        let mut existing = data.tokens.iter().find(|t| t.address == status.tokens[i]).unwrap().clone();
+                                        existing.balance = status.balances[i];
+                                        tokens.push(existing.clone());
                                     }
-                                }
-                                _ => ()
-                            }
+                                    let meta = BalancerWeigtedMetadata {
+                                        id: data.id,
+                                        factory_address: data.factory_address.clone(),
+                                        swap_fee: data.swap_fee,
+                                        address: data.address,
+                                        tokens: tokens,
+                                    };
+                                    if pool.x_amount == meta.tokens.first().unwrap().balance &&
+                                        pool.y_amount == meta.tokens.last().unwrap().balance {
+                                        continue
+                                    }
+                                    pool.x_amount = meta.tokens.first().unwrap().balance;
+                                    pool.y_amount = meta.tokens.last().unwrap().balance;
 
+                                    pool.provider = LiquidityProviders::BalancerWeighted(meta);
+                                    let mut w = pools.write().await;
+                                    w.insert(pool.address.clone(), pool.clone());
+
+                                    let event = PoolUpdateEvent {
+                                        pool: pool.clone(),
+                                        block_number: status.block_number,
+                                        timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
+                                    };
+
+                                    let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> Balancer Weighted Send Error {:?}", e));
+
+                                }
+                            }
                         }
-                    });
+                    }));
                 }
-            })
+                futures::future::join_all(joins).await;
+            });
         })
+
     }
 }
 impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for BalancerWeighted {

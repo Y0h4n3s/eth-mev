@@ -61,7 +61,7 @@ pub async fn get_pairs_batch_request<M: Middleware>(
 
 pub async fn get_complete_pool_data_batch_request<M: Middleware>(
     pairs: Vec<H160>,
-    middleware: Arc<M>,
+    middleware: &Arc<M>,
 ) -> Result<Vec<UniswapV2Metadata>> {
     let mut target_addresses = vec![];
     for pair in pairs.iter() {

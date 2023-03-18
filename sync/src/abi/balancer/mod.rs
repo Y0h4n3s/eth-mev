@@ -29,7 +29,7 @@ pub struct BalancerWeightedPoolStatus {
 
 pub async fn get_complete_pool_data_batch_request<M: Middleware>(
     pairs: Vec<BalancerWeigtedMetadata>,
-    middleware: Arc<M>,
+    middleware: &Arc<M>,
 ) -> Result<Vec<BalancerWeightedPoolStatus>> {
     let mut target_addresses = vec![];
     for pair in pairs.iter() {

@@ -137,7 +137,7 @@ pub async fn get_pool_data_batch_request(
 const MAX_TICK_SIZE: u64 = 887272;
 pub async fn get_complete_pool_data_batch_request<M: Middleware>(
     pairs: Vec<H160>,
-    middleware: Arc<M>,
+    middleware: &Arc<M>,
 ) -> Result<Vec<UniswapV3Metadata>> {
     let mut target_addresses = vec![];
     for pair in pairs.iter() {

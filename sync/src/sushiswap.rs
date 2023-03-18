@@ -33,6 +33,7 @@ use tokio::runtime::Runtime;
 use tracing::{debug, error, info, trace};
 use std::cmp::min;
 use crate::node_dispatcher::NodeDispatcher;
+use crate::uniswap_v2::UniswapV2Metadata;
 
 const SUSHISWAP_ROUTER: &str = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F";
 const TVL_FILTER_LEVEL: i32 = 0;
@@ -45,7 +46,7 @@ pub struct SushiSwapMetadata {
 impl Meta for SushiSwapMetadata {}
 
 pub struct SushiSwap {
-    pub metadata: SushiSwapMetadata,
+    pub metadata: UniswapV2Metadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
     subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
     pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>>,
@@ -53,7 +54,7 @@ pub struct SushiSwap {
 }
 
 impl SushiSwap {
-    pub fn new(metadata: SushiSwapMetadata, nodes: NodeDispatcher) -> Self {
+    pub fn new(metadata: UniswapV2Metadata, nodes: NodeDispatcher) -> Self {
         Self {
             metadata,
             pools: Arc::new(RwLock::new(HashMap::new())),
@@ -142,7 +143,7 @@ impl LiquidityProvider for SushiSwap {
                                 let pairs_data =
                                     crate::abi::uniswap_v2::get_complete_pool_data_batch_request(
                                         pair_chunk.to_vec(),
-                                        eth_client.clone(),
+                                        &eth_client,
                                     )
                                         .await;
                                 if let Ok(mut pairs_data) = pairs_data {
@@ -174,7 +175,7 @@ impl LiquidityProvider for SushiSwap {
                     x_amount: pair.reserve0,
                     y_amount: pair.reserve1,
                     x_to_y: true,
-                    provider: LiquidityProviders::SushiSwap(Default::default()),
+                    provider: LiquidityProviders::SushiSwap(pair.clone()),
                 };
 
                 if filter_tokens.contains(&pool.x_address) || filter_tokens.contains(&pool.y_address) {
@@ -240,26 +241,27 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
                     let client = clnt.clone();
                     let pls = pools.clone();
                     joins.push(tokio::runtime::Handle::current().spawn(async move {
-                        let contract = crate::abi::UniswapV2Pair::new(Address::from_str(&pool.address).unwrap(), client.clone());
-                        let events = contract.events();
+                        loop {
+                            tokio::time::sleep(Duration::from_millis(POLL_INTERVAL)).await;
 
-                        let mut stream = events.stream().await.unwrap();
-                        while let Some(e) = stream.next().await {
-                            let updated_meta = if let Some(mut pool_meta) = match pool.clone().provider {
+                            let (updated_meta, old_meta) = if let Some(mut pool_meta) = match pool.clone().provider {
                                 LiquidityProviders::SushiSwap(pool_meta) => Some(pool_meta),
                                 _ => None
                             } {
-                                let mut updated_meta = crate::abi::uniswap_v2::get_complete_pool_data_batch_request(vec![H160::from_str(&pool.address).unwrap()], client.clone())
+                                let mut updated_meta = crate::abi::uniswap_v2::get_complete_pool_data_batch_request(vec![H160::from_str(&pool.address).unwrap()], &client)
                                     .await
                                     .unwrap()
                                     .first()
                                     .unwrap()
                                     .to_owned();
-                                updated_meta.factory_address = pool_meta.factory_address;
-                                updated_meta
+                                updated_meta.factory_address = pool_meta.factory_address.clone();
+                                (updated_meta, pool_meta)
                             } else {
                                 continue
                             };
+                            if old_meta.reserve0 == updated_meta.reserve0 && old_meta.reserve1 == updated_meta.reserve1 {
+                                continue
+                            }
                             let mut w = pls.write().await;
                             let mut p = w.get_mut(&pool.address).unwrap();
                             p.x_amount = updated_meta.reserve0;
@@ -273,6 +275,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                             };
                             let res = sub.send(Box::new(event.clone())).await.map_err(|e| debug!("sync_service> Sushiswap Send Error {:?}", e)).unwrap();
+
                         }
                     }));
                 }

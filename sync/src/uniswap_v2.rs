@@ -162,7 +162,7 @@ impl LiquidityProvider for UniSwapV2 {
                                 let pairs_data =
                                     crate::abi::uniswap_v2::get_complete_pool_data_batch_request(
                                         pair_chunk.to_vec(),
-                                        eth_client.clone(),
+                                        &eth_client,
                                     )
                                         .await;
                                 if let Ok(mut pairs_data) = pairs_data {
@@ -256,26 +256,29 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                     let pls = pools.clone();
                     let mut pool = pl.clone();
                     joins.push(tokio::runtime::Handle::current().spawn(async move {
-                        let contract = UniswapV2Pair::new(Address::from_str(&pool.address).unwrap(), client.clone());
-                        let events = contract.events();
 
-                        let mut stream = events.stream().await.unwrap();
-                        while let Some(e) = stream.next().await {
-                            let updated_meta = if let Some(mut pool_meta) = match pool.clone().provider {
+
+                        loop {
+                            tokio::time::sleep(Duration::from_millis(POLL_INTERVAL)).await;
+
+                            let (updated_meta, old_meta) = if let Some(mut pool_meta) = match pool.clone().provider {
                                 LiquidityProviders::UniswapV2(pool_meta) => Some(pool_meta),
                                 _ => None
                             } {
-                                let mut updated_meta = get_complete_pool_data_batch_request(vec![H160::from_str(&pool.address).unwrap()], client.clone())
+                                let mut updated_meta = get_complete_pool_data_batch_request(vec![H160::from_str(&pool.address).unwrap()], &client)
                                     .await
                                     .unwrap()
                                     .first()
                                     .unwrap()
                                     .to_owned();
-                                updated_meta.factory_address = pool_meta.factory_address;
-                                updated_meta
+                                updated_meta.factory_address = pool_meta.factory_address.clone();
+                                (updated_meta, pool_meta)
                             } else {
                                 continue
                             };
+                            if old_meta.reserve0 == updated_meta.reserve0 && old_meta.reserve1 == updated_meta.reserve1 {
+                                continue
+                            }
                             let mut w = pls.write().await;
                             let mut p = w.get_mut(&pool.address).unwrap();
                             p.x_amount = updated_meta.reserve0;
@@ -290,6 +293,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                             };
                             let res = sub.send(Box::new(event.clone())).await.map_err(|e| info!("sync_service> UniswapV2 Send Error {:?}", e));
                         }
+
                     }));
                 }
                 futures::future::join_all(joins).await;
