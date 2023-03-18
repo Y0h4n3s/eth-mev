@@ -389,7 +389,7 @@ impl Calculator for CpmmCalculator {
         if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 30));
+        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 31));
         let numerator = amount_in_with_fee
             .checked_mul(swap_destination_amount)
             .unwrap_or(U256::from(0));
@@ -415,8 +415,8 @@ impl Calculator for CpmmCalculator {
             return Ok(swap_source_amount);
         }
 
-        if let Some(numerator) = swap_source_amount.checked_mul( out_ * 1000) {
-            let denominator = (swap_destination_amount - out_) * U256::from((997) as u128);
+        if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
+            let denominator = (swap_destination_amount - out_) * U256::from((9969) as u128);
             Ok((numerator / denominator) + 1)
 
         } else {
@@ -510,7 +510,7 @@ impl Calculator for SolidlyCalculator {
         if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        let amount_in_with_fee = in_.saturating_mul(U256::from(1000000 - 20));
+        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 21));
         let numerator = amount_in_with_fee
             .checked_mul(swap_destination_amount)
             .unwrap_or(U256::from(0));
@@ -537,7 +537,7 @@ impl Calculator for SolidlyCalculator {
         }
 
         if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
-            let denominator = (swap_destination_amount - out_) * U256::from((9980) as u128);
+            let denominator = (swap_destination_amount - out_) * U256::from((9979) as u128);
             Ok((numerator / denominator) + 1)
 
         } else {
@@ -563,7 +563,7 @@ impl Calculator for PancakeCalculator {
         if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 25));
+        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 26));
         let numerator = amount_in_with_fee
             .checked_mul(swap_destination_amount)
             .unwrap_or(U256::from(0));
@@ -590,7 +590,7 @@ impl Calculator for PancakeCalculator {
         }
 
         if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
-            let denominator = (swap_destination_amount - out_) * U256::from((9975) as u128);
+            let denominator = (swap_destination_amount - out_) * U256::from((9974) as u128);
             Ok((numerator / denominator) + 1)
 
         } else {
