@@ -781,6 +781,9 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                                     pool.provider = LiquidityProviders::UniswapV3(updated_meta);
                                     let mut w = pools.write().await;
                                     w.insert(pool.address.clone(), pool.clone());
+                                } else {
+                                    error!("Failed to get {:?} updates", LiquidityProviderId::UniswapV3);
+                                    continue
                                 }
 
                             }

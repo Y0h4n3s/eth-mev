@@ -314,6 +314,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
 
                                     let res = sub.send(Box::new(event.clone())).await.map_err(|e| error!("sync_service> Balancer Weighted Send Error {:?}", e));
 
+                                } else {
+                                    error!("Failed to get {:?} updates", LiquidityProviderId::BalancerWeighted);
+
                                 }
                             }
                         }

@@ -265,14 +265,19 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                                 LiquidityProviders::UniswapV2(pool_meta) => Some(pool_meta),
                                 _ => None
                             } {
-                                let mut updated_meta = get_complete_pool_data_batch_request(vec![H160::from_str(&pool.address).unwrap()], &client)
-                                    .await
-                                    .unwrap()
-                                    .first()
-                                    .unwrap()
-                                    .to_owned();
-                                updated_meta.factory_address = pool_meta.factory_address.clone();
-                                (updated_meta, pool_meta)
+                                if let Ok(updates) =   get_complete_pool_data_batch_request(vec![H160::from_str(&pool.address).unwrap()], &client)
+                                    .await {
+                                    let mut updated_meta =
+                                        updates
+                                        .first()
+                                        .unwrap()
+                                        .to_owned();
+                                    updated_meta.factory_address = pool_meta.factory_address.clone();
+                                    (updated_meta, pool_meta)
+                                } else {
+                                    error!("Failed to get {:?} updates", LiquidityProviderId::UniswapV2);
+                                    continue
+                                }
                             } else {
                                 continue
                             };

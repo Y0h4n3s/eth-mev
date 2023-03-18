@@ -248,14 +248,19 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
                                 LiquidityProviders::SushiSwap(pool_meta) => Some(pool_meta),
                                 _ => None
                             } {
-                                let mut updated_meta = crate::abi::uniswap_v2::get_complete_pool_data_batch_request(vec![H160::from_str(&pool.address).unwrap()], &client)
-                                    .await
-                                    .unwrap()
-                                    .first()
-                                    .unwrap()
-                                    .to_owned();
-                                updated_meta.factory_address = pool_meta.factory_address.clone();
-                                (updated_meta, pool_meta)
+                                if let Ok(updates) = crate::abi::uniswap_v2::get_complete_pool_data_batch_request(vec![H160::from_str(&pool.address).unwrap()], &client)
+                                    .await {
+                                    let mut updated_meta = updates
+                                        .first()
+                                        .unwrap()
+                                        .to_owned();
+                                    updated_meta.factory_address = pool_meta.factory_address.clone();
+                                    (updated_meta, pool_meta)
+                                } else {
+                                    error!("Failed to get {:?} updates", LiquidityProviderId::SushiSwap);
+                                    continue
+                                }
+
                             } else {
                                 continue
                             };
