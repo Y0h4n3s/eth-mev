@@ -150,7 +150,7 @@ impl LiquidityProviders {
         match self {
             LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::Solidly(meta) => Box::new(SolidlyCalculator::new()),
-            LiquidityProviders::Pancakeswap(meta) => Box::new(CpmmCalculator::new()),
+            LiquidityProviders::Pancakeswap(meta) => Box::new(PancakeCalculator::new()),
             LiquidityProviders::UniswapV3(meta) => {
                 Box::new(UniswapV3Calculator::new(meta.clone()))
             }
