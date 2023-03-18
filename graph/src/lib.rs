@@ -275,7 +275,6 @@ DETACH DELETE n",
         HashMap::<Pool, Vec<MevPath>>::new(),
     ));
         let max_intermidiate_nodes = 4;
-
         for i in 2..max_intermidiate_nodes {
             info!("Preparing {} step routes ", i);
             let path_lookup = path_lookup.clone();
@@ -494,23 +493,31 @@ DETACH DELETE n",
         let gas_lookup = gas_lookup.clone();
         join_handles.push(tokio::runtime::Handle::current().spawn(async move {
             let client = client.clone();
+            let mut ix_data = "".to_string();
+            let packed_asset = MevPath::encode_packed(I256::from(1));
+
             let function = match pool.provider.id() {
+
                 LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap | LiquidityProviderId::Solidly | LiquidityProviderId::Pancakeswap => {
-                    "0e000000".to_string()
+                    ix_data = "0e000000".to_string() + if pool.x_to_y { "01" } else { "00" } +
+                        &pool.address[2..] +
+                        &(packed_asset.len() as u8).encode_hex()[64..] +
+                        &packed_asset;
                 }
                 LiquidityProviderId::UniswapV3  => {
-                    "00000600".to_string()
+                    ix_data = "00000600".to_string() + if pool.x_to_y { "01" } else { "00" } +
+                        &pool.address[2..] +
+                        &(packed_asset.len() as u8).encode_hex()[64..] +
+                        &packed_asset;
+
                 }
                 LiquidityProviderId::BalancerWeighted => {
-                    "10000000".to_string()
+                    let mut w = gas_lookup.lock().unwrap();
+                    w.insert(pool.address.clone(), U256::from(120000));
+
                 }
             };
 
-            let packed_asset = MevPath::encode_packed(I256::from(1));
-            let ix_data = function + if pool.x_to_y { "01" } else { "00" } +
-                &pool.address[2..] +
-                &(packed_asset.len() as u8).encode_hex()[64..] +
-                &packed_asset;
             let tx_request = Eip1559TransactionRequest {
                 to: Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone())),
                 from: None,
@@ -534,10 +541,17 @@ DETACH DELETE n",
             let simulation_result = client.simulate_bundle(&bundle).await;
 
             if let Ok(res) = simulation_result {
-                let gas_used = res.transactions.get(0).unwrap().gas_used;
+                let tx = res.transactions.get(0).unwrap();
+                let gas_used = tx.gas_used;
                 let mut w = gas_lookup.lock().unwrap();
-                w.insert(pool.address.clone(), gas_used + U256::from(30000));
-                debug!("{} uses {:?}", pool.address, gas_used + U256::from(30000))
+                if tx.error.is_none() && tx.revert.is_none() {
+                    w.insert(pool.address.clone(), gas_used + U256::from(5000));
+
+                } else {
+                    w.insert(pool.address.clone(), gas_used + U256::from(20000));
+
+                }
+                debug!("{} uses {:?}", pool.address, gas_used + U256::from(300))
             } else {
                 error!("Failed to estimate gas for {} {:?}", pool.address, simulation_result.unwrap_err())
             }
@@ -549,7 +563,6 @@ DETACH DELETE n",
         task.await.unwrap();
     }
 
-    // wait a few secs
 
     info!("Starting Listener thread");
     info!("Clearing {} cached events", updated_q.len() + pending_updated_q.len());

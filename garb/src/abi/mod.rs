@@ -6,4 +6,6 @@
 use ethers::{abi::AbiDecode, prelude::*};
 
 abigen!(Aggregator, "src/abi/Aggregator.json");
+abigen!(FlashbotsCheckAndSend, "src/abi/FlashbotsCheckAndSend.json");
+
 

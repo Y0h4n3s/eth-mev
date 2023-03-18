@@ -45,7 +45,7 @@ use ethers::types::transaction::eip2718::TypedTransaction;
 use ethers::utils::keccak256;
 use tokio::time::Duration;
 use ethers_providers::{Http, Middleware, Provider, ProviderExt, Ws};
-use ethers_flashbots::{BundleRequest, FlashbotsMiddleware, BundleTransaction, FlashbotsMiddlewareError, RelayError};
+use ethers_flashbots::{BundleRequest, FlashbotsMiddleware, BundleTransaction, FlashbotsMiddlewareError, RelayError, SimulatedBundle};
 use garb_graph_eth::{GraphConfig, Order};
 use rand::Rng;
 use async_trait::async_trait;
@@ -125,7 +125,12 @@ pub async fn async_main() -> anyhow::Result<()> {
         });
     }));
     joins.push(std::thread::spawn(move || {
-        transactor( &mut routes_receiver, &mut single_routes_receiver , nodes.clone()).unwrap();
+        let rt = Runtime::new().unwrap();
+
+        rt.block_on(async move {
+            transactor( &mut routes_receiver, &mut single_routes_receiver , nodes.clone()).await.unwrap();
+
+        });
     }));
 
     for join in joins {
@@ -168,26 +173,43 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
 
 
 
-pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::AsyncReceiver<Vec<ArbPath>>, nodes: NodeDispatcher) -> anyhow::Result<()> {
+pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::AsyncReceiver<Vec<ArbPath>>, nodes: NodeDispatcher) -> anyhow::Result<()> {
     let mut workers = vec![];
     let cores = num_cpus::get();
     let n = Arc::new(tokio::sync::RwLock::new(U256::from(0)));
     let b: Arc<tokio::sync::RwLock<Block<H256>>> = Arc::new(tokio::sync::RwLock::new(Block::default()));
     let update_started = Arc::new(tokio::sync::RwLock::new(false));
+    let bundle_recievers = vec![
+        "https://relay.flashbots.net".to_string(),
+        // "https://builder0x69.io/".to_string(),
+        // "https://rpc.beaverbuild.org/".to_string(),
+        // "https://rsync-builder.xyz/".to_string(),
+        // "https://api.blocknative.com/v1/auction".to_string(),
+        // "https://api.edennetwork.io/v1/bundle".to_string(),
+        // "https://eth-builder.com".to_string(),
+        // "https://rpc.lightspeedbuilder.info/".to_string(),
+        // "https://api.securerpc.com/v1".to_string(),
+        // "https://BuildAI.net".to_string(),
+        // "https://rpc.payload.de".to_string(),
+        // "https://rpc.nfactorial.xyz/".to_string()
+    ];
+    let mut bundle_handlers = vec![];
+    let node_url = nodes.next_free();
+
+
+    let provider = ethers_providers::Provider::<Ws>::connect(&node_url).await.unwrap();
+    let briber = Arc::new(abi::FlashbotsCheckAndSend::new(H160::from_str("0xc4595e3966e0ce6e3c46854647611940a09448d3").unwrap(), Arc::new(provider.clone())));
+
+    for bundle_reciever in &bundle_recievers {
+        let mut client = Arc::new(
+            FlashbotsMiddleware::new(
+                provider.clone(),
+                Url::parse(bundle_reciever).unwrap(),
+                BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap()
+            ));
+        bundle_handlers.push(client)
+    }
     for i in 0..cores {
-        let mut bundle_handlers = vec![];
-        bundle_handlers.push(BundleHandlers::FlashBots("https://relay.flashbots.net".to_string(), FlashBotsRequestParams::default())); // simulates
-        // bundle_handlers.push(BundleHandlers::FlashBots("https://builder0x69.io/".to_string(), FlashBotsRequestParams::default()));
-        // bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.beaverbuild.org/".to_string(), FlashBotsRequestParams::default()));
-        // bundle_handlers.push(BundleHandlers::FlashBots("https://rsync-builder.xyz/".to_string(), FlashBotsRequestParams::default()));
-        bundle_handlers.push(BundleHandlers::FlashBots("https://api.blocknative.com/v1/auction".to_string(), FlashBotsRequestParams::default())); // simulates
-        // bundle_handlers.push(BundleHandlers::FlashBots("https://api.edennetwork.io/v1/bundle".to_string(), FlashBotsRequestParams::default()));
-        // bundle_handlers.push(BundleHandlers::FlashBots("https://eth-builder.com".to_string(), FlashBotsRequestParams::default()));
-        bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.lightspeedbuilder.info/".to_string(), FlashBotsRequestParams::default())); // simulates
-        bundle_handlers.push(BundleHandlers::FlashBots("https://api.securerpc.com/v1".to_string(), FlashBotsRequestParams::default()));  // simulates
-        // bundle_handlers.push(BundleHandlers::FlashBots("https://BuildAI.net".to_string(), FlashBotsRequestParams::default()));
-        // bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.payload.de".to_string(), FlashBotsRequestParams::default()));
-        bundle_handlers.push(BundleHandlers::FlashBots("https://rpc.nfactorial.xyz/".to_string(), FlashBotsRequestParams::default()));   // simulates
 
         // backruns
         let routes = rts.clone();
@@ -282,7 +304,6 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                             let balance = U256::from(50000000000000000 as u128);
                             let max_possible_fee = balance / gas_cost;
                             tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
-                            tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
                             tx_request.gas = Some(gas_cost);
                             tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                             let blk = blk.number.unwrap().as_u64();
@@ -291,9 +312,10 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
 
                             // profit doesn't cover tx_fees
                             if tx_request.max_fee_per_gas.unwrap() <= base_fee {
-                                warn!("Skipping {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number,blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
+                                warn!("Skipping {}. ->  {} {} {:?} {:?} ",i+1,tx_request.gas.unwrap(), opportunity.block_number,blk, tx_request.max_fee_per_gas.unwrap());
                                 return
                             }
+                            tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
 
                             tx_request.value = None;
 
@@ -304,11 +326,13 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                             let mut bundle = vec![];
                             bundle.push(pair_tx.rlp());
                             bundle.push(signed_tx);
-                            handler.set_txs(bundle);
                             warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                            // FlashBotsBundleHandler::simulate(handler, blk, true).await;
-                            FlashBotsBundleHandler::submit(handler, blk, blk+1).await;
+                            let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, true).await;
+                            if let Some(res) = res {
+                                // info!("{} {}", res.transactions.first().unwrap().gas_used, tx_request.gas.unwrap());
+                            }
+                            // FlashBotsBundleHandler::submit(bundle, handler, blk, blk+1).await;
 
 
 
@@ -328,6 +352,7 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
 
         let nonce = n.clone();
         let block = b.clone();
+        let bundle_handlers = bundle_handlers.clone();
         workers.push(std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
 
@@ -376,7 +401,6 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                                 let max_possible_fee = balance / gas_cost;
                                 let base_fee = calculate_next_block_base_fee(blk.clone()).unwrap();
                                 tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
-                                tx_request.max_priority_fee_per_gas = tx_request.max_fee_per_gas.clone();
                                 tx_request.gas = Some(gas_cost);
                                 tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
                                 let blk = blk.number.unwrap().as_u64();
@@ -385,9 +409,10 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
 
                                 // profit doesn't cover tx_fees
                                 if tx_request.max_fee_per_gas.unwrap() <= base_fee {
-                                    warn!("Skipping {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
+                                    warn!("Skipping {}. ->  {} {} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk,  tx_request.max_fee_per_gas.unwrap());
                                     return
                                 }
+                                tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
 
                                 tx_request.value = None;
 
@@ -397,11 +422,12 @@ pub fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Async
                                 let signed_tx = typed_tx.rlp_signed(&tx_sig);
                                 let mut bundle = vec![];
                                 bundle.push(signed_tx);
-                                handler.set_txs(bundle);
                                 warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                                // FlashBotsBundleHandler::simulate(handler, blk, true).await;
-                                FlashBotsBundleHandler::submit(handler, blk, blk+1).await;
+                                let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, true).await;
+                                if let Some(res) = res {
+                                    // info!("{} {}", res.transactions.first().unwrap().gas_used, tx_request.gas.unwrap());
+                                }                                // FlashBotsBundleHandler::submit(bundle, handler, blk, blk+1).await;
                             }));
                     }
                 }
@@ -484,115 +510,80 @@ pub struct FlashBotsBundleHandler {
 
 impl FlashBotsBundleHandler {
 
-    async fn submit(handler_meta: BundleHandlers, from_block: u64, to_block: u64) {
-        let client = reqwest::Client::new();
-        let endpoint = Url::from_str(&handler_meta.endpoint()).unwrap();
-        let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
-        for i in 0..(to_block-from_block) + 1 {
-            let mut handler = handler_meta.clone();
-            handler.set_block(from_block + i);
-            let request = match handler {
-                BundleHandlers::FlashBots(_, params) | BundleHandlers::EthBuilder(_, params)  | BundleHandlers::BlockVision(_, params)=> {
-                    JsonRpcRequest::new("eth_sendBundle", [params.clone()])
-                }
-                _ => {
-                return
-                }
-            };
+    async fn submit(txs: Vec<Bytes>, flashbots: Arc<FlashbotsMiddleware<Provider<Ws>, LocalWallet>>, from_block: u64, to_block: u64) {
 
-            debug!("Request: {}", serde_json::to_string(&request).unwrap());
-            let signature = bundle_signer
-                .sign_message(format!(
-                    "0x{:x}",
-                    H256::from(keccak256(
-                        serde_json::to_string(&request)
-                            .unwrap()
-                            .as_bytes()
-                    ))
-                ))
-                .await
-                .unwrap();
-
-            let mut req = client
-                .post(endpoint.as_ref())
-                .header(
-                    "X-Flashbots-Signature",
-                    format!("{:?}:0x{}", bundle_signer.address(), signature),
-                ).json(&request);
-            debug!("Header: {}", format!("{:?}:0x{}", bundle_signer.address(), signature));
-
-            match req.send().await {
-                Ok(res) => {
-                    debug!("ResponseMeta: {:?}", res);
-                    warn!("{}: Response: {:?}",handler_meta.endpoint(), res.text().await)
-                } Err(e) => {
-                    error!("{}: Flashbots Relay Error: {:?}",handler_meta.endpoint(), e)
-                }
+        for block in from_block..to_block+1 {
+            let mut bundle = BundleRequest::new();
+            for tx in &txs {
+                bundle = bundle.push_transaction(tx.clone());
             }
 
+            bundle = bundle
+                .set_block(U64::from(block))
+                .set_simulation_block(U64::from(block))
+                .set_simulation_timestamp(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
+
+            let res = flashbots.send_bundle(&bundle).await;
+            if let Ok(res) = res {
+                info!("{:?}", res.bundle_hash);
+                // let bundle_status = flashbots.get_bundle_stats(res.bundle_hash, res.block).await;
+                // if let Ok(stats) = bundle_status {
+                //         info!("{:?}",  stats);
+                // }
+
+
+            } else {
+                error!("Failed to submit transaction ")
+            }
         }
+
+
     }
 
-    async fn simulate(handler_meta: BundleHandlers, block: u64, only_successful: bool) {
-        let node_url = "http://65.21.198.115:8545".to_string();
+    async fn simulate(txs: Vec<Bytes>,flashbots: Arc<FlashbotsMiddleware<Provider<Ws>, LocalWallet>>,  block: u64, only_successful: bool) -> Option<SimulatedBundle> {
 
-        let provider = ethers_providers::Provider::<Http>::connect(&node_url).await;
-        let mut client = Arc::new(
-            FlashbotsMiddleware::new(
-                provider,
-                Url::parse(&handler_meta.endpoint()).unwrap(),
-                BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap()
-            ));
-        let endpoint = Url::from_str(&handler_meta.endpoint()).unwrap();
-        let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
         let mut bundle = BundleRequest::new();
+        for tx in txs {
+            bundle = bundle.push_transaction(tx);
+        }
 
-        let mut handler = handler_meta.clone();
-            handler.set_block(block);
+        bundle = bundle
+            .set_block(U64::from(block))
+            .set_simulation_block(U64::from(block))
+            .set_simulation_timestamp(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
 
-            match handler {
-                BundleHandlers::FlashBots(_, params) | BundleHandlers::EthBuilder(_, params)  | BundleHandlers::BlockVision(_, params)=> {
+        let simulation_result = flashbots.simulate_bundle(&bundle).await;
 
-                    for tx in params.txs {
-                        bundle = bundle.push_transaction(tx);
-                    }
+        if let Ok(res) = simulation_result {
+            if only_successful {
+                if res.transactions.iter().all(|tx| tx.error.is_none()) {
+                    info!("{:?}", res);
 
-                    bundle = bundle.set_block(params.block_number).set_simulation_block(params.block_number).set_simulation_timestamp(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs());
-
-                    let simulation_result = client.simulate_bundle(&bundle).await;
-
-                    if let Ok(res) = simulation_result {
-                        if only_successful {
-                            if res.transactions.iter().all(|tx| tx.error.is_none()) {
-                                info!("{}: {:?}", handler_meta.endpoint(), res);
-
-                            }
-                        } else {
-                            info!("{}: {:?}", handler_meta.endpoint(), res);
-
-                        }
-                    } else {
-                        let err = simulation_result.unwrap_err();
-                        match &err {
-                            FlashbotsMiddlewareError::RelayError(e) => {
-                               match e {
-                                   RelayError::JsonRpcError(err) => {
-                                       if err.message == "header not found".to_string() {
-                                           return
-                                       }
-                                   }
-                                   _ => {}
-                               }
-                            }
-                            _ => {}
-                        }
-                        error!("{}: Failed to simulate transaction {:?}",handler_meta.endpoint(), err)
-                    }
                 }
-                _ => {
-                    return
+            } else {
+                info!("{:?}",  res);
+
+            }
+            return Some(res)
+        } else {
+            let err = simulation_result.unwrap_err();
+            match &err {
+                FlashbotsMiddlewareError::RelayError(e) => {
+                   match e {
+                       RelayError::JsonRpcError(err) => {
+                           if err.message == "header not found".to_string() {
+                               return None
+                           }
+                       }
+                       _ => {}
+                   }
                 }
-            };
+                _ => {}
+            }
+            error!("Failed to simulate transaction {:?}", err)
+        }
+        None
+
 
     }
 }

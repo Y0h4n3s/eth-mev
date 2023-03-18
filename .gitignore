@@ -4,7 +4,7 @@
 .idea
 **path_lookup.json
 **Cargo.lock
-
+**.env**
 **node_modules/
 
 # Environment Variables

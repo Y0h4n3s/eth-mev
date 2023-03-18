@@ -640,6 +640,8 @@ pub async fn start(
     let mut loaded_pools = HashMap::new();
     for amm in &amms {
         let pools = amm.get_pools().await;
+        let keys: Vec<String> = pools.keys().cloned().collect();
+        std::fs::write(format!("{:?}", amm.get_id()), keys.join("\n")).expect("");
         for (addr, pool) in pools {
             loaded_pools.insert(addr, pool);
         }
