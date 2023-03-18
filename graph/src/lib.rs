@@ -60,7 +60,7 @@ static PRIVATE_KEY: Lazy<String> = Lazy::new(|| std::env::var("ETH_PRIVATE_KEY")
 static BUNDLE_SIGNER_PRIVATE_KEY: Lazy<String> = Lazy::new(|| std::env::var("ETH_BUNDLE_SIGNER_PRIVATE_KEY").unwrap());
 
 static CONTRACT_ADDRESS: Lazy<Address> = Lazy::new(|| {
-    Address::from_str(&std::env::var("ETH_CONTRACT_ADDRESS").unwrap_or_else(|_| std::env::args().nth(6).unwrap_or("0x46B2f7B9a13072BDA6F91EDE396Ff8AF493c6cD4".to_string()))).unwrap()
+    Address::from_str(&std::env::var("ETH_CONTRACT_ADDRESS").unwrap_or_else(|_| std::env::args().nth(6).unwrap_or("0xA46356ba716631d87Ab3081635F06136662ae3C0".to_string()))).unwrap()
 });
 
 static NEO4J_USER: Lazy<String> =
@@ -275,13 +275,13 @@ DETACH DELETE n",
     let path_lookup1 = Arc::new(RwLock::new(
         HashMap::<Pool, Vec<MevPath>>::new(),
     ));
-        let max_intermidiate_nodes = 4;
+        let max_intermidiate_nodes = 5;
         for i in 2..max_intermidiate_nodes {
             info!("Preparing {} step routes ", i);
             let path_lookup = path_lookup.clone();
             let pool = pool.clone();
             let mut conn = pool.get().await?;
-            let permits = Arc::new(Semaphore::new(30));
+            let permits = Arc::new(Semaphore::new(40));
             // OLD MATCHER: match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)
             let mut steps = "".to_string();
             let mut where_clause = "1 = 1".to_string();
@@ -519,7 +519,7 @@ DETACH DELETE n",
                 LiquidityProviderId::BalancerWeighted => {
                     let mut w = gas_lookup.lock().unwrap();
                     w.insert(pool.address.clone(), U256::from(120000));
-
+                    return
                 }
             };
 
@@ -623,7 +623,7 @@ DETACH DELETE n",
                 };
 
                 let mut updated = market_routes.into_par_iter().filter_map(|mut route| {
-                    if let Some((profit, tx)) = route.get_transaction() {
+                    if let Some(( tx, result)) = route.get_transaction() {
                         let gas_cost = gas_lookup.iter().filter_map(|(pl, amount)| {
                             if route.pools.iter().any(|p | &p.address == pl) {
 
@@ -638,9 +638,10 @@ DETACH DELETE n",
                         Some(ArbPath {
                             path: route,
                             tx,
-                            profit,
+                            profit: U256::from(result.profit),
                             gas_cost,
-                            block_number: event.block_number
+                            block_number: event.block_number,
+                            result
                         })
                     } else {
                         None

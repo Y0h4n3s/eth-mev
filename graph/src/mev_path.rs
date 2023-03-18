@@ -200,8 +200,8 @@ fn sub_i256(first: I256, second: I256) -> I256 {
         -(diff)
     }
 }
-
-struct StepMeta {
+#[derive(Debug, Clone)]
+pub struct StepMeta {
     pub step_id: String,
     pub asset: I256,
     pub debt: I256,
@@ -210,11 +210,12 @@ struct StepMeta {
     pub step: MevPathStep
 }
 
-#[derive(Debug)]
-struct PathResult {
+#[derive(Debug, Clone)]
+pub struct PathResult {
     pub ix_data: String,
     pub profit: u128,
     pub is_good: bool,
+    pub steps: Vec<StepMeta>
 }
 
 impl MevPath {
@@ -953,6 +954,8 @@ impl MevPath {
                 ix_data: final_data,
                 profit: best_route_profit.as_u128(),
                 is_good: true,
+                steps: steps_meta[best_route_index].clone(),
+
             })
         } else if best_route_profit == I256::from(0) {
             Err(anyhow::Error::msg("Inv Path"))
@@ -961,6 +964,7 @@ impl MevPath {
                 ix_data: "".to_string(),
                 profit: 0,
                 is_good: false,
+                steps: vec![]
             })
         }
     }
@@ -1043,7 +1047,7 @@ impl MevPath {
             }
     }
 
-    pub fn get_transaction(&self) -> Option<(U256,Eip1559TransactionRequest)> {
+    pub fn get_transaction(&self) -> Option<(Eip1559TransactionRequest, PathResult)> {
         let is_good = self.validate_path(self.path.clone());
         match &is_good {
             Ok(data) => {
@@ -1086,7 +1090,7 @@ impl MevPath {
                         value: None,
                         access_list: AccessList::default(),
                     };
-                    return Some((U256::from(data.profit), tx_request));
+                    return Some((tx_request, data.clone()));
                 }
             }
             Err(e) => {
@@ -1100,7 +1104,7 @@ impl MevPath {
     pub fn get_backrun_for_update(&self, pending_tx: Transaction, updated_pool: Pool, gas_lookup: &HashMap<String, U256>, block_number: u64) -> Option<Backrun> {
         let mut mock = self.clone();
         mock.update(updated_pool);
-        if let Some((profit, tx)) = mock.get_transaction() {
+        if let Some((tx, result)) = mock.get_transaction() {
             let gas_cost = gas_lookup.iter().filter_map(|(pl, amount)| {
                 if mock.pools.iter().any(|p | &p.address == pl) {
 
@@ -1116,9 +1120,11 @@ impl MevPath {
                 tx,
                 pending_tx,
                 path: mock,
-                profit,
+                profit: U256::from(result.profit),
                 gas_cost,
-                block_number
+                block_number,
+                result
+
             })
         } else {
             None

@@ -282,12 +282,11 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                 let signer = Arc::new(signer);
 
 
-                let sent = Arc::new(RwLock::new(false));
                 let signer = Arc::new(signer);
                 while let Ok(opportunity) = routes.recv().await {
-                    let pair_tx = opportunity.pending_tx;
-                    let order = opportunity.tx;
-                    let path = opportunity.path;
+                    let pair_tx = opportunity.pending_tx.clone();
+                    let order = opportunity.tx.clone();
+                    let path = opportunity.path.clone();
                     let gas_cost = opportunity.gas_cost;
 
                     let mut handles = vec![];
@@ -299,6 +298,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                         let signer = signer.clone();
                         let client = client.clone();
                         let mut handler = handler.clone();
+                        let op = opportunity.clone();
                         handles.push(tokio::runtime::Handle::current().spawn(async move {
                             let mut tx_request = order;
                             tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
@@ -321,7 +321,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
 
                             // profit doesn't cover tx_fees
                             if tx_request.max_fee_per_gas.unwrap() <= base_fee {
-                                warn!("Skipping {}. ->  {} {} {:?} {:?} ",i+1,tx_request.gas.unwrap(), opportunity.block_number,blk, tx_request.max_fee_per_gas.unwrap());
+                                // warn!("Skipping {}. ->  {} {} {:?} {:?} ",i+1,tx_request.gas.unwrap(), opportunity.block_number,blk, tx_request.max_fee_per_gas.unwrap());
                                 return
                             }
                             tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
@@ -335,11 +335,15 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                             let mut bundle = vec![];
                             bundle.push(pair_tx.rlp());
                             bundle.push(signed_tx);
-                            warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
+                            // warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
                             let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, false).await;
                             if let Some(res) = res {
-                                // info!("{} {}", res.transactions.first().unwrap().gas_used, tx_request.gas.unwrap());
+                                for step in &op.result.steps {
+                                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+                                }
+                                info!("\n{}\n\n", op.result.ix_data);
+                                // info!("{} {}", res.transactions.last().unwrap().gas_used, tx_request.gas.unwrap());
                             }
                             // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
 
@@ -418,7 +422,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
 
                                 // profit doesn't cover tx_fees
                                 if tx_request.max_fee_per_gas.unwrap() <= base_fee {
-                                    warn!("Skipping {}. ->  {} {} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk,  tx_request.max_fee_per_gas.unwrap());
+                                    // warn!("Skipping {}. ->  {} {} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk,  tx_request.max_fee_per_gas.unwrap());
                                     return
                                 }
                                 tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
@@ -431,7 +435,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                                 let signed_tx = typed_tx.rlp_signed(&tx_sig);
                                 let mut bundle = vec![];
                                 bundle.push(signed_tx);
-                                warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
+                                // warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
                                 let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, true).await;
                                 if let Some(res) = res {
@@ -589,7 +593,7 @@ impl FlashBotsBundleHandler {
                 }
                 _ => {}
             }
-            error!("Failed to simulate transaction {:?}", err)
+            // error!("Failed to simulate transaction {:?}", err)
         }
         None
 
