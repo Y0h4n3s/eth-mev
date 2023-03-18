@@ -634,6 +634,7 @@ pub async fn start(
         amms.push(amm);
     }
 
+    let filter_tokens: Vec<String> = serde_json::from_str(&std::fs::read_to_string("blacklisted_tokens.json").unwrap()).unwrap();
     // Make sure pools are loaded before starting the listener
     info!("Loading Pools... ");
     for handle in join_handles {
@@ -645,6 +646,9 @@ pub async fn start(
         let keys: Vec<String> = pools.keys().cloned().collect();
         std::fs::write(format!("{:?}", amm.get_id()), keys.join("\n")).expect("");
         for (addr, pool) in pools {
+            if filter_tokens.contains(&pool.x_address) || filter_tokens.contains(&pool.y_address) {
+                continue;
+            }
             loaded_pools.insert(addr, pool);
         }
     }

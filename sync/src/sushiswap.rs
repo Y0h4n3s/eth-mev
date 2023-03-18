@@ -176,6 +176,10 @@ impl LiquidityProvider for SushiSwap {
                     x_to_y: true,
                     provider: LiquidityProviders::SushiSwap(Default::default()),
                 };
+
+                if filter_tokens.contains(&pool.x_address) || filter_tokens.contains(&pool.y_address) {
+                    continue;
+                }
                 // atleast 0.1
                 let min_0 = U256::from(10).pow(U256::from(pair.token0_decimals as i32 + TVL_FILTER_LEVEL));
                 let min_1 = U256::from(10).pow(U256::from(pair.token1_decimals as i32 + TVL_FILTER_LEVEL));
