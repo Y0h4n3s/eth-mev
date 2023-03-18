@@ -72,6 +72,7 @@ contract UniswapV2DataAggregator {
         uint8 tokenADecimals;
         address tokenB;
         uint8 tokenBDecimals;
+        uint256 fees;
     }
 
     constructor(address[] memory pools) {

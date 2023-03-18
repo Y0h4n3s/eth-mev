@@ -342,7 +342,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                                 for step in &op.result.steps {
                                     info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
                                 }
-                                info!("\n{}\n\n", op.result.ix_data);
+                                info!("\n{} {}\n\n", tx_request.gas.unwrap(), op.result.ix_data);
                                 // info!("{} {}", res.transactions.last().unwrap().gas_used, tx_request.gas.unwrap());
                             }
                             // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
@@ -373,15 +373,11 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                 let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
 
                 let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
-                let provider = ethers_providers::Provider::<Http>::try_from(NODE_URL.clone().to_string()).unwrap();
-                let client = Arc::new(
-                    SignerMiddleware::new_with_provider_chain(provider.clone(), signer.clone()).await.unwrap());
 
 
 
                 let signer_wallet_address = signer.address();
                 let nonce_update = nonce.clone();
-                let ap = client.clone();
 
 
                 let signer = Arc::new(signer);
@@ -392,14 +388,16 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                     let mut handles = vec![];
 
                     for opportunity in orders {
+
                         let gas_cost = opportunity.gas_cost;
                         for handler in &bundle_handlers {
                             let order = opportunity.tx.clone();
+                            let op = opportunity.clone();
                             let nonce_num = nonce.clone();
                             let block = block.clone();
                             let signer = signer.clone();
-                            let client = client.clone();
                             let mut handler = handler.clone();
+
                             handles.push(tokio::runtime::Handle::current().spawn(async move {
                                 let mut tx_request = order;
                                 tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
@@ -439,6 +437,10 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
 
                                 let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, true).await;
                                 if let Some(res) = res {
+                                    for step in &op.result.steps {
+                                        info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+                                    }
+                                    info!("\n{} {}\n\n", tx_request.gas.unwrap(), op.result.ix_data);
                                     // info!("{} {}", res.transactions.first().unwrap().gas_used, tx_request.gas.unwrap());
                                 }                                // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
                             }));

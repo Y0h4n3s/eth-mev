@@ -56,6 +56,7 @@ pub struct UniswapV2Metadata {
     pub token1_decimals: u8,
     pub token0: String,
     pub token1: String,
+    pub fees: u32
 }
 
 impl Meta for UniswapV2Metadata {}
