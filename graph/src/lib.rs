@@ -121,6 +121,7 @@ pub async fn start(
     pending_updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>,
     routes: Arc<RwLock<kanal::AsyncSender<Backrun>>>,
     single_routes: Arc<RwLock<kanal::AsyncSender<Vec<ArbPath>>>>,
+    used_oneshot: tokio::sync::oneshot::Sender<HashMap<String, Pool>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
     Graph::<String, Pool, Undirected>::new_undirected();
@@ -467,6 +468,10 @@ DETACH DELETE n",
         .flatten()
         .unique()
         .collect::<Vec<Pool>>();
+
+    let mut watch_pools : HashMap<String, Pool> = HashMap::new();
+    uniq.iter().for_each(|pool| {watch_pools.insert(pool.address.clone(), pool.clone());});
+    used_oneshot.send(watch_pools).unwrap();
     //	return Ok(());
     info!("Registering Gas consumption for {} pool transactions", uniq.len());
     let gas_map: Arc<Mutex<HashMap<String, U256>>> = Arc::new(Mutex::new(HashMap::new()));

@@ -581,6 +581,10 @@ impl LiquidityProvider for UniSwapV3 {
         let lock = self.pools.read().await;
         lock.clone()
     }
+    async fn set_pools(&self, pools: HashMap<String, Pool>)  {
+        let mut lock = self.pools.write().await;
+        *lock = pools;
+    }
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()> {
         let metadata = self.metadata.clone();
         let pools = self.pools.clone();

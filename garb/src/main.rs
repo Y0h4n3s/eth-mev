@@ -56,7 +56,7 @@ use garb_graph_eth::single_arb::ArbPath;
 use garb_sync_eth::node_dispatcher::NodeDispatcher;
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
-    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("2,4,5".to_string()))
+    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("4,5,6".to_string()))
         .split(",")
         .map(|i| LiquidityProviders::from(i))
         .collect()
@@ -101,12 +101,13 @@ pub async fn async_main() -> anyhow::Result<()> {
         kanal::bounded_async::<Vec<ArbPath>>(10000);
     let (pool_sender, mut pool_receiver) =
         kanal::bounded_async::<Pool>(10000);
+    let (used_pools_shot_tx, used_pools_shot_rx) = tokio::sync::oneshot::channel::<HashMap<String, Pool>>();
     let sync_config = SyncConfig {
         providers: PROVIDERS.clone(),
     };
 
     let nodes = NodeDispatcher::from_file("nodes").await?;
-    garb_sync_eth::start(pools.clone(), update_q_sender, pending_update_q_sender, nodes.clone(), sync_config)
+    garb_sync_eth::start(pools.clone(), update_q_sender, pending_update_q_sender, used_pools_shot_rx, nodes.clone(), sync_config)
         .await
         .unwrap();
 
@@ -121,7 +122,15 @@ pub async fn async_main() -> anyhow::Result<()> {
         let rt = Runtime::new().unwrap();
 
         rt.block_on(async move {
-            garb_graph_eth::start(pools.clone(), update_q_receiver,  pending_update_q_receiver,Arc::new(RwLock::new(graph_routes)), Arc::new(RwLock::new(single_routes_sender)),graph_conifg).await.unwrap();
+            garb_graph_eth::start(
+                pools.clone(),
+                update_q_receiver,
+                pending_update_q_receiver,
+                Arc::new(RwLock::new(graph_routes)),
+                Arc::new(RwLock::new(single_routes_sender)),
+                used_pools_shot_tx,
+                graph_conifg
+            ).await.unwrap();
         });
     }));
     joins.push(std::thread::spawn(move || {
@@ -328,11 +337,11 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                             bundle.push(signed_tx);
                             warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                            let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, true).await;
+                            let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, false).await;
                             if let Some(res) = res {
                                 // info!("{} {}", res.transactions.first().unwrap().gas_used, tx_request.gas.unwrap());
                             }
-                            // FlashBotsBundleHandler::submit(bundle, handler, blk, blk+1).await;
+                            // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
 
 
 
@@ -427,7 +436,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                                 let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, true).await;
                                 if let Some(res) = res {
                                     // info!("{} {}", res.transactions.first().unwrap().gas_used, tx_request.gas.unwrap());
-                                }                                // FlashBotsBundleHandler::submit(bundle, handler, blk, blk+1).await;
+                                }                                // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
                             }));
                     }
                 }

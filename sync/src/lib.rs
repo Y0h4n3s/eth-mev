@@ -45,12 +45,13 @@ use num_bigfloat::{BigFloat, RoundingMode};
 use tracing::info;
 use crate::node_dispatcher::NodeDispatcher;
 use crate::sushiswap::SushiSwapMetadata;
-
+use tokio::runtime::Runtime;
 #[async_trait]
 pub trait LiquidityProvider: EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> + EventEmitter<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>> {
     type Metadata;
     fn get_metadata(&self) -> Self::Metadata;
     async fn get_pools(&self) -> HashMap<String, Pool>;
+    async fn set_pools(&self, pools:HashMap<String, Pool>);
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()>;
     fn get_id(&self) -> LiquidityProviderId;
 }
@@ -141,7 +142,7 @@ pub trait EventSource: Send {
 }
 pub type BoxedLiquidityProvider = Box<
     dyn LiquidityProvider<Metadata = Box<dyn Meta>>
-        + Send,
+        + Send + Sync,
 >;
 
 impl LiquidityProviders {
@@ -618,6 +619,7 @@ pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>,
     pending_updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>,
+    mut used_pools: tokio::sync::oneshot::Receiver<HashMap<String, Pool>>,
     nodes: NodeDispatcher,
     config: SyncConfig,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
@@ -651,16 +653,23 @@ pub async fn start(
     *pools = loaded_pools;
     std::mem::drop(pools);
 
-    let mut emitters = vec![];
-    for amm in amms {
-        emitters.push(EventEmitter::<Box<dyn EventSource<Event = PoolUpdateEvent>>>::emit(&*amm));
-        emitters.push(EventEmitter::<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>::emit(&*amm));
-    }
+
 
     Ok(tokio::spawn(async move {
-        for emitter in emitters {
-            emitter.join().unwrap();
-        }
+        let rt = Runtime::new().unwrap();
+
+            let used_pools = used_pools.await.unwrap();
+            let mut emitters = vec![];
+
+            for amm in amms {
+                let my_pools = used_pools.clone().into_iter().filter(|(_, pl)| pl.provider.id() == amm.get_id()).collect::<HashMap<String, Pool>>();
+                amm.set_pools(my_pools).await;
+                emitters.push(EventEmitter::<Box<dyn EventSource<Event=PoolUpdateEvent>>>::emit(&*amm));
+                emitters.push(EventEmitter::<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>::emit(&*amm));
+            }
+            for emitter in emitters {
+                emitter.join().unwrap();
+            }
     }))
 }
 
