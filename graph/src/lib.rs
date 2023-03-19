@@ -56,6 +56,7 @@ use tokio::time::Duration;
 use ethers_flashbots::{BundleRequest, FlashbotsMiddleware, BundleTransaction};
 use std::sync::Mutex;
 use std::str::FromStr;
+
 static PRIVATE_KEY: Lazy<String> = Lazy::new(|| std::env::var("ETH_PRIVATE_KEY").unwrap());
 static BUNDLE_SIGNER_PRIVATE_KEY: Lazy<String> = Lazy::new(|| std::env::var("ETH_BUNDLE_SIGNER_PRIVATE_KEY").unwrap());
 
@@ -126,7 +127,6 @@ pub async fn start(
 ) -> anyhow::Result<()> {
     Graph::<String, Pool, Undirected>::new_undirected();
     let pr = pools.read().await;
-
     let manager = Manager::new(
         &NEO4J_URL.clone(),
         None,
@@ -281,7 +281,8 @@ DETACH DELETE n",
             let path_lookup = path_lookup.clone();
             let pool = pool.clone();
             let mut conn = pool.get().await?;
-            let permits = Arc::new(Semaphore::new(40));
+            let cores = num_cpus::get();
+            let permits = Arc::new(Semaphore::new(cores));
             // OLD MATCHER: match cyclePath=(m1:Token{{address:'{}'}})-[*{}..{}]-(m2:Token{{address:'{}'}}) RETURN relationships(cyclePath) as cycle, nodes(cyclePath)
             let mut steps = "".to_string();
             let mut where_clause = "1 = 1".to_string();
@@ -593,7 +594,7 @@ DETACH DELETE n",
     let cores = num_cpus::get();
 
     let gas_lookup = gas_map.clone();
-    for i in 0..cores {
+    for i in 0..cores/2 {
         let gas_lookup = gas_lookup.lock().unwrap().clone();
         let path_lookup = path_lookup1.clone();
         let single_routes = single_routes.read().await.clone();
@@ -656,7 +657,7 @@ DETACH DELETE n",
     }
 
     let gas_lookup = gas_map.clone();
-    for i in 0..cores {
+    for i in 0..cores/2 {
         let gas_lookup = gas_lookup.lock().unwrap().clone();
 
         let path_lookup = path_lookup1.clone();

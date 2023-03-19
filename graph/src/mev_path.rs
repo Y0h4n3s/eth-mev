@@ -144,7 +144,7 @@ impl MevPathStep {
         match self {
             MevPathStep::ExactIn(p, _, _)
             | MevPathStep::ExactOut(p, _, _)
-            | MevPathStep::Payback(p, _, _) => p == pool,
+            | MevPathStep::Payback(p, _, _) => p.address == pool.address,
         }
     }
 
@@ -330,7 +330,7 @@ impl MevPath {
                 balance.insert(contract_address.clone(), map);
             }
         }
-        'binary_search: for i in 0..20 {
+        'binary_search: for i in 0..13 {
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
 
             let mut balance = balance.clone();
@@ -1039,7 +1039,6 @@ impl MevPath {
         };
     }
     pub fn update(&mut self, updated_pool: Pool) {
-            // check if the path has positive outcome
             for mut step in (*self.path).iter_mut() {
                 if step.contains_pool(&updated_pool) {
                     step.update_pool(&updated_pool);

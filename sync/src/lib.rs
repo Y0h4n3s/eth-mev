@@ -39,7 +39,7 @@ pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
           .unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
 });
 
-pub const POLL_INTERVAL: u64 = 300;
+pub const POLL_INTERVAL: u64 = 600;
 use nom::FindSubstring;
 use num_bigfloat::{BigFloat, RoundingMode};
 use tracing::info;

@@ -91,14 +91,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 pub async fn async_main() -> anyhow::Result<()> {
     let pools = Arc::new(RwLock::new(HashMap::<String, Pool>::new()));
-    let (update_q_sender, update_q_receiver) = kanal::bounded_async::<Box<dyn EventSource<Event=PoolUpdateEvent>>>(1000);
-    let (pending_update_q_sender, pending_update_q_receiver) = kanal::bounded_async::<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>(1000);
+    let (update_q_sender, update_q_receiver) = kanal::bounded_async::<Box<dyn EventSource<Event=PoolUpdateEvent>>>(10000);
+    let (pending_update_q_sender, pending_update_q_receiver) = kanal::bounded_async::<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>(10000);
     // routes holds the routes that pass through an updated pool
     // this will be populated by the graph module when there is an updated pool
     let (routes_sender, mut routes_receiver) =
-        kanal::bounded_async::<Backrun>(10000);
+        kanal::bounded_async::<Backrun>(1000);
     let (single_routes_sender, mut single_routes_receiver) =
-        kanal::bounded_async::<Vec<ArbPath>>(10000);
+        kanal::bounded_async::<Vec<ArbPath>>(1000);
     let (pool_sender, mut pool_receiver) =
         kanal::bounded_async::<Pool>(10000);
     let (used_pools_shot_tx, used_pools_shot_rx) = tokio::sync::oneshot::channel::<HashMap<String, Pool>>();
@@ -218,7 +218,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
             ));
         bundle_handlers.push(client)
     }
-    for i in 0..cores {
+    for i in 0..cores/2 {
 
         // backruns
         let routes = rts.clone();
