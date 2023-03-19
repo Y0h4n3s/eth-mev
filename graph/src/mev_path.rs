@@ -281,7 +281,7 @@ impl MevPath {
 
             let mut instruction = Vec::with_capacity(path.len());
             let mut steps_taken = Vec::with_capacity(path.len());
-            let mut sender = contract_address.clone();
+            let mut sender = "self".to_string();
 
             // tries to complete steps
             'inner: for (index, step) in path.iter().enumerate().collect::<Vec<(usize, &MevPathStep)>>() {
@@ -481,9 +481,8 @@ impl MevPath {
                 mid = (left + right) / 2.0;
             }
     
-        info!("\n\n\n");
         if best_route_profit > I256::from(0) {
-            debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+            info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
 
             debug!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
             for step in &steps_meta[best_route_index] {
