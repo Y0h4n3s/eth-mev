@@ -121,7 +121,7 @@ pub async fn start(
     updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PoolUpdateEvent>>>,
     pending_updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>,
     routes: Arc<RwLock<kanal::AsyncSender<Backrun>>>,
-    single_routes: Arc<RwLock<kanal::AsyncSender<Vec<ArbPath>>>>,
+    single_routes: Arc<Mutex<kanal::Sender<Vec<ArbPath>>>>,
     used_oneshot: tokio::sync::oneshot::Sender<HashMap<String, Pool>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
@@ -473,7 +473,7 @@ DETACH DELETE n",
 
     //	return Ok(());
     info!("Registering Gas consumption for {} pool transactions", uniq.len());
-    let gas_map: Arc<Mutex<HashMap<String, U256>>> = Arc::new(Mutex::new(HashMap::new()));
+    let gas_map: Arc<std::sync::RwLock<HashMap<String, U256>>> = Arc::new(std::sync::RwLock::new(HashMap::new()));
     let node_url = "http://65.21.198.115:8545".to_string();
     let gas_lookup = gas_map.clone();
 
@@ -516,7 +516,7 @@ DETACH DELETE n",
 
                 }
                 LiquidityProviderId::BalancerWeighted => {
-                    let mut w = gas_lookup.lock().unwrap();
+                    let mut w = gas_lookup.write().unwrap();
                     w.insert(pool.address.clone(), U256::from(120000));
                     return
                 }
@@ -547,7 +547,7 @@ DETACH DELETE n",
             if let Ok(res) = simulation_result {
                 let tx = res.transactions.get(0).unwrap();
                 let gas_used = tx.gas_used;
-                let mut w = gas_lookup.lock().unwrap();
+                let mut w = gas_lookup.write().unwrap();
                 if tx.error.is_none() && tx.revert.is_none() {
                     w.insert(pool.address.clone(), gas_used + U256::from(5000));
 
@@ -577,15 +577,14 @@ DETACH DELETE n",
 
     let gas_lookup = gas_map.clone();
     for i in 0..cores/2 {
-        let gas_lookup = gas_lookup.lock().unwrap().clone();
+        let gas_lookup = gas_lookup.clone();
         let path_lookup = path_lookup1.clone();
-        let single_routes = single_routes.read().await.clone();
+        let single_routes = single_routes.clone();
         let updated_q = updated_q.clone();
         workers.push(tokio::spawn(async move {
             while let Ok(updated_market_event) = updated_q.recv().await {
                 let event = updated_market_event.get_event();
                 let mut updated_market = event.pool;
-                let single_routes = single_routes.clone();
                 let market_routes = if let Some((pool, market_routes)) = path_lookup.write().await.iter_mut().find(|(key, _value)| {
                     updated_market.address == key.address
                 }) {
@@ -604,34 +603,44 @@ DETACH DELETE n",
                     debug!("No routes found for {}", updated_market);
                     continue;
                 };
+                let single_routes = single_routes.clone();
+                let gas_lookup = gas_lookup.clone();
 
-                let mut updated = market_routes.into_par_iter().filter_map(|mut route| {
-                    if let Some(( tx, result)) = route.get_transaction() {
-                        let gas_cost = gas_lookup.iter().filter_map(|(pl, amount)| {
-                            if route.pools.iter().any(|p | &p.address == pl) {
+                std::thread::spawn(move || {
+                    let mut updated = market_routes.into_par_iter().filter_map(|mut route| {
+                        if let Some(( tx, result)) = route.get_transaction() {
+                            let gas_cost = gas_lookup
+                            .read()
+                            .unwrap()
+                            .iter()
+                            .filter_map(|(pl, amount)| {
+                                if route.pools.iter().any(|p | &p.address == pl) {
 
-                                Some(amount)
-                            } else {
-                                None
-                            }
-                        }).cloned()
+                                    Some(amount)
+                                } else {
+                                    None
+                                }
+                            }).cloned()
                             .reduce(|a, b| a + b)
                             .unwrap_or(U256::from(400000));
 
-                        Some(ArbPath {
-                            path: route,
-                            tx,
-                            profit: U256::from(result.profit),
-                            gas_cost,
-                            block_number: event.block_number,
-                            result
-                        })
-                    } else {
-                        None
-                    }
-                }).collect::<Vec<ArbPath>>();
+                            Some(ArbPath {
+                                path: route,
+                                tx,
+                                profit: U256::from(result.profit),
+                                gas_cost,
+                                block_number: event.block_number,
+                                result
+                            })
+                        } else {
+                            None
+                        }
+                    }).collect::<Vec<ArbPath>>();
 
-                single_routes.send(updated).await;
+                    let mut w = single_routes.lock().unwrap();
+                    w.send(updated).unwrap();
+
+                });
 
 
             }
@@ -640,7 +649,7 @@ DETACH DELETE n",
 
     let gas_lookup = gas_map.clone();
     for i in 0..cores/2 {
-        let gas_lookup = gas_lookup.lock().unwrap().clone();
+        let gas_lookup = gas_lookup.read().unwrap().clone();
 
         let path_lookup = path_lookup1.clone();
         let routes = routes.read().await.clone();

@@ -98,7 +98,7 @@ pub async fn async_main() -> anyhow::Result<()> {
     let (routes_sender, mut routes_receiver) =
         kanal::bounded_async::<Backrun>(1000);
     let (single_routes_sender, mut single_routes_receiver) =
-        kanal::bounded_async::<Vec<ArbPath>>(1000);
+        kanal::bounded::<Vec<ArbPath>>(1000);
     let (pool_sender, mut pool_receiver) =
         kanal::bounded_async::<Pool>(10000);
     let (used_pools_shot_tx, used_pools_shot_rx) = tokio::sync::oneshot::channel::<HashMap<String, Pool>>();
@@ -127,7 +127,7 @@ pub async fn async_main() -> anyhow::Result<()> {
                 update_q_receiver,
                 pending_update_q_receiver,
                 Arc::new(RwLock::new(graph_routes)),
-                Arc::new(RwLock::new(single_routes_sender)),
+                Arc::new(std::sync::Mutex::new(single_routes_sender)),
                 used_pools_shot_tx,
                 graph_conifg
             ).await.unwrap();
@@ -182,7 +182,7 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
 
 
 
-pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::AsyncReceiver<Vec<ArbPath>>, nodes: NodeDispatcher) -> anyhow::Result<()> {
+pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal::Receiver<Vec<ArbPath>>, nodes: NodeDispatcher) -> anyhow::Result<()> {
     let mut workers = vec![];
     let cores = num_cpus::get();
     let n = Arc::new(tokio::sync::RwLock::new(U256::from(0)));
@@ -384,7 +384,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
 
 
                 let signer = Arc::new(signer);
-                while let Ok(orders) = routes.recv().await {
+                while let Ok(orders) = routes.recv() {
                     let mut handles = vec![];
 
                     for opportunity in orders {

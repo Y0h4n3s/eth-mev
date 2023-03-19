@@ -263,7 +263,7 @@ impl MevPath {
         let mut best_route_profit = I256::from(0);
         let mut best_route_index = 0;
         let mut mid = if !path.first().unwrap().is_exact_in() && path.first().unwrap().get_pool().supports_callback_payment() {
-            60.0
+            6.0
         } else {
             MAX_SIZE.clone() / 2.0
         };
@@ -275,7 +275,7 @@ impl MevPath {
         let mut steps_meta = vec![];
 
         let contract_address = "<contract_address>".to_string();
-        'binary_search: for i in 0..13 {
+        'binary_search: for i in 0..6 {
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
             let mut asset = I256::from(i_atomic as u128);
 
@@ -311,13 +311,9 @@ impl MevPath {
                             asset = -asset;
                         }
                         // calculate output for current step
-                        let as_uint = U256::from_dec_str(&asset.to_string());
-                        if as_uint.is_err() {
-                            trace!("Casting Error: Cast To Uint {}", asset);
-                            return Err(anyhow::Error::msg("Casting Error"));
-                        }
-                        if let Ok(in_) = calculator.calculate_in(as_uint.unwrap(), pool) {
-                            let debt = I256::from_dec_str(&in_.to_string()).unwrap();
+                        let as_uint = asset.into_raw();
+                        if let Ok(in_) = calculator.calculate_in(as_uint, pool) {
+                            let debt = I256::from_raw(in_)  ;
                             if debt == I256::zero() {
                                 right = mid;
                                 mid = (left + right) / 2.0;
@@ -518,7 +514,7 @@ impl MevPath {
         let mut best_route_profit = I256::from(0);
         let mut best_route_index = 0;
         let mut mid = if !path.first().unwrap().is_exact_in() && path.first().unwrap().get_pool().supports_callback_payment() {
-           60.0
+           6.0
         } else {
             MAX_SIZE.clone() / 2.0
         };
@@ -586,7 +582,7 @@ impl MevPath {
                 balance.insert(contract_address.clone(), map);
             }
         }
-        'binary_search: for i in 0..13 {
+        'binary_search: for i in 0..6 {
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
 
             let mut balance = balance.clone();
@@ -1349,7 +1345,7 @@ impl MevPath {
                 }
             }
             Err(e) => {
-                info!("{:?}", e);
+                trace!("{:?}", e);
                 None
             }
         }
