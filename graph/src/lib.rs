@@ -275,7 +275,7 @@ DETACH DELETE n",
     let path_lookup1 = Arc::new(RwLock::new(
         HashMap::<Pool, Vec<MevPath>>::new(),
     ));
-        let max_intermidiate_nodes = 5;
+        let max_intermidiate_nodes = 4;
         for i in 2..max_intermidiate_nodes {
             info!("Preparing {} step routes ", i);
             let path_lookup = path_lookup.clone();
@@ -491,7 +491,7 @@ DETACH DELETE n",
         ));
 
     let mut join_handles = vec![];
-    for pool in &uniq {
+    for pool in uniq.clone() {
         let signer = signer.clone();
         let client = client.clone();
         let gas_lookup = gas_lookup.clone();
