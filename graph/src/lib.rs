@@ -470,9 +470,7 @@ DETACH DELETE n",
         .unique()
         .collect::<Vec<Pool>>();
 
-    let mut watch_pools : HashMap<String, Pool> = HashMap::new();
-    uniq.iter().for_each(|pool| {watch_pools.insert(pool.address.clone(), pool.clone());});
-    used_oneshot.send(watch_pools).unwrap();
+
     //	return Ok(());
     info!("Registering Gas consumption for {} pool transactions", uniq.len());
     let gas_map: Arc<Mutex<HashMap<String, U256>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -493,7 +491,7 @@ DETACH DELETE n",
         ));
 
     let mut join_handles = vec![];
-    for pool in uniq {
+    for pool in &uniq {
         let signer = signer.clone();
         let client = client.clone();
         let gas_lookup = gas_lookup.clone();
@@ -573,22 +571,6 @@ DETACH DELETE n",
     info!("Starting Listener thread");
     info!("Clearing {} cached events", updated_q.len() + pending_updated_q.len());
 
-    while !pending_updated_q.is_empty() {
-        drop(pending_updated_q.recv().await);
-    }
-
-    while !updated_q.is_empty() {
-        let updated_market_event = updated_q.recv().await.unwrap();
-        let event = updated_market_event.get_event();
-        let mut updated_market = event.pool;
-        if let Some((_, market_routes)) =  path_lookup1.write().await.iter_mut().find(|(key, _value)| {
-            updated_market.address == key.address
-        }) {
-            for mut route in market_routes.iter_mut() {
-                route.update(updated_market.clone());
-            }
-        }
-    }
 
     let mut workers = vec![];
     let cores = num_cpus::get();
@@ -696,6 +678,10 @@ DETACH DELETE n",
             }
         }));
     }
+
+    let mut watch_pools : HashMap<String, Pool> = HashMap::new();
+    uniq.iter().for_each(|pool| {watch_pools.insert(pool.address.clone(), pool.clone());});
+    used_oneshot.send(watch_pools).unwrap();
     for worker in workers {
         worker.await.unwrap();
     }
