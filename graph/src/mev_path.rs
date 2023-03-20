@@ -261,11 +261,7 @@ impl MevPath {
         let mut best_route_size = 0.0;
         let mut best_route_profit = I256::from(0);
         let mut best_route_index = 0;
-        let mut mid = if !path.first().unwrap().is_exact_in() && path.first().unwrap().get_pool().supports_callback_payment() {
-            6.0
-        } else {
-            MAX_SIZE.clone() / 2.0
-        };
+        let mut mid = 6.0;
 
         let mut left = 0.0;
         let mut right = mid * 2.0;
@@ -285,7 +281,6 @@ impl MevPath {
             // tries to complete steps
             'inner: for step in path.iter() {
 
-                trace!("_Step:  {}",  step);
 
                 match &step {
                     MevPathStep::ExactIn(pool, input, out) | MevPathStep::ExactOut(pool, input, out) => {
@@ -325,7 +320,7 @@ impl MevPath {
                             d = debt;
                             trace!("Type AssetIsDebtedToOther > Asset {} Debt {}", a, d);
 
-                            if !step.get_pool().supports_callback_payment() {
+                            if !pool.supports_callback_payment() {
                                 trace!("Unproccessable AssetIsDebtedToOther step");
                                 return Err(anyhow::Error::msg("Unproccessable AssetIsDebtedToOther Step"));
                             } else {
@@ -419,12 +414,15 @@ impl MevPath {
                             }
 
                         }
-
+                        sender = pool.address;
+                        
 
                     }
 
                     MevPathStep::Payback(pool, input, is_x) => {
-                        let pool = pool.read().unwrap();
+                        let r = pool.read().unwrap();
+                        let pool = r.clone();
+                        drop(r);
                         let token = if *is_x {
                             pool.x_address.clone()
                         } else {
@@ -446,7 +444,6 @@ impl MevPath {
                     }
                 }
 
-                sender = step.get_pool().address;
 
             }
             instructions.push(instruction);
@@ -588,7 +585,7 @@ impl MevPath {
                 balance.insert(contract_address.clone(), map);
             }
         }
-        'binary_search: for i in 0..6 {
+        'binary_search: for i in 0..7 {
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
 
             let mut balance = balance.clone();
@@ -615,11 +612,12 @@ impl MevPath {
                         }
                         continue 'inner;
                     }
-                    trace!("_Step: {} {} {}", index, j, step);
 
                     match &step {
                         MevPathStep::ExactIn(pool, input, out) | MevPathStep::ExactOut(pool, input, out) => {
-                            let pool = pool.read().unwrap();
+                            let r = pool.read().unwrap();
+                            let pool = r.clone();
+                            drop(r);
                             let asset_reciever = out.target.clone();
 
                             let (asset_token, debt_token) = if pool.x_to_y {
@@ -1055,7 +1053,9 @@ impl MevPath {
                         }
 
                         MevPathStep::Payback(pool, input, is_x) => {
-                            let pool = pool.read().unwrap();
+                            let r = pool.read().unwrap();
+                            let pool = r.clone();
+                            drop(r);
                             let token = if *is_x {
                                 pool.x_address.clone()
                             } else {
@@ -1199,12 +1199,12 @@ impl MevPath {
 
         if best_route_profit > I256::from(0) {
 //                debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
-
-                debug!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
-                for step in &steps_meta[best_route_index] {
-                    debug!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
-                }
-                debug!("\n\n\n");
+//
+//                debug!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
+//                for step in &steps_meta[best_route_index] {
+//                    debug!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+//                }
+//                debug!("\n\n\n");
 
             let mut final_data = "".to_string();
             for ix in instructions[best_route_index].clone() {
