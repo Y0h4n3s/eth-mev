@@ -585,18 +585,13 @@ DETACH DELETE n",
             while let Ok(updated_market_event) = updated_q.recv().await {
                 let event = updated_market_event.get_event();
                 let mut updated_market = event.pool;
-                let market_routes = if let Some((pool, market_routes)) = path_lookup.write().await.iter_mut().find(|(key, _value)| {
-                    updated_market.address == key.address
-                }) {
+                let market_routes = if let Some(market_routes) = path_lookup.write()
+                .await
+                .get_mut(&updated_market)
+                {
                     for mut route in market_routes.iter_mut() {
                         route.update(updated_market.clone());
                     }
-
-                    debug!(
-                        "Updating {} routes for updated market {}",
-                        market_routes.len(),
-                        updated_market,
-                    );
                     market_routes.clone()
                 }
                 else {
@@ -609,21 +604,13 @@ DETACH DELETE n",
                 std::thread::spawn(move || {
                     let mut updated = market_routes.into_par_iter().filter_map(|mut route| {
                         if let Some(( tx, result)) = route.get_transaction() {
-                            let gas_cost = gas_lookup
-                            .read()
-                            .unwrap()
-                            .iter()
-                            .filter_map(|(pl, amount)| {
-                                if route.pools.iter().any(|p | &p.address == pl) {
 
-                                    Some(amount)
-                                } else {
-                                    None
-                                }
-                            }).cloned()
-                            .reduce(|a, b| a + b)
-                            .unwrap_or(U256::from(400000));
-
+                            let r = gas_lookup.read().unwrap();
+                            let mut gas_cost = U256::zero();
+                            for pool in &route.pools {
+                                gas_cost += *r.get(&pool.address).unwrap_or(&U256::from(100000));
+                            }
+                            drop(r);
                             Some(ArbPath {
                                 path: route,
                                 tx,
@@ -659,17 +646,10 @@ DETACH DELETE n",
                 let event = updated_market_event.get_event();
                 let mut updated_market = event.pool;
                 let routes = routes.clone();
-                let market_routes = if let Some((pool, market_routes)) = path_lookup.read().await.iter().find(|(key, _value)| {
-                    updated_market.address == key.address
-                }) {
-                    debug!(
-                        "Found {} routes for pending transaction {}",
-                        market_routes.len(),
-                        event.pending_tx.hash.encode_hex()
-                    );
-                    if market_routes.len() <= 0 {
-                        continue
-                    }
+                let market_routes = if let Some(market_routes) = path_lookup
+                .read()
+                .await
+                .get(&updated_market) {
                     market_routes.clone()
                     }
                 else {

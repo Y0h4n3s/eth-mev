@@ -478,18 +478,16 @@ impl MevPath {
             }
     
         if best_route_profit > I256::from(0) {
-            debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+//            debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+//
+//            debug!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
+//            for step in &steps_meta[best_route_index] {
+//                debug!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+//            }
+//            debug!("\n\n\n");
 
-            debug!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
-            for step in &steps_meta[best_route_index] {
-                debug!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
-            }
-            debug!("\n\n\n");
+            let mut final_data = instructions[best_route_index].join("");
 
-            let mut final_data = "".to_string();
-            for ix in instructions[best_route_index].clone() {
-                final_data += &ix;
-            }
             Ok(PathResult {
                 ix_data: final_data,
                 profit: best_route_profit.as_u128(),
@@ -497,8 +495,6 @@ impl MevPath {
                 steps: steps_meta[best_route_index].clone(),
 
             })
-        } else if best_route_profit == I256::from(0) {
-            Err(anyhow::Error::msg("Inv Path"))
         } else {
             Ok(PathResult {
                 ix_data: "".to_string(),
@@ -1305,25 +1301,6 @@ impl MevPath {
                 if !data.is_good {
                     return None;
                 } else {
-                    let function_name = hash_to_function_name(&data.ix_data[2..10].to_string());
-                    trace!("Entry function {}", function_name);
-                    let call_function = ethers::abi::Function {
-                        name: function_name,
-                        inputs: vec![
-                            ethers::abi::Param {
-                                name: "data".to_string(),
-                                kind: ParamType::Bytes,
-                                internal_type: None,
-                            },
-                        ],
-                        outputs: vec![],
-                        constant: None,
-                        state_mutability: StateMutability::View,
-                    };
-
-
-                    let tx_data = ethers::contract::encode_function_data(&call_function, Token::Bytes(ethers::types::Bytes::from_str(&data.ix_data).unwrap().to_vec())).unwrap();
-
 
                     let tx_request = Eip1559TransactionRequest {
                         // update later
@@ -1356,17 +1333,11 @@ impl MevPath {
         let mut mock = self.clone();
         mock.update(updated_pool);
         if let Some((tx, result)) = mock.get_transaction() {
-            let gas_cost = gas_lookup.iter().filter_map(|(pl, amount)| {
-                if mock.pools.iter().any(|p | &p.address == pl) {
 
-                    Some(amount)
-                } else {
-                    None
-                }
-            }).cloned()
-                .reduce(|a, b| a + b)
-                .unwrap_or(U256::from(400000));
-
+            let mut gas_cost = U256::zero();
+            for pool in &mock.pools {
+                gas_cost += *gas_lookup.get(&pool.address).unwrap_or(&U256::from(100000));
+            }
             Some(Backrun {
                 tx,
                 pending_tx,

@@ -435,14 +435,15 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                                 bundle.push(signed_tx);
                                  warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                                let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, true).await;
-                                if let Some(res) = res {
+//                                let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, true).await;
+//                                if let Some(res) = res {
 //                                    for step in &op.result.steps {
 //                                        info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
 //                                    }
 //                                    info!("\n{} {}\n\n", tx_request.gas.unwrap(), op.result.ix_data);
                                     // info!("{} {}", res.transactions.first().unwrap().gas_used, tx_request.gas.unwrap());
-                                }                                // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
+//                                }
+                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
                             }));
                     }
                 }

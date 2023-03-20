@@ -376,47 +376,44 @@ impl CpmmCalculator {
 
 impl Calculator for CpmmCalculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let swap_source_amount = if pool.x_to_y {
-            U256::from(pool.x_amount)
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
         } else {
-            U256::from(pool.y_amount)
+            (pool.y_amount, pool.x_amount)
         };
-        let swap_destination_amount = if pool.x_to_y {
-            U256::from(pool.y_amount)
-        } else {
-            U256::from(pool.x_amount)
-        };
-        if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) {
+
+        if swap_source_amount.is_zero() || swap_destination_amount.is_zero() {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 31));
+        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 30));
         let numerator = amount_in_with_fee
             .checked_mul(swap_destination_amount)
             .unwrap_or(U256::from(0));
         let denominator = ((swap_source_amount) * 10000) + amount_in_with_fee;
-        Ok((numerator / denominator))
+        let amount_out = numerator / denominator;
+        if amount_out > swap_destination_amount {
+            return Err(Error::msg("Insufficient Liquidity"))
+        }
+
+        Ok(amount_out)
     }
     
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let swap_source_amount = if pool.x_to_y {
-            U256::from(pool.x_amount)
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
         } else {
-            U256::from(pool.y_amount)
+            (pool.y_amount, pool.x_amount)
         };
-        let swap_destination_amount = if pool.x_to_y {
-            U256::from(pool.y_amount)
-        } else {
-            U256::from(pool.x_amount)
-        };
-        if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) || out_ >= swap_destination_amount {
+
+        if swap_source_amount.is_zero() || swap_destination_amount.is_zero()  {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        if out_ == swap_destination_amount {
+        if out_ >= swap_destination_amount {
             return Ok(swap_source_amount);
         }
 
         if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
-            let denominator = (swap_destination_amount - out_) * U256::from((9969) as u128);
+            let denominator = (swap_destination_amount - out_) * U256::from((9970) as u128);
             Ok((numerator / denominator) + 1)
 
         } else {
@@ -497,47 +494,44 @@ impl BalancerWeightedCalculator {
 
 impl Calculator for SolidlyCalculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let swap_source_amount = if pool.x_to_y {
-            U256::from(pool.x_amount)
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
         } else {
-            U256::from(pool.y_amount)
+            (pool.y_amount, pool.x_amount)
         };
-        let swap_destination_amount = if pool.x_to_y {
-            U256::from(pool.y_amount)
-        } else {
-            U256::from(pool.x_amount)
-        };
-        if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) {
+
+        if swap_source_amount.is_zero() || swap_destination_amount.is_zero() {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 21));
+        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 20));
         let numerator = amount_in_with_fee
             .checked_mul(swap_destination_amount)
             .unwrap_or(U256::from(0));
         let denominator = ((swap_source_amount) * 10000) + amount_in_with_fee;
-        Ok((numerator / denominator))
+        let amount_out = numerator / denominator;
+        if amount_out > swap_destination_amount {
+            return Err(Error::msg("Insufficient Liquidity"))
+        }
+
+        Ok(amount_out)
     }
 
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let swap_source_amount = if pool.x_to_y {
-            U256::from(pool.x_amount)
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
         } else {
-            U256::from(pool.y_amount)
+            (pool.y_amount, pool.x_amount)
         };
-        let swap_destination_amount = if pool.x_to_y {
-            U256::from(pool.y_amount)
-        } else {
-            U256::from(pool.x_amount)
-        };
-        if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) || out_ >= swap_destination_amount {
+
+        if swap_source_amount.is_zero() || swap_destination_amount.is_zero()  {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        if out_ == swap_destination_amount {
+        if out_ >= swap_destination_amount {
             return Ok(swap_source_amount);
         }
 
         if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
-            let denominator = (swap_destination_amount - out_) * U256::from((9979) as u128);
+            let denominator = (swap_destination_amount - out_) * U256::from((9980) as u128);
             Ok((numerator / denominator) + 1)
 
         } else {
@@ -550,47 +544,44 @@ impl Calculator for SolidlyCalculator {
 
 impl Calculator for PancakeCalculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let swap_source_amount = if pool.x_to_y {
-            U256::from(pool.x_amount)
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
         } else {
-            U256::from(pool.y_amount)
+            (pool.y_amount, pool.x_amount)
         };
-        let swap_destination_amount = if pool.x_to_y {
-            U256::from(pool.y_amount)
-        } else {
-            U256::from(pool.x_amount)
-        };
-        if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) {
+
+        if swap_source_amount.is_zero() || swap_destination_amount.is_zero() {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 26));
+        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 25));
         let numerator = amount_in_with_fee
             .checked_mul(swap_destination_amount)
             .unwrap_or(U256::from(0));
         let denominator = ((swap_source_amount) * 10000) + amount_in_with_fee;
-        Ok((numerator / denominator))
+        let amount_out = numerator / denominator;
+        if amount_out > swap_destination_amount {
+            return Err(Error::msg("Insufficient Liquidity"))
+        }
+
+        Ok(amount_out)
     }
 
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let swap_source_amount = if pool.x_to_y {
-            U256::from(pool.x_amount)
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
         } else {
-            U256::from(pool.y_amount)
+            (pool.y_amount, pool.x_amount)
         };
-        let swap_destination_amount = if pool.x_to_y {
-            U256::from(pool.y_amount)
-        } else {
-            U256::from(pool.x_amount)
-        };
-        if swap_source_amount == U256::from(0) || swap_destination_amount == U256::from(0) || out_ >= swap_destination_amount {
+
+        if swap_source_amount.is_zero() || swap_destination_amount.is_zero()  {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        if out_ == swap_destination_amount {
+        if out_ >= swap_destination_amount {
             return Ok(swap_source_amount);
         }
 
         if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
-            let denominator = (swap_destination_amount - out_) * U256::from((9974) as u128);
+            let denominator = (swap_destination_amount - out_) * U256::from((9975) as u128);
             Ok((numerator / denominator) + 1)
 
         } else {
@@ -635,8 +626,11 @@ impl Calculator for UniswapV3Calculator {
         } else {
             (pool.y_amount, pool.x_amount)
         };
-        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) || out_ >= swap_destination_amount{
+        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) {
             return Err(Error::msg("Insufficient Liquidity"))
+        }
+        if out_ >= swap_destination_amount {
+            return Ok(swap_source_amount);
         }
         let amount_in = self.meta.simulate_swap(pool.x_to_y, out_, false)?;
         Ok(amount_in)
