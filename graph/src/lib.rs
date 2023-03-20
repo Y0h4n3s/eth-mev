@@ -136,7 +136,7 @@ pub async fn start(
     config: GraphConfig,
 ) -> anyhow::Result<()> {
     Graph::<String, Pool, Undirected>::new_undirected();
-    let pr = pools.read().await;
+    let pr = pools.read().await.clone();
     let manager = Manager::new(
         &NEO4J_URL.clone(),
         None,
@@ -150,10 +150,10 @@ pub async fn start(
     )
     .await?;
     // Create a connection pool. This should be shared across your application.
-    let pool = Arc::new(BPool::builder().build(manager).await?);
+    let conn_pool = Arc::new(BPool::builder().build(manager).await?);
 
     // Fetch and use a connection from the pool
-    let mut conn = pool.get().await?;
+    let mut conn = conn_pool.get().await?;
     let res = conn
         .run(
             "MATCH (n)
@@ -166,8 +166,12 @@ DETACH DELETE n",
     let (records, response) = conn.pull(Some(pull_meta)).await?;
 
     let mut locked_pools: HashMap<Pool, [Arc<RwLock<Pool>>; 2]> = HashMap::new();
+    let cores = num_cpus::get();
+    let permits = Arc::new(Semaphore::new(cores*2));
+    let mut handles = vec![];
+    for (_, pool) in pr.into_iter() {
+        let permit = permits.clone().acquire_owned().await?;
 
-    for (_, pool) in pr.iter() {
         let mut pool_xy = pool.clone();
         let mut pool_yx = pool.clone();
         pool_xy.x_to_y = true;
@@ -180,30 +184,35 @@ DETACH DELETE n",
                 Arc::new(RwLock::new(pool_yx)),
             ],
         );
-        let res = conn
+        let con_pool = conn_pool.clone();
+
+        handles.push(tokio::spawn(async move {
+            let mut conn = con_pool.get().await.unwrap();
+
+            let res = conn
             .run(
-                "MERGE (t:Token {address: $address}) RETURN t",
+                    "MERGE (t:Token {address: $address}) RETURN t",
                 Some(Params::from_iter(vec![("address", pool.x_address.clone())])),
                 None,
             )
-            .await?;
-        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
-        let (records, response) = conn.pull(Some(pull_meta)).await?;
+            .await.unwrap();
+            let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+            let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
 
-        let res = conn
+            let res = conn
             .run(
-                "MERGE (t:Token {address: $address}) RETURN t",
+                    "MERGE (t:Token {address: $address}) RETURN t",
                 Some(Params::from_iter(vec![("address", pool.y_address.clone())])),
                 None,
             )
-            .await?;
+            .await.unwrap();
 
-        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
-        let (records, response) = conn.pull(Some(pull_meta)).await?;
+            let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+            let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
 
-        let res = conn
+            let res = conn
             .run(
-                "MERGE (p:Pool {address: $address, x_to_y: $x_to_y, provider: $provider}) RETURN p",
+                    "MERGE (p:Pool {address: $address, x_to_y: $x_to_y, provider: $provider}) RETURN p",
                 Some(Params::from_iter(vec![
                     ("address", pool.address.clone()),
                     ("x_to_y", pool.x_to_y.to_string()),
@@ -211,14 +220,14 @@ DETACH DELETE n",
                 ])),
                 None,
             )
-            .await?;
+            .await.unwrap();
 
-        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
-        let (records, response) = conn.pull(Some(pull_meta)).await?;
+            let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+            let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
 
-        let res = conn
+            let res = conn
             .run(
-                "MERGE (p:Pool {address: $address, x_to_y: $x_to_y, provider: $provider}) RETURN p",
+                    "MERGE (p:Pool {address: $address, x_to_y: $x_to_y, provider: $provider}) RETURN p",
                 Some(Params::from_iter(vec![
                     ("address", pool.address.clone()),
                     ("x_to_y", (!pool.x_to_y).to_string()),
@@ -226,63 +235,66 @@ DETACH DELETE n",
                 ])),
                 None,
             )
-            .await?;
+            .await.unwrap();
 
-        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
-        let (records, response) = conn.pull(Some(pull_meta)).await?;
+            let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+            let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
 
-        let res = conn
+            let res = conn
             .run(
-                "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $y_address  MERGE (a)-[r:ASSET]->(b) RETURN type(r)",
+                    "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $y_address  MERGE (a)-[r:ASSET]->(b) RETURN type(r)",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", true.to_string()),
                     ("y_address", pool.y_address.clone()),
                 ])),
-                None).await?;
+                None).await.unwrap();
 
-        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
-        let (records, response) = conn.pull(Some(pull_meta)).await?;
-        let res = conn
+            let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+            let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
+            let res = conn
             .run(
-                "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $x_address  MERGE (b)-[r:DEBT]->(a) RETURN type(r)",
+                    "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $x_address  MERGE (b)-[r:DEBT]->(a) RETURN type(r)",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", true.to_string()),
                     ("x_address", pool.x_address.clone()),
                 ])),
-                None).await?;
+                None).await.unwrap();
 
-        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
-        let (records, response) = conn.pull(Some(pull_meta)).await?;
+            let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+            let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
 
-        let res = conn
+            let res = conn
             .run(
-                "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $x_address  MERGE (a)-[r:ASSET]->(b) RETURN type(r)",
+                    "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $x_address  MERGE (a)-[r:ASSET]->(b) RETURN type(r)",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", false.to_string()),
                     ("x_address", pool.x_address.clone()),
                 ])),
-                None).await?;
+                None).await.unwrap();
 
-        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
-        let (records, response) = conn.pull(Some(pull_meta)).await?;
+            let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+            let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
 
-        let res = conn
+            let res = conn
             .run(
-                "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $y_address  MERGE (b)-[r:DEBT]->(a) RETURN type(r)",
+                    "MATCH (a:Pool), (b:Token) WHERE a.address = $pool_address AND a.x_to_y = $pool_x_to_y  AND b.address = $y_address  MERGE (b)-[r:DEBT]->(a) RETURN type(r)",
                 Some(Params::from_iter(vec![
                     ("pool_address", pool.address.clone()),
                     ("pool_x_to_y", false.to_string()),
                     ("y_address", pool.y_address.clone()),
                 ])),
-                None).await?;
+                None).await.unwrap();
 
-        let pull_meta = Metadata::from_iter(vec![("n", -1)]);
-        let (records, response) = conn.pull(Some(pull_meta)).await?;
+            let pull_meta = Metadata::from_iter(vec![("n", -1)]);
+            let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
+            drop(permit)
+        }));
+
     }
-    drop(pr);
+    futures::future::join_all(handles).await;
 
     // txn.run_queries(queries).await.unwrap();
     // txn.commit().await.unwrap();
@@ -298,7 +310,7 @@ DETACH DELETE n",
     for i in 2..max_intermidiate_nodes {
         info!("Preparing {} step routes ", i);
         let path_lookup = path_lookup.clone();
-        let pool = pool.clone();
+        let pool = conn_pool.clone();
         let mut conn = pool.get().await?;
         let cores = num_cpus::get();
         let permits = Arc::new(Semaphore::new(cores*2));
