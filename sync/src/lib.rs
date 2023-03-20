@@ -405,12 +405,10 @@ impl Calculator for CpmmCalculator {
             (pool.y_amount, pool.x_amount)
         };
 
-        if swap_source_amount.is_zero() || swap_destination_amount.is_zero()  {
+        if swap_source_amount.is_zero() || swap_destination_amount.is_zero() || out_ >= swap_destination_amount  {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        if out_ >= swap_destination_amount {
-            return Ok(swap_source_amount);
-        }
+
 
         if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
             let denominator = (swap_destination_amount - out_) * U256::from((9970) as u128);
@@ -523,11 +521,8 @@ impl Calculator for SolidlyCalculator {
             (pool.y_amount, pool.x_amount)
         };
 
-        if swap_source_amount.is_zero() || swap_destination_amount.is_zero()  {
+        if swap_source_amount.is_zero() || swap_destination_amount.is_zero() || out_ >= swap_destination_amount {
             return Err(Error::msg("Insufficient Liquidity"))
-        }
-        if out_ >= swap_destination_amount {
-            return Ok(swap_source_amount);
         }
 
         if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
@@ -573,11 +568,8 @@ impl Calculator for PancakeCalculator {
             (pool.y_amount, pool.x_amount)
         };
 
-        if swap_source_amount.is_zero() || swap_destination_amount.is_zero()  {
+        if swap_source_amount.is_zero() || swap_destination_amount.is_zero()  || out_ >= swap_destination_amount {
             return Err(Error::msg("Insufficient Liquidity"))
-        }
-        if out_ >= swap_destination_amount {
-            return Ok(swap_source_amount);
         }
 
         if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
@@ -626,12 +618,10 @@ impl Calculator for UniswapV3Calculator {
         } else {
             (pool.y_amount, pool.x_amount)
         };
-        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) {
+        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) || out_ >= swap_destination_amount {
             return Err(Error::msg("Insufficient Liquidity"))
         }
-        if out_ >= swap_destination_amount {
-            return Ok(swap_source_amount);
-        }
+
         let amount_in = self.meta.simulate_swap(pool.x_to_y, out_, false)?;
         Ok(amount_in)
 

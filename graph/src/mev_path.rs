@@ -275,7 +275,7 @@ impl MevPath {
         let mut steps_meta = vec![];
 
         let contract_address = "<contract_address>".to_string();
-        'binary_search: for i in 0..6 {
+        'binary_search: for i in 0..8 {
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
             let mut asset = I256::from(i_atomic as u128);
 

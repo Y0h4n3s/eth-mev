@@ -444,6 +444,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                                     // info!("{} {}", res.transactions.first().unwrap().gas_used, tx_request.gas.unwrap());
 //                                }
                                 FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
+                                
                             }));
                     }
                 }
