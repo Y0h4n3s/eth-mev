@@ -298,8 +298,6 @@ impl Hash for Pool {
         self.address.hash(state);
         self.x_address.hash(state);
         self.y_address.hash(state);
-        self.provider.hash(state);
-        self.curve_type.hash(state);
     }
 }
 
@@ -308,8 +306,6 @@ impl PartialEq for Pool {
         self.address == other.address
             && self.x_address == other.x_address
             && self.y_address == other.y_address
-            && self.provider == other.provider
-            && self.curve_type == other.curve_type
     }
 }
 impl EventSource for Pool {

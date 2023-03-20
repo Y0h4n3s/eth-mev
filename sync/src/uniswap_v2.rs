@@ -292,7 +292,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                                 let mut w = p.write().unwrap();
                                 w.x_amount = updated_meta.reserve0;
                                 w.y_amount = updated_meta.reserve1;
-                                w.provider = LiquidityProviders::SushiSwap(updated_meta.clone());
+                                w.provider = LiquidityProviders::UniswapV2(updated_meta.clone());
 
                             }
                             pl.x_amount = updated_meta.reserve0;
