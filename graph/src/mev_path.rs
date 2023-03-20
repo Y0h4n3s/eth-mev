@@ -253,7 +253,7 @@ impl MevPath {
             let mut sender = "self".to_string();
 
             // tries to complete steps
-            'inner: for step in path.iter() {
+            'inner: for (index, step) in path.iter().enumerate() {
 
                 let pool = step.get_pool().await;
 
@@ -292,7 +292,7 @@ impl MevPath {
                             d = debt;
                             trace!("Type AssetIsDebtedToOther > Asset {} Debt {}", a, d);
 
-                            if !pool.supports_callback_payment() {
+                            if pool.provider.id() == LiquidityProviderId::BalancerWeighted && index + 1 != path.len() {
                                 trace!("Unproccessable AssetIsDebtedToOther step");
                                 return Err(anyhow::Error::msg("Unproccessable AssetIsDebtedToOther Step"));
                             } else {
@@ -623,35 +623,29 @@ impl MevPath {
         let mut balance: HashMap<String, HashMap<String, i8>> = HashMap::new();
         let mut balance1: HashMap<Pool, HashMap<String, bool>> = HashMap::new();
         let contract_address = "<contract_address>".to_string();
-
         let past_steps: Vec<MevPathStep> = vec![];
-        for step in &path {
-            let pool = step.get_pool().await;
+        let pools = futures::future::join_all(path.iter().map(|s| async{s.get_pool().await})).await.into_iter().collect::<Vec<Pool>>();
+        for pool in &pools {
             let mut values = HashMap::new();
             values.insert(pool.x_address.clone(), false);
             values.insert(pool.y_address.clone(), false);
             balance1.insert(pool.clone(), values);
         }
 
-        let path_copy = path.clone();
-        for step in path.iter_mut() {
-            let (asset_token, debt_token) = match step {
-                MevPathStep::ExactIn(pool, _, _) | MevPathStep::ExactOut(pool, _, _) => {
-                    let pool = pool.read().await;
+        let path_copy = pools.clone();
+        for (index,pool) in pools.iter().enumerate() {
+            let (asset_token, debt_token) =
                     if pool.x_to_y {
                         (pool.y_address.clone(), pool.x_address.clone())
                     } else {
                         (pool.x_address.clone(), pool.y_address.clone())
-                    }
-                }
-                _ => ("".to_string(), "".to_string()),
-            };
+                    };
+
             let mut step_out =
                 StepOutput {
                 target: contract_address.clone()
             };
 
-            let pool = step.get_pool().await;
             let pool_state = balance1.get(&pool).unwrap();
             // the two cases
             // 1. debt_token is input token
@@ -669,7 +663,7 @@ impl MevPath {
             }
             if asset_token == *input_token {
                 balance1.get_mut(&pool).unwrap().insert(asset_token.clone(), true);
-            } else if let Some(pay_to_step) = futures::future::join_all(step_stack.iter().map(|s| async{s.get_pool().await})).await.iter().find(|p| {
+            } else if let Some(pay_to_step) = pools.iter().find(|p| {
                 if p.x_to_y {
                     p.x_address == asset_token && p.supports_callback_payment()
                 } else {
@@ -683,7 +677,7 @@ impl MevPath {
                 balance1.get_mut(&pool).unwrap().insert(asset_token.clone(), true);
             } else {
                 // or pay if there is support for pre payment
-                if let Some(pay_to_step) = futures::future::join_all(path_copy[step_stack.len()..].iter().map(|s| async{s.get_pool().await})).await.iter().find(|p| {
+                if let Some(pay_to_step) = path_copy.iter().find(|p| {
                     if p.x_to_y {
                         p.x_address == asset_token && p.supports_pre_payment()
                     } else {
@@ -696,7 +690,7 @@ impl MevPath {
                     balance1.get_mut(&pay_to_step).unwrap().insert(asset_token.clone(), true);
                     balance1.get_mut(&pool).unwrap().insert(asset_token.clone(), true);
                 } else {
-                    if let Some(pay_to_step) = futures::future::join_all(path_copy.iter().map(|s| async{s.get_pool().await})).await.iter().find(|p| {
+                    if let Some(pay_to_step) = path_copy.iter().find(|p| {
                         if p.x_to_y {
                             p.x_address == *input_token
                         } else {
@@ -709,7 +703,7 @@ impl MevPath {
                         balance1.get_mut(&pay_to_step).unwrap().insert(asset_token.clone(), true);
                         balance1.get_mut(&pool).unwrap().insert(asset_token.clone(), true);
                     } else {
-                        if let Some(pay_to_step) = futures::future::join_all(path_copy.iter().map(|s| async{s.get_pool().await})).await.iter().find(|p| {
+                        if let Some(pay_to_step) = path_copy.iter().find(|p| {
                             if p.x_to_y {
                                 p.x_address == asset_token
                             } else {
@@ -725,25 +719,21 @@ impl MevPath {
                     }
                 }
             }
-            step.update_output(&step_out);
+            path[index].update_output(&step_out);
 
-            step_stack.push(step.clone());
+            step_stack.push(path[index].clone());
         }
-        for step in &path {
-            let (asset_token, debt_token) = match step {
-                MevPathStep::ExactIn(pool, _, _) | MevPathStep::ExactOut(pool, _, _) => {
-                    let pool = pool.read().await;
+        for (index,pool) in pools.iter().enumerate() {
+
+            let (asset_token, debt_token) =
 
                     if pool.x_to_y {
                         (pool.y_address.clone(), pool.x_address.clone())
                     } else {
                         (pool.x_address.clone(), pool.y_address.clone())
-                    }
-                }
-                _ => ("".to_string(), "".to_string()),
-            };
-            let pool_arc = step.get_pool_arc();
-            let pool = step.get_pool().await;
+                    };
+
+            let pool_arc = path[index].get_pool_arc();
             let pool_state = balance1.get(&pool).unwrap();
             if !pool_state.get(&debt_token).unwrap() && pool.supports_callback_payment() {
                 step_stack.push(MevPathStep::Payback(

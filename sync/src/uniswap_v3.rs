@@ -47,7 +47,7 @@ use tracing::{info, debug, trace, error};
 use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3Pool, UniswapV3TickData};
 use crate::node_dispatcher::NodeDispatcher;
 use crate::POLL_INTERVAL;
-const TVL_FILTER_LEVEL: i32 = 1;
+const TVL_FILTER_LEVEL: i32 = 0;
 // Todo: add word in here to update and remove middleware use in simulate_swap
 #[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV3Metadata {
