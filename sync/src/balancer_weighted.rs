@@ -117,6 +117,7 @@ impl Meta for BalancerWeigtedMetadata {
 pub struct BalancerWeighted {
     pub metadata: BalancerWeigtedMetadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
+    pub update_pools: Arc<Vec<[Arc<RwLock<Pool>>; 2]>>,
     subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
     pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>>,
     nodes: NodeDispatcher
@@ -127,6 +128,7 @@ impl BalancerWeighted {
         Self {
             metadata,
             pools: Arc::new(RwLock::new(HashMap::new())),
+            update_pools: Arc::new(Vec::new()),
             subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
             pending_subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
             nodes
@@ -150,6 +152,9 @@ impl LiquidityProvider for BalancerWeighted {
     async fn set_pools(&self, pools: HashMap<String, Pool>)  {
         let mut lock = self.pools.write().await;
         *lock = pools;
+    }
+    fn set_update_pools(&mut self, pools: Vec<[Arc<RwLock<Pool>>; 2]>)  {
+        self.update_pools = Arc::new(pools);
     }
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()> {
         let metadata = self.metadata.clone();
@@ -242,41 +247,41 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
     }
 
     fn emit(&self) -> std::thread::JoinHandle<()> {
-        let pools = self.pools.clone();
+         let pools = self.update_pools.clone();
         let subscribers = self.subscribers.clone();
         let node_url = self.nodes.next_free();
-        let factory_address = self.metadata.factory_address.clone();
+
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             let pools = pools.clone();
-            rt.block_on( async move {
+            rt.block_on(async move {
                 let mut joins = vec![];
+
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();
                 provider.set_interval(Duration::from_millis(POLL_INTERVAL));
-                let client = Arc::new(
-                    provider
+                let clnt = Arc::new(
+                        provider
                 );
-                let latest_block = client.get_block_number().await.unwrap();
+                let latest_block = clnt.get_block_number().await.unwrap();
 
+                for p in pools.iter() {
+                    let pls = p.clone();
+                    let mut pl = pls[0].read().await.clone();
 
-                for pool in pools.read().await.values() {
                     let subscribers = subscribers.clone();
-                    let mut pool = pool.clone();
-                    let client = client.clone();
                     let subscribers = subscribers.read().unwrap();
                     let sub = subscribers.first().unwrap().clone();
                     drop(subscribers);
-
-                    let pools = pools.clone();
+                    let client = clnt.clone();
                     joins.push(tokio::runtime::Handle::current().spawn(async move {
 
                         loop {
                             tokio::time::sleep(Duration::from_millis(POLL_INTERVAL)).await;
 
                             let mut block = 0;
-                            if let Some(mut data) = match pool.clone().provider {
+                            if let Some(mut data) = match pl.clone().provider {
                                 LiquidityProviders::BalancerWeighted(pool_meta) => Some(pool_meta),
                                 _ => None
                             } {
@@ -295,19 +300,23 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
                                         address: data.address,
                                         tokens: tokens,
                                     };
-                                    if pool.x_amount == meta.tokens.first().unwrap().balance &&
-                                        pool.y_amount == meta.tokens.last().unwrap().balance {
+                                    if pl.x_amount == meta.tokens.first().unwrap().balance &&
+                                        pl.y_amount == meta.tokens.last().unwrap().balance {
                                         continue
                                     }
-                                    pool.x_amount = meta.tokens.first().unwrap().balance;
-                                    pool.y_amount = meta.tokens.last().unwrap().balance;
+                                    for p in pls.iter() {
+                                        let mut w = p.write().await;
+                                        w.x_amount = meta.tokens.first().unwrap().balance;
+                                        w.y_amount = meta.tokens.last().unwrap().balance;
+                                        w.provider = LiquidityProviders::BalancerWeighted(meta.clone());
+                                    }
+                                    pl.x_amount = meta.tokens.first().unwrap().balance;
+                                    pl.y_amount = meta.tokens.last().unwrap().balance;
 
-                                    pool.provider = LiquidityProviders::BalancerWeighted(meta);
-                                    let mut w = pools.write().await;
-                                    w.insert(pool.address.clone(), pool.clone());
+                                    pl.provider = LiquidityProviders::BalancerWeighted(meta);
 
                                     let event = PoolUpdateEvent {
-                                        pool: pool.clone(),
+                                        pool: pl.clone(),
                                         block_number: status.block_number,
                                         timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                                     };

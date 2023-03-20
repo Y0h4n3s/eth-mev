@@ -56,7 +56,7 @@ use garb_graph_eth::single_arb::ArbPath;
 use garb_sync_eth::node_dispatcher::NodeDispatcher;
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
-    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("3,5,6".to_string()))
+    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("3,4,5,6".to_string()))
         .split(",")
         .map(|i| LiquidityProviders::from(i))
         .collect()
@@ -101,7 +101,7 @@ pub async fn async_main() -> anyhow::Result<()> {
         kanal::bounded::<Vec<ArbPath>>(1000);
     let (pool_sender, mut pool_receiver) =
         kanal::bounded_async::<Pool>(10000);
-    let (used_pools_shot_tx, used_pools_shot_rx) = tokio::sync::oneshot::channel::<HashMap<String, Pool>>();
+    let (used_pools_shot_tx, used_pools_shot_rx) = tokio::sync::oneshot::channel::<Vec<[Arc<RwLock<Pool>>; 2]>>();
     let sync_config = SyncConfig {
         providers: PROVIDERS.clone(),
     };
@@ -187,20 +187,20 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
     let cores = num_cpus::get();
     let n = Arc::new(tokio::sync::RwLock::new(U256::from(0)));
     let b: Arc<tokio::sync::RwLock<Block<H256>>> = Arc::new(tokio::sync::RwLock::new(Block::default()));
-    let update_started = Arc::new(tokio::sync::RwLock::new(false));
+    let update_started = Arc::new(tokio::sync::Mutex::new(false));
     let bundle_recievers = vec![
         "https://relay.flashbots.net".to_string(),
-        // "https://builder0x69.io/".to_string(),
-        // "https://rpc.beaverbuild.org/".to_string(),
-        // "https://rsync-builder.xyz/".to_string(),
-        // "https://api.blocknative.com/v1/auction".to_string(),
-        // "https://api.edennetwork.io/v1/bundle".to_string(),
-        // "https://eth-builder.com".to_string(),
-        // "https://rpc.lightspeedbuilder.info/".to_string(),
-        // "https://api.securerpc.com/v1".to_string(),
-        // "https://BuildAI.net".to_string(),
-        // "https://rpc.payload.de".to_string(),
-        // "https://rpc.nfactorial.xyz/".to_string()
+         "https://builder0x69.io/".to_string(),
+         "https://rpc.beaverbuild.org/".to_string(),
+         "https://rsync-builder.xyz/".to_string(),
+         "https://api.blocknative.com/v1/auction".to_string(),
+         "https://api.edennetwork.io/v1/bundle".to_string(),
+         "https://eth-builder.com".to_string(),
+         "https://rpc.lightspeedbuilder.info/".to_string(),
+        "https://api.securerpc.com/v1".to_string(),
+         "https://BuildAI.net".to_string(),
+         "https://rpc.payload.de".to_string(),
+         "https://rpc.nfactorial.xyz/".to_string()
     ];
     let mut bundle_handlers = vec![];
     let node_url = nodes.next_free();
@@ -245,11 +245,9 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                 let signer_wallet_address = signer.address();
                 let nonce_update = nonce.clone();
                 let ap = client.clone();
-
-                if !*update_started.read().await {
-                    let mut w = update_started.write().await;
+                let mut w = update_started.lock().await;
+                if !*w {
                     *w = true;
-                    drop(w);
                     join_handles.push(tokio::runtime::Handle::current().spawn(async move {
                         // keep updating nonce
                         loop {
@@ -277,7 +275,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                     }));
 
                 }
-
+                drop(w);
 
                 let signer = Arc::new(signer);
 
@@ -288,6 +286,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                     let order = opportunity.tx.clone();
                     let path = opportunity.path.clone();
                     let gas_cost = opportunity.gas_cost;
+
 
                     let mut handles = vec![];
                     for handler in &bundle_handlers {
@@ -337,8 +336,9 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                             bundle.push(signed_tx);
                              warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                            let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, false).await;
+                            let res = FlashBotsBundleHandler::simulate(bundle, &handler, blk, false).await;
                             if let Some(res) = res {
+
 //                                for step in &op.result.steps {
 //                                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
 //                                }
@@ -385,70 +385,89 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
 
                 let signer = Arc::new(signer);
                 while let Ok(orders) = routes.recv() {
-                    let mut handles = vec![];
-
+                    let mut outer_handles = vec![];
                     for opportunity in orders {
+                        let nonce = nonce.clone();
+                        let block = block.clone();
+                        let signer = signer.clone();
+                        let bundle_handlers = bundle_handlers.clone();
+                        outer_handles.push(tokio::runtime::Handle::current().spawn(async move {
+                            let mut handles = vec![];
 
-                        let gas_cost = opportunity.gas_cost;
-                        for handler in &bundle_handlers {
-                            let order = opportunity.tx.clone();
-                            let op = opportunity.clone();
-                            let nonce_num = nonce.clone();
-                            let block = block.clone();
-                            let signer = signer.clone();
-                            let mut handler = handler.clone();
-
-                            handles.push(tokio::runtime::Handle::current().spawn(async move {
-                                let mut tx_request = order;
-                                tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
-                                tx_request.from = Some(signer_wallet_address);
-                                let n = * nonce_num.read().await ;
-                                let blk = block.read().await;
-                                if blk.base_fee_per_gas.is_none() {
-                                    return
+                            let mut max_count = 3;
+                            while let Some((order, result)) = opportunity.path.get_transaction().await {
+                                if max_count == 0 {
+                                    break;
                                 }
-                                let max_fee = opportunity.profit / gas_cost;
-                                let balance = U256::from(50000000000000000 as u128);
-                                let max_possible_fee = balance / gas_cost;
-                                let base_fee = calculate_next_block_base_fee(blk.clone()).unwrap();
-                                tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
-                                tx_request.gas = Some(gas_cost);
-                                tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
-                                let blk = blk.number.unwrap().as_u64();
-                                drop(n);
-                                drop(blk);
+                                max_count -= 1;
+                                let gas_cost = opportunity.gas_cost;
+                                for handler in &bundle_handlers {
+                                    let mut tx_request = order.clone();
+                                    let op = opportunity.clone();
+                                    let nonce_num = nonce.clone();
+                                    let block = block.clone();
+                                    let signer = signer.clone();
+                                    let mut handler = handler.clone();
 
-                                // profit doesn't cover tx_fees
-                                if tx_request.max_fee_per_gas.unwrap() <= base_fee {
-                                    // warn!("Skipping {}. ->  {} {} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk,  tx_request.max_fee_per_gas.unwrap());
-                                    return
+                                    handles.push(tokio::runtime::Handle::current().spawn(async move {
+                                        tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
+                                        tx_request.from = Some(signer_wallet_address);
+                                        let n = * nonce_num.read().await ;
+                                        let blk = block.read().await;
+                                        if blk.base_fee_per_gas.is_none() {
+                                            return
+                                        }
+                                        let max_fee = opportunity.profit / gas_cost;
+                                        let balance = U256::from(50000000000000000 as u128);
+                                        let max_possible_fee = balance / gas_cost;
+                                        let base_fee = calculate_next_block_base_fee(blk.clone()).unwrap();
+                                        tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
+                                        tx_request.gas = Some(gas_cost);
+                                        tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
+                                        let blk = blk.number.unwrap().as_u64();
+                                        drop(n);
+                                        drop(blk);
+
+                                        // profit doesn't cover tx_fees
+                                        if tx_request.max_fee_per_gas.unwrap() <= base_fee {
+                                            // warn!("Skipping {}. ->  {} {} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk,  tx_request.max_fee_per_gas.unwrap());
+                                            return
+                                        }
+                                        tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
+
+                                        tx_request.value = None;
+
+
+                                        let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
+                                        let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
+                                        let signed_tx = typed_tx.rlp_signed(&tx_sig);
+                                        let mut bundle = vec![];
+                                        bundle.push(signed_tx);
+                                        warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
+
+//                                        let res = FlashBotsBundleHandler::simulate(bundle, &handler, blk, true).await;
+//                                        if let Some(res) = res {
+//                                            if res.transactions.iter().all(|tx| tx.error.is_none()) {
+//                                                for step in &op.result.steps {
+//                                                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step.get_pool().await, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+//                                                }
+//                                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
+//
+//                                            }
+//                                        }
+                                        FlashBotsBundleHandler::submit(bundle, handler, blk, blk+2).await;
+
+                                    }));
                                 }
-                                tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
+                                tokio::time::sleep(Duration::from_millis(1000)).await;
+                            }
+                            futures::future::join_all(handles).await;
 
-                                tx_request.value = None;
+                        }));
 
 
-                                let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
-                                let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
-                                let signed_tx = typed_tx.rlp_signed(&tx_sig);
-                                let mut bundle = vec![];
-                                bundle.push(signed_tx);
-                                 warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
-
-//                                let res = FlashBotsBundleHandler::simulate(bundle, handler, blk, true).await;
-//                                if let Some(res) = res {
-//                                    for step in &op.result.steps {
-//                                        info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
-//                                    }
-//                                    info!("\n{} {}\n\n", tx_request.gas.unwrap(), op.result.ix_data);
-                                    // info!("{} {}", res.transactions.first().unwrap().gas_used, tx_request.gas.unwrap());
-//                                }
-                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
-                                
-                            }));
-                    }
                 }
-                    futures::future::join_all(handles).await;
+                    futures::future::join_all(outer_handles).await;
 
                 }
 
@@ -550,14 +569,14 @@ impl FlashBotsBundleHandler {
 
 
             } else {
-                error!("Failed to submit transaction ")
+                error!("Failed to submit transaction {:?}", res.err())
             }
         }
 
 
     }
 
-    async fn simulate(txs: Vec<Bytes>,flashbots: Arc<FlashbotsMiddleware<Provider<Ws>, LocalWallet>>,  block: u64, only_successful: bool) -> Option<SimulatedBundle> {
+    async fn simulate(txs: Vec<Bytes>,flashbots: &Arc<FlashbotsMiddleware<Provider<Ws>, LocalWallet>>,  block: u64, only_successful: bool) -> Option<SimulatedBundle> {
 
         let mut bundle = BundleRequest::new();
         for tx in txs {

@@ -52,6 +52,7 @@ pub trait LiquidityProvider: EventEmitter<Box<dyn EventSource<Event = PoolUpdate
     fn get_metadata(&self) -> Self::Metadata;
     async fn get_pools(&self) -> HashMap<String, Pool>;
     async fn set_pools(&self, pools:HashMap<String, Pool>);
+    fn set_update_pools(&mut self, pools:Vec<[Arc<RwLock<Pool>>; 2]>);
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()>;
     fn get_id(&self) -> LiquidityProviderId;
 }
@@ -297,8 +298,6 @@ impl Hash for Pool {
         self.address.hash(state);
         self.x_address.hash(state);
         self.y_address.hash(state);
-        self.provider.hash(state);
-        self.curve_type.hash(state);
     }
 }
 
@@ -307,8 +306,6 @@ impl PartialEq for Pool {
         self.address == other.address
             && self.x_address == other.x_address
             && self.y_address == other.y_address
-            && self.provider == other.provider
-            && self.curve_type == other.curve_type
     }
 }
 impl EventSource for Pool {
@@ -722,7 +719,7 @@ pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>,
     pending_updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>,
-    mut used_pools: tokio::sync::oneshot::Receiver<HashMap<String, Pool>>,
+    mut used_pools: tokio::sync::oneshot::Receiver<Vec<[Arc<RwLock<Pool>>; 2]>>,
     nodes: NodeDispatcher,
     config: SyncConfig,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
@@ -769,11 +766,20 @@ pub async fn start(
     Ok(tokio::spawn(async move {
         let rt = Runtime::new().unwrap();
 
-            let used_pools = used_pools.await.unwrap();
-            let mut emitters = vec![];
+        let used_pools = used_pools.await.unwrap();
+        let mut emitters = vec![];
 
-            for amm in amms {
-                let my_pools = used_pools.clone().into_iter().filter(|(_, pl)| pl.provider.id() == amm.get_id()).collect::<HashMap<String, Pool>>();
+        for mut amm in amms {
+            let mut my_update_pools = vec![];
+            let mut my_pools = HashMap::new();
+            for pools in &used_pools {
+                let pool = pools[0].read().await;
+                if pool.provider.id() == amm.get_id() {
+                    my_pools.insert(pool.address.clone(), pool.clone());
+                    my_update_pools.push(pools.clone());
+                }
+            }
+                amm.set_update_pools(my_update_pools);
                 amm.set_pools(my_pools).await;
                 emitters.push(EventEmitter::<Box<dyn EventSource<Event=PoolUpdateEvent>>>::emit(&*amm));
                 emitters.push(EventEmitter::<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>::emit(&*amm));

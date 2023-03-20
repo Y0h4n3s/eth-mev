@@ -9,6 +9,8 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::str::FromStr;
+use tokio::sync::{RwLock};
+use std::sync::Arc;
 use ethers::types::{Eip1559TransactionRequest, H160, H256, U128, U64, Address, Transaction};
 use garb_sync_eth::{
     uniswap_v2::UniswapV2Metadata, uniswap_v3::UniswapV3Metadata, LiquidityProviderId,
@@ -67,7 +69,7 @@ fn hash_to_function_name(hash: &String) -> String {
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct MevPath {
     pub path: Vec<MevPathStep>,
     pub pools: Vec<Pool>,
@@ -76,35 +78,25 @@ pub struct MevPath {
 }
 
 
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct StepInput {
     pub function_hash: String,
     pub pay_to: String,
     pub amount: u128,
 }
 
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct StepOutput {
     target: String,
 }
 
-#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub enum MevPathStep {
-    ExactIn(Pool, StepInput, StepOutput),
-    ExactOut(Pool, StepInput, StepOutput),
+    ExactIn(Arc<RwLock<Pool>>, StepInput, StepOutput),
+    ExactOut(Arc<RwLock<Pool>>, StepInput, StepOutput),
     // pool: the pool to pay back
     // bool: the token we're paying back, true for x false for y
-    Payback(Pool, StepInput, bool),
-}
-
-impl Display for MevPathStep {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MevPathStep::ExactIn(pool, _, _) => write!(f, "ExactIn\n{}\n", pool),
-            MevPathStep::ExactOut(pool, _, _) => write!(f, "ExactOut\n{}\n", pool),
-            MevPathStep::Payback(pool, _, is_x) => write!(f, "Payback, To X: {}\n{}\n", is_x, pool),
-        }
-    }
+    Payback(Arc<RwLock<Pool>>, StepInput, bool),
 }
 
 impl MevPathStep {
@@ -127,28 +119,18 @@ impl MevPathStep {
             MevPathStep::Payback(_, _, _) => ()
         }
     }
-    pub fn update_pool(&mut self, updated_pool: &Pool) {
-        // x_to_y can never change
-        match self {
-            MevPathStep::ExactIn(pool, _, _)
-            | MevPathStep::ExactOut(pool, _, _)
-            | MevPathStep::Payback(pool, _, _) => {
-                let mut update = updated_pool.clone();
-                update.x_to_y = pool.x_to_y;
-                *pool = update;
-            }
-        }
-    }
 
-    pub fn contains_pool(&self, pool: &Pool) -> bool {
+
+    pub async fn get_pool(&self) -> Pool {
         match self {
             MevPathStep::ExactIn(p, _, _)
             | MevPathStep::ExactOut(p, _, _)
-            | MevPathStep::Payback(p, _, _) => p.address == pool.address,
+            | MevPathStep::Payback(p, _, _) => p.read().await.clone(),
         }
     }
 
-    pub fn get_pool(&self) -> Pool {
+
+    pub fn get_pool_arc(&self) -> Arc<RwLock<Pool>> {
         match self {
             MevPathStep::ExactIn(p, _, _)
             | MevPathStep::ExactOut(p, _, _)
@@ -219,16 +201,16 @@ pub struct PathResult {
 }
 
 impl MevPath {
-    pub fn new(pools: &Vec<Pool>, input_token: &String) -> Option<Self> {
-        let mut re = pools.clone();
+    pub async fn new(pools: Vec<Pool>, pools_locked: &Vec<Arc<RwLock<Pool>>>, input_token: &String) -> Option<Self> {
+        let mut re = pools_locked.clone();
         re.reverse();
-        let path = re.iter().map(|p| MevPathStep::ExactOut(p.clone(), StepInput::default(), StepOutput::default())).collect::<Vec<MevPathStep>>();
+        let path = re.into_iter().map(|p| MevPathStep::ExactOut(p, StepInput::default(), StepOutput::default())).collect::<Vec<MevPathStep>>();
 
-        if let Ok(path) = Self::process_path(path, input_token) {
+        if let Ok(path) = Self::process_path(path, input_token).await {
            Some(Self {
                input_token: input_token.clone(),
                path,
-               pools: pools.clone(),
+               pools
            })
         } else {
             None
@@ -246,27 +228,14 @@ impl MevPath {
         }
         trace!("{}\n", fin);
     }
-    fn estimate_gas_cost(path: &Vec<MevPathStep>) -> u64 {
-        let mut gas = 0;
-        for p in path {
-            match p.get_pool().provider.id() {
-                LiquidityProviderId::SushiSwap | LiquidityProviderId::UniswapV2  | LiquidityProviderId::Solidly | LiquidityProviderId::Pancakeswap=> gas += 150000,
-                LiquidityProviderId::UniswapV3 | LiquidityProviderId::BalancerWeighted => gas += 250000
-            }
-        }
-        gas
-    }
-    fn chained_out_path(&self, mut path: Vec<MevPathStep>) -> anyhow::Result<PathResult> {
+
+    async fn chained_out_path(&self, mut path: Vec<MevPathStep>) -> anyhow::Result<PathResult> {
 
         // binary search for optimal input
         let mut best_route_size = 0.0;
         let mut best_route_profit = I256::from(0);
         let mut best_route_index = 0;
-        let mut mid = if !path.first().unwrap().is_exact_in() && path.first().unwrap().get_pool().supports_callback_payment() {
-            6.0
-        } else {
-            MAX_SIZE.clone() / 2.0
-        };
+        let mut mid = 6.0;
 
         let mut left = 0.0;
         let mut right = mid * 2.0;
@@ -284,12 +253,12 @@ impl MevPath {
             let mut sender = "self".to_string();
 
             // tries to complete steps
-            'inner: for (index, step) in path.iter().enumerate().collect::<Vec<(usize, &MevPathStep)>>() {
+            'inner: for (index, step) in path.iter().enumerate() {
 
-                trace!("_Step: {} {}", index, step);
+                let pool = step.get_pool().await;
 
                 match &step {
-                    MevPathStep::ExactIn(pool, input, out) | MevPathStep::ExactOut(pool, input, out) => {
+                    MevPathStep::ExactIn(_, input, out) | MevPathStep::ExactOut(_, input, out) => {
                         let asset_reciever = out.target.clone();
 
                         let (asset_token, debt_token) = if pool.x_to_y {
@@ -312,7 +281,7 @@ impl MevPath {
                         }
                         // calculate output for current step
                         let as_uint = asset.into_raw();
-                        if let Ok(in_) = calculator.calculate_in(as_uint, pool) {
+                        if let Ok(in_) = calculator.calculate_in(as_uint, &pool) {
                             let debt = I256::from_raw(in_)  ;
                             if debt == I256::zero() {
                                 right = mid;
@@ -323,7 +292,7 @@ impl MevPath {
                             d = debt;
                             trace!("Type AssetIsDebtedToOther > Asset {} Debt {}", a, d);
 
-                            if !step.get_pool().supports_callback_payment() {
+                            if pool.provider.id() == LiquidityProviderId::BalancerWeighted && index + 1 != path.len() {
                                 trace!("Unproccessable AssetIsDebtedToOther step");
                                 return Err(anyhow::Error::msg("Unproccessable AssetIsDebtedToOther Step"));
                             } else {
@@ -417,11 +386,12 @@ impl MevPath {
                             }
 
                         }
-
+                        sender = pool.address;
+                        
 
                     }
 
-                    MevPathStep::Payback(pool, input, is_x) => {
+                    MevPathStep::Payback(_, input, is_x) => {
                         let token = if *is_x {
                             pool.x_address.clone()
                         } else {
@@ -443,7 +413,6 @@ impl MevPath {
                     }
                 }
 
-                sender = step.get_pool().address;
 
             }
             instructions.push(instruction);
@@ -477,6 +446,13 @@ impl MevPath {
                 mid = (left + right) / 2.0;
             }
     
+//                    info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+//
+//                    info!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
+//                    for step in &steps_meta[best_route_index] {
+//                        info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+//                    }
+//                    info!("\n\n\n");
         if best_route_profit > I256::from(0) {
 //            debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
 //
@@ -504,720 +480,8 @@ impl MevPath {
             })
         }
     }
-        fn validate_path(&self, mut path: Vec<MevPathStep>) -> anyhow::Result<PathResult> {
-        // binary search for optimal input
-        let mut best_route_size = 0.0;
-        let mut best_route_profit = I256::from(0);
-        let mut best_route_index = 0;
-        let mut mid = if !path.first().unwrap().is_exact_in() && path.first().unwrap().get_pool().supports_callback_payment() {
-           6.0
-        } else {
-            MAX_SIZE.clone() / 2.0
-        };
 
-        let mut left = 0.0;
-        let mut right = mid * 2.0;
-        let decimals = crate::decimals(self.input_token.clone());
-        let mut instructions = vec![];
-        let mut steps_meta = vec![];
-
-
-        let pre_pay = !path.first().unwrap().get_pool().supports_callback_payment();
-
-        //wether the current size has been used by the path
-        let mut size_used = false;
-        let non_payback_steps = path.iter()
-            .enumerate()
-            .filter_map(|(index, p)| {
-                if p.is_payback() {
-                    None
-                } else {
-                    Some(index)
-                }
-            }).collect::<Vec<usize>>();
-        trace!("\n\n\n");
-
-        // initially fill balances with 0 and contract wallet balance with current size
-        let mut balance: HashMap<String, HashMap<String, I256>> = HashMap::new();
-        let contract_address = "<contract_address>".to_string();
-
-        for step in &path {
-            let pool = step.get_pool();
-
-            for step in &path {
-                let pool1 = step.get_pool();
-                if balance.get(&pool.address).is_some() {
-                    balance
-                        .get_mut(&pool.address)
-                        .unwrap()
-                        .insert(pool1.x_address, I256::from(0));
-                    balance
-                        .get_mut(&pool.address)
-                        .unwrap()
-                        .insert(pool1.y_address, I256::from(0));
-                } else {
-                    let mut map = HashMap::new();
-                    map.insert(pool1.x_address, I256::from(0));
-                    map.insert(pool1.y_address, I256::from(0));
-                    balance.insert(pool.address.clone(), map);
-                }
-            }
-            if balance.get(&contract_address).is_some() {
-                balance
-                    .get_mut(&contract_address)
-                    .unwrap()
-                    .insert(pool.x_address, I256::from(0));
-                balance
-                    .get_mut(&contract_address)
-                    .unwrap()
-                    .insert(pool.y_address, I256::from(0));
-            } else {
-                let mut map = HashMap::new();
-                map.insert(pool.x_address, I256::from(0));
-                map.insert(pool.y_address, I256::from(0));
-                balance.insert(contract_address.clone(), map);
-            }
-        }
-        'binary_search: for i in 0..6 {
-            let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
-
-            let mut balance = balance.clone();
-
-            let mut instruction = Vec::with_capacity(path.len());
-            let mut steps_taken = Vec::with_capacity(path.len());
-            let mut steps_done: Vec<usize> = vec![];
-
-            'stepper: for j in 0..path.len() {
-                if steps_done.len() >= path.len() {
-                    break;
-                }
-                let mut sender = "Contract_owner".to_string();
-                let mut sender_stack = vec![];
-                sender_stack.push(sender.clone());
-                // tries to complete steps
-                'inner: for (index, step) in path.iter().enumerate().collect::<Vec<(usize, &MevPathStep)>>() {
-                    if steps_done.contains(&index) {
-                        if step.is_payback() {
-                            sender = sender_stack.pop().unwrap()
-                        } else {
-                            sender = step.get_pool().address.clone();
-                            sender_stack.push(sender.clone())
-                        }
-                        continue 'inner;
-                    }
-                    trace!("_Step: {} {} {}", index, j, step);
-
-                    match &step {
-                        MevPathStep::ExactIn(pool, input, out) | MevPathStep::ExactOut(pool, input, out) => {
-                            let asset_reciever = out.target.clone();
-
-                            let (asset_token, debt_token) = if pool.x_to_y {
-                                (pool.y_address.clone(), pool.x_address.clone())
-                            } else {
-                                (pool.x_address.clone(), pool.y_address.clone())
-                            };
-                            trace!("Recipient: {} Asset_Token: {} Debt_Token: {} ", asset_reciever, asset_token, debt_token);
-
-                            let calculator = pool.provider.build_calculator();
-                            // used later to build step instruction
-                            let mut d: I256 = I256::from(0);
-                            let mut a: I256 = I256::from(0);
-
-                            let dt = debt_token.clone();
-                            if step.get_pool().supports_pre_payment() && *balance.get(&pool.address).unwrap().get(&debt_token).unwrap() > I256::from(0) {
-                                let mut debt = *balance.get(&pool.address).unwrap().get(&debt_token).unwrap();
-                                if debt < I256::from(0) {
-                                    debt = -debt;
-                                }
-
-                                // add the debt to current pool
-                                let as_uint = U256::from_dec_str(&debt.to_string());
-                                if as_uint.is_err() {
-                                    trace!("Casting Error: Cast To Uint {}", debt);
-
-                                    return Err(anyhow::Error::msg("Casting Error"));
-                                }
-                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
-                                    let asset = I256::from_dec_str(&out_.to_string()).unwrap();
-                                    if asset == I256::zero() {
-                                        right = mid;
-                                        mid = (left + right) / 2.0;
-                                        continue 'binary_search;
-                                    }
-                                    a = asset;
-                                    d = debt;
-                                    steps_taken.push(StepMeta {
-                                        step_id: "PrePaid".to_string(),
-                                        asset: a,
-                                        debt: d,
-                                        asset_token: asset_token.clone(),
-                                        debt_token: debt_token.clone(),
-                                        step: step.clone(),
-                                    });
-                                    trace!("Type PrePaid > Asset {} Debt {}", a, d);
-
-                                    let bal = *balance
-                                        .get(&pool.address)
-                                        .unwrap()
-                                        .get(&debt_token)
-                                        .unwrap();
-                                    balance
-                                        .get_mut(&pool.address)
-                                        .unwrap()
-                                        .insert(debt_token.clone(), sub_i256(bal, debt));
-                                    let bal = *balance
-                                        .get(&asset_reciever)
-                                        .unwrap()
-                                        .get(&asset_token)
-                                        .unwrap();
-                                    balance
-                                        .get_mut(&asset_reciever)
-                                        .unwrap()
-                                        .insert(asset_token.clone(), bal + (asset));
-                                } else {
-                                    right = mid;
-                                    mid = (left + right) / 2.0;
-                                    continue 'binary_search;
-
-                                }
-
-                            } else if let Some((from, b)) = balance.iter().find(|(p, b)| {
-                                if *p == &contract_address {
-                                    return false;
-                                } else {
-                                    let balance = *b.get(&asset_token).unwrap();
-                                    let pool = path.iter().find(|pl| &pl.get_pool().address == *p).unwrap().get_pool();
-                                    pool.address == asset_reciever && balance < I256::from(0)
-                                }
-                            }) {
-                                // if no callback payment transfer from contract_address if available
-
-
-                                let mut asset = *b.get(&asset_token).unwrap();
-
-                                if asset < I256::from(0) {
-                                    asset = -asset;
-                                }
-                                // calculate output for current step
-                                let as_uint = U256::from_dec_str(&asset.to_string());
-                                if as_uint.is_err() {
-                                    trace!("Casting Error: Cast To Uint {}", asset);
-                                    return Err(anyhow::Error::msg("Casting Error"));
-                                }
-                                if let Ok(in_) = calculator.calculate_in(as_uint.unwrap(), pool) {
-                                    let debt = I256::from_dec_str(&in_.to_string()).unwrap();
-                                    if debt == I256::zero() {
-                                        right = mid;
-                                        mid = (left + right) / 2.0;
-                                        continue 'binary_search;
-                                    }
-                                    a = asset;
-                                    d = debt;
-                                    trace!("Type AssetIsDebtedToOther > Asset {} Debt {}", a, d);
-
-                                    if !step.get_pool().supports_callback_payment() {
-                                        let contract_balance = *balance
-                                            .get(&contract_address)
-                                            .unwrap()
-                                            .get(&debt_token)
-                                            .unwrap();
-                                        if contract_balance <= I256::from(0) {
-                                            trace!("Unproccessable AssetIsDebtedToOther step");
-                                            return Err(anyhow::Error::msg("Unproccessable AssetIsDebtedToOther Step"));
-                                        }
-
-                                        balance
-                                            .get_mut(&contract_address)
-                                            .unwrap()
-                                            .insert(debt_token.clone(), sub_i256(contract_balance, debt));
-                                        balance
-                                            .get_mut(&pool.address)
-                                            .unwrap()
-                                            .insert(debt_token.clone(), I256::from(0));
-                                    } else {
-                                        // update asset reciever balance
-                                        let bal = *balance
-                                            .get(&pool.address)
-                                            .unwrap()
-                                            .get(&debt_token)
-                                            .unwrap();
-                                        balance
-                                            .get_mut(&pool.address)
-                                            .unwrap()
-                                            .insert(debt_token.clone(), sub_i256(bal, debt));
-                                    }
-
-                                    let bal = *balance
-                                        .get(&asset_reciever)
-                                        .unwrap()
-                                        .get(&asset_token)
-                                        .unwrap();
-                                    balance
-                                        .get_mut(&asset_reciever)
-                                        .unwrap()
-                                        .insert(asset_token.clone(), bal + (asset));
-
-                                    steps_taken.push(StepMeta {
-                                        step_id: "AssetIsDebtedToOther".to_string(),
-                                        asset: a,
-                                        debt: d,
-                                        asset_token: asset_token.clone(),
-                                        debt_token: debt_token.clone(),
-                                        step: step.clone(),
-                                    });
-                                } else {
-                                    right = mid;
-                                    mid = (left + right) / 2.0;
-                                    continue 'binary_search;
-                                }
-
-                            } else if let Some((from, b)) = balance.iter().find(|(p, b)| {
-                                if *p == &contract_address {
-                                    return *b.get(&debt_token).unwrap() > I256::from(0);
-                                } else {
-                                    let balance = *b.get(&debt_token).unwrap();
-                                    let pool = path.iter().find(|pl| &pl.get_pool().address == *p).unwrap().get_pool();
-                                    if pool.x_to_y {
-                                        pool.y_address == debt_token && balance > I256::from(0)
-                                    } else {
-                                        pool.x_address == debt_token && balance > I256::from(0)
-                                    }
-                                }
-                            }) {
-                                let mut debt = *b.get(&debt_token).unwrap();
-                                if debt < I256::from(0) {
-                                    debt = -debt;
-                                }
-
-                                // add the debt to current pool
-                                let as_uint = U256::from_dec_str(&debt.to_string());
-                                if as_uint.is_err() {
-                                    trace!("Casting Error: Cast To Uint {}", debt);
-                                    return Err(anyhow::Error::msg("Casting Error"));
-                                }
-
-                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
-                                    let asset = I256::from_dec_str(&out_.to_string()).unwrap();
-                                    if asset == I256::zero() {
-                                        right = mid;
-                                        mid = (left + right) / 2.0;
-                                        continue 'binary_search;
-                                    }
-                                    a = asset;
-                                    d = debt;
-                                    trace!("Type DebtIsAssetOnSelf > Asset {} Debt {}", a, d);
-                                    steps_taken.push(StepMeta {
-                                        step_id: "DebtIsAssetOnSelf".to_string(),
-                                        asset: a,
-                                        debt: d,
-                                        asset_token: asset_token.clone(),
-                                        debt_token: debt_token.clone(),
-                                        step: step.clone(),
-                                    });
-                                    let bal = *balance
-                                        .get(&pool.address)
-                                        .unwrap()
-                                        .get(&debt_token)
-                                        .unwrap();
-                                    balance
-                                        .get_mut(&pool.address)
-                                        .unwrap()
-                                        .insert(debt_token.clone(), sub_i256(bal, debt));
-                                    let bal = *balance
-                                        .get(&asset_reciever)
-                                        .unwrap()
-                                        .get(&asset_token)
-                                        .unwrap();
-                                    balance
-                                        .get_mut(&asset_reciever)
-                                        .unwrap()
-                                        .insert(asset_token.clone(), bal + (asset));
-                                } else {
-                                    right = mid;
-                                    mid = (left + right) / 2.0;
-                                    continue 'binary_search;
-                                }
-
-                            } else if debt_token == self.input_token {
-                                let debt = I256::from(i_atomic as u128);
-
-                                // add the debt to current pool
-                                let as_uint = U256::from_dec_str(&debt.to_string());
-                                if as_uint.is_err() {
-                                    trace!("Casting Error: Cast To Uint {}", debt);
-                                    return Err(anyhow::Error::msg("Casting Error"));
-                                }
-
-                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
-                                    let asset = I256::from_dec_str(&out_.to_string()).unwrap();
-                                    if asset == I256::zero() {
-                                        right = mid;
-                                        mid = (left + right) / 2.0;
-                                        continue 'binary_search;
-                                    }
-                                    a = asset;
-                                    d = debt;
-                                    trace!("Type DebtIsInputToken > Asset {} Debt {}", a, d);
-                                    if !step.get_pool().supports_callback_payment() {
-                                        balance
-                                            .get_mut(&contract_address)
-                                            .unwrap()
-                                            .insert(debt_token.clone(), -debt);
-                                        balance
-                                            .get_mut(&pool.address)
-                                            .unwrap()
-                                            .insert(debt_token.clone(), I256::from(0));
-                                    } else {
-                                        // update asset reciever balance
-                                        let bal = *balance
-                                            .get(&pool.address)
-                                            .unwrap()
-                                            .get(&debt_token)
-                                            .unwrap();
-                                        balance
-                                            .get_mut(&pool.address)
-                                            .unwrap()
-                                            .insert(debt_token.clone(), sub_i256(bal, debt));
-                                    }
-                                    steps_taken.push(StepMeta {
-                                        step_id: "DebtIsInputToken".to_string(),
-                                        asset: a,
-                                        debt: d,
-                                        asset_token: asset_token.clone(),
-                                        debt_token: debt_token.clone(),
-                                        step: step.clone(),
-                                    });
-                                    let bal = *balance
-                                        .get(&asset_reciever)
-                                        .unwrap()
-                                        .get(&asset_token)
-                                        .unwrap();
-                                    balance
-                                        .get_mut(&asset_reciever)
-                                        .unwrap()
-                                        .insert(asset_token.clone(), bal + (asset));
-                                } else {
-                                    right = mid;
-                                    mid = (left + right) / 2.0;
-                                    continue 'binary_search;
-                                }
-
-                            } else if asset_token == self.input_token && step.get_pool().supports_callback_payment() {
-                                let asset = I256::from(i_atomic as u128);
-
-                                let as_uint = U256::from_dec_str(&asset.to_string());
-                                if as_uint.is_err() {
-                                    trace!("Casting Error: Cast To Uint {}", asset);
-                                    return Err(anyhow::Error::msg("Casting Error"));
-                                }
-                                if let Ok(in_) = calculator.calculate_in(as_uint.unwrap(), pool) {
-                                    let debt = I256::from_dec_str(&in_.to_string()).unwrap();
-                                    if debt == I256::zero() {
-                                        right = mid;
-                                        mid = (left + right) / 2.0;
-                                        continue 'binary_search;
-                                    }
-                                    a = asset;
-                                    d = debt;
-                                    trace!("Type AssetIsInputToken > Asset {} Debt {}", a, d);
-                                    steps_taken.push(StepMeta {
-                                        step_id: "AssetIsInputToken".to_string(),
-                                        asset: a,
-                                        debt: d,
-                                        asset_token: asset_token.clone(),
-                                        debt_token: debt_token.clone(),
-                                        step: step.clone(),
-                                    });
-                                    // update asset reciever balance
-                                    let bal = *balance
-                                        .get(&pool.address)
-                                        .unwrap()
-                                        .get(&debt_token)
-                                        .unwrap();
-                                    balance
-                                        .get_mut(&pool.address)
-                                        .unwrap()
-                                        .insert(debt_token.clone(), sub_i256(bal, debt));
-                                    let bal = *balance
-                                        .get(&asset_reciever)
-                                        .unwrap()
-                                        .get(&asset_token)
-                                        .unwrap();
-                                    balance
-                                        .get_mut(&asset_reciever)
-                                        .unwrap()
-                                        .insert(asset_token.clone(), bal + (asset));
-                                }
-                                else {
-                                    right = mid;
-                                    mid = (left + right) / 2.0;
-                                    continue 'binary_search;
-                                }
-
-                            } else if asset_token == self.input_token && index == 0 {
-                                trace!("Unproccessable step");
-                                return Err(anyhow::Error::msg("Unproccessable Step"));
-                            } else {
-                                trace!("Can not process step");
-                                if step.get_pool().supports_callback_payment() {
-                                    continue 'inner;
-                                } else {
-                                    return Err(anyhow::Error::msg("Unproccessable Step"));
-                                }
-                            }
-
-                                match pool.provider.id() {
-                                    LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap | LiquidityProviderId::Solidly | LiquidityProviderId::Pancakeswap => {
-                                        // update with reserves
-                                        let (function, pay_to, token) = if sender == asset_reciever {
-                                            (UNISWAP_V2_EXACT_OUT_PAY_TO_SENDER.to_string(), "".to_string(), asset_token[2..].to_string())
-                                        } else if asset_reciever != contract_address {
-                                            (UNISWAP_V2_EXACT_OUT_PAY_TO_ADDRESS.to_string(), asset_reciever[2..].to_string(), asset_token[2..].to_string())
-                                        } else {
-                                            (UNISWAP_V2_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string(), "".to_string())
-                                        };
-                                        let packed_asset = Self::encode_packed(a);
-                                        let packed_debt = Self::encode_packed(d);
-                                        instruction.push(
-                                            function +
-                                                if pool.x_to_y { "01" } else { "00" } +
-                                                &token +
-                                                &pool.address[2..] +
-                                                &pay_to +
-                                                &(packed_asset.len() as u8).encode_hex()[64..] +
-                                                &packed_asset
-
-                                        )
-                                    }
-                                    LiquidityProviderId::UniswapV3 => {
-                                        // update with ...
-                                        let (function, pay_to) = if sender == asset_reciever {
-                                            (UNISWAP_V3_EXACT_OUT_PAY_TO_SENDER.to_string(), "".to_string())
-                                        } else if asset_reciever != contract_address {
-                                            (UNISWAP_V3_EXACT_OUT_PAY_TO_ADDRESS.to_string(), asset_reciever[2..].to_string())
-                                        } else {
-                                            (UNISWAP_V3_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string())
-                                        };
-                                        let packed_asset = Self::encode_packed(a);
-                                        instruction.push(
-                                            function +
-                                                if pool.x_to_y { "01" } else { "00" } +
-                                                &pool.address[2..] +
-                                                &pay_to +
-                                                &(packed_asset.len() as u8).encode_hex()[64..] +
-                                                &packed_asset
-                                        )
-                                    }
-                                    LiquidityProviderId::BalancerWeighted => {
-                                        // update with ...
-                                        let (function, pay_to) = if sender == asset_reciever {
-                                            (BALANCER_EXACT_OUT_PAY_TO_SENDER.to_string(), "".to_string())
-                                        } else if asset_reciever != contract_address {
-                                            (BALANCER_EXACT_OUT_PAY_TO_SENDER.to_string(), asset_reciever[2..].to_string())
-                                        } else {
-                                            (BALANCER_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string())
-                                        };
-                                        let packed_asset = Self::encode_packed(a);
-                                        let packed_debt = Self::encode_packed(d);
-                                        let meta = match &pool.provider {
-                                            LiquidityProviders::BalancerWeighted(meta) => meta,
-                                            _ => panic!()
-                                        };
-                                        instruction.push(
-                                            function +
-                                                &meta.id[2..] +
-                                                &debt_token[2..] +
-                                                &asset_token[2..] +
-                                                &(packed_asset.len() as u8).encode_hex()[64..] +
-                                                &packed_asset +
-                                                &(packed_debt.len() as u8).encode_hex()[64..] +
-                                                &packed_debt
-                                        )
-                                    }
-
-                                }
-
-
-
-                            // step is complete if we got here
-                            steps_done.push(index);
-                        }
-
-                        MevPathStep::Payback(pool, input, is_x) => {
-                            let token = if *is_x {
-                                pool.x_address.clone()
-                            } else {
-                                pool.y_address.clone()
-                            };
-
-                            // make sure all other steps are done before paying back
-                            if !non_payback_steps.iter().all(|s| steps_done.contains(s)) {
-                                continue 'inner;
-                            }
-                            let mut amount_to_pay = *balance.get(&contract_address).unwrap().get(&token).unwrap();
-                            trace!("Amount For Payment: {}", amount_to_pay);
-                            let (function, pay_to) = if sender == pool.address {
-                                if *balance.get(&sender).unwrap().get(&token).unwrap() > I256::from(0) {
-                                    right = mid;
-                                    mid = (left + right) / 2.0;
-                                    continue 'binary_search;
-                                } else {
-                                    // trace!("enough SENDER: {} {}", amount_to_pay.to_string(), balance.get(&sender).unwrap().get(&token).unwrap());
-
-                                    let bal = *balance
-                                        .get(&sender)
-                                        .unwrap()
-                                        .get(&token)
-                                        .unwrap();
-                                    trace!("Due Balance: {}", bal);
-                                    trace!("Left: {}", sub_i256(amount_to_pay, bal));
-                                    balance.get_mut(&contract_address).unwrap().insert(token.clone(), sub_i256(amount_to_pay, bal));
-
-                                    amount_to_pay = bal;
-                                    balance
-                                        .get_mut(&sender)
-                                        .unwrap()
-                                        .insert(token.clone(), I256::from(0));
-                                }
-                                steps_taken.push(StepMeta {
-                                    step_id: "PaybackSender".to_string(),
-                                    asset: amount_to_pay,
-                                    debt: amount_to_pay,
-                                    asset_token: token.clone(),
-                                    debt_token: token.clone(),
-                                    step: step.clone(),
-                                });
-                                (PAY_SENDER.to_string(), "".to_string())
-                            } else {
-                                if *balance.get(&pool.address).unwrap().get(&token).unwrap() > I256::from(0) {
-                                    right = mid;
-                                    mid = (left + right) / 2.0;
-                                    continue 'binary_search;
-                                } else {
-                                    // trace!("enough: {} {}", amount_to_pay.to_string(), balance.get(&pool.address).unwrap().get(&token).unwrap());
-
-                                    let bal = *balance
-                                        .get(&pool.address)
-                                        .unwrap()
-                                        .get(&token)
-                                        .unwrap();
-                                    trace!("Due Balance: {}", bal);
-                                    trace!("Left: {}", sub_i256(amount_to_pay, bal));
-
-                                    balance.get_mut(&contract_address).unwrap().insert(token.clone(), sub_i256(amount_to_pay, bal));
-
-                                    amount_to_pay = bal;
-                                    balance
-                                        .get_mut(&pool.address)
-                                        .unwrap()
-                                        .insert(token.clone(), I256::from(0));
-                                }
-                                steps_taken.push(StepMeta {
-                                    step_id: "Payback_address".to_string(),
-                                    asset: amount_to_pay,
-                                    debt: amount_to_pay,
-                                    asset_token: token.clone(),
-                                    debt_token: token.clone(),
-                                    step: step.clone(),
-                                });
-                                (PAY_ADDRESS.to_string(), pool.address.clone()[2..].to_string())
-                            };
-
-                            let packed_amount = Self::encode_packed(amount_to_pay);
-                            instruction.push(function + &token[2..] + &pay_to + &(packed_amount.len() as u8).encode_hex()[64..] + &packed_amount);
-                            steps_done.push(index);
-                        }
-                    }
-                    // Self::print_balance(&balance);
-                    if step.is_payback() {
-                        sender = sender_stack.pop().unwrap()
-                    } else {
-                        sender = step.get_pool().address.clone();
-                        sender_stack.push(sender.clone())
-                    }
-                }
-            }
-            instructions.push(instruction);
-            steps_meta.push(steps_taken);
-            let asset_balances = balance.iter().map(|(p, b)| b.get(&self.input_token).unwrap()).map(|b| if *b < I256::from(0) { -*b } else { *b }).filter(|b| b != &I256::from(i_atomic as u128)).sorted().collect::<Vec<I256>>();
-            if steps_done.len() != path.len() {
-                trace!("{} {}", steps_done.len(), path.len());
-                return Err(anyhow::Error::msg("Invalid Path: Not All Steps Done in Path"));
-            } else {
-                let mut final_balance = *balance.get(&contract_address).unwrap().get(&self.input_token).unwrap();
-                let profit = sub_i256(final_balance, I256::from(i_atomic as u128));
-                // info!("profit {}, iatomic {} ", final_balance.as_i128() as f64 / 10_f64.powf(18.0), i_atomic);
-                Self::print_balance(&balance);
-
-                if i == 0 {
-                    best_route_profit = final_balance;
-                    best_route_size = i_atomic;
-                    if best_route_profit > I256::from(0) {
-                        left = mid;
-                    } else {
-                        right = mid;
-                    }
-                }
-                else if final_balance >= best_route_profit {
-                    best_route_profit = final_balance;
-                    best_route_size = i_atomic;
-                    best_route_index = instructions.len() - 1;
-                    if best_route_profit > I256::from(0) {
-                        left = mid;
-                    } else {
-                        right = mid;
-                    }
-                } else {
-                    best_route_profit = final_balance;
-                    best_route_size = i_atomic;
-                    right = mid;
-                }
-                mid = (left + right) / 2.0;
-            }
-        }
-        // debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
-        //
-        // if steps_meta.len() > 0 {
-        //     debug!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
-        //     for step in &steps_meta[best_route_index] {
-        //         debug!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
-        //     }
-        //     debug!("\n\n\n");
-        // }
-
-        if best_route_profit > I256::from(0) {
-                debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
-
-                debug!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
-                for step in &steps_meta[best_route_index] {
-                    debug!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
-                }
-                debug!("\n\n\n");
-
-            let mut final_data = "".to_string();
-            for ix in instructions[best_route_index].clone() {
-                final_data += &ix;
-            }
-            Ok(PathResult {
-                ix_data: final_data,
-                profit: best_route_profit.as_u128(),
-                is_good: true,
-                steps: steps_meta[best_route_index].clone(),
-
-            })
-        } else if best_route_profit == I256::from(0) {
-            Err(anyhow::Error::msg("Inv Path"))
-        } else {
-            Ok(PathResult {
-                ix_data: "".to_string(),
-                profit: 0,
-                is_good: false,
-                steps: vec![]
-            })
-        }
-    }
-
-    fn path_to_solidity_test(path: &Vec<MevPathStep>, instructions: &Vec<String>) -> String {
+    async fn path_to_solidity_test(path: &Vec<MevPathStep>, instructions: &Vec<String>) -> String {
         let mut builder = "".to_string();
         let mut title = "function test".to_string();
 
@@ -1230,10 +494,10 @@ impl MevPath {
             let function = ix[0..8].to_string();
             match step {
                 MevPathStep::ExactIn(pool, _, _) => {
-                    title += &(format!("_{:?}", pool.provider.id()) + "ExactIn" + &Self::function_type(function));
+                    title += &(format!("_{:?}", pool.read().await.provider.id()) + "ExactIn" + &Self::function_type(function));
                 }
                 MevPathStep::ExactOut(pool, _, _) => {
-                    title += &(format!("_{:?}", pool.provider.id()) + "ExactOut" + &Self::function_type(function));
+                    title += &(format!("_{:?}", pool.read().await.provider.id()) + "ExactOut" + &Self::function_type(function));
                 }
                 MevPathStep::Payback(_, _, _) => {
                     title += &format!("_{}{}", "Payback", &Self::function_type(function));
@@ -1286,16 +550,9 @@ impl MevPath {
             return "0".to_string() + &encoded[index..];
         };
     }
-    pub fn update(&mut self, updated_pool: Pool) {
-            for mut step in (*self.path).iter_mut() {
-                if step.contains_pool(&updated_pool) {
-                    step.update_pool(&updated_pool);
-                }
-            }
-    }
 
-    pub fn get_transaction(&self) -> Option<(Eip1559TransactionRequest, PathResult)> {
-        let is_good = self.chained_out_path(self.path.clone());
+    pub async fn get_transaction(&self) -> Option<(Eip1559TransactionRequest, PathResult)> {
+        let is_good = self.chained_out_path(self.path.clone()).await;
         match &is_good {
             Ok(data) => {
                 if !data.is_good {
@@ -1330,35 +587,15 @@ impl MevPath {
     }
 
     pub fn get_backrun_for_update(&self, pending_tx: Transaction, updated_pool: Pool, gas_lookup: &HashMap<String, U256>, block_number: u64) -> Option<Backrun> {
-        let mut mock = self.clone();
-        mock.update(updated_pool);
-        if let Some((tx, result)) = mock.get_transaction() {
-
-            let mut gas_cost = U256::zero();
-            for pool in &mock.pools {
-                gas_cost += *gas_lookup.get(&pool.address).unwrap_or(&U256::from(100000));
-            }
-            Some(Backrun {
-                tx,
-                pending_tx,
-                path: mock,
-                profit: U256::from(result.profit),
-                gas_cost,
-                block_number,
-                result
-
-            })
-        } else {
-            None
-        }
+       None
     }
 
-    pub fn is_valid(&self) -> bool {
+    pub async fn is_valid(&self) -> bool {
         if self.path.len() <= 0 {
             return false;
         }
 
-        let is_good = self.validate_path(self.path.clone());
+        let is_good = self.chained_out_path(self.path.clone()).await;
         match &is_good {
             Ok(_) => (true),
             Err(e) => {
@@ -1368,7 +605,7 @@ impl MevPath {
         }
     }
 
-    pub fn process_path(
+    pub async fn process_path(
         mut path: Vec<MevPathStep>,
         input_token: &String,
     ) -> anyhow::Result<Vec<MevPathStep>> {
@@ -1386,34 +623,29 @@ impl MevPath {
         let mut balance: HashMap<String, HashMap<String, i8>> = HashMap::new();
         let mut balance1: HashMap<Pool, HashMap<String, bool>> = HashMap::new();
         let contract_address = "<contract_address>".to_string();
-
         let past_steps: Vec<MevPathStep> = vec![];
-        for step in &path {
-            let pool = step.get_pool();
+        let pools = futures::future::join_all(path.iter().map(|s| async{s.get_pool().await})).await.into_iter().collect::<Vec<Pool>>();
+        for pool in &pools {
             let mut values = HashMap::new();
             values.insert(pool.x_address.clone(), false);
             values.insert(pool.y_address.clone(), false);
             balance1.insert(pool.clone(), values);
         }
 
-        let path_copy = path.clone();
-        for step in path.iter_mut() {
-            let (asset_token, debt_token) = match step {
-                MevPathStep::ExactIn(pool, _, _) | MevPathStep::ExactOut(pool, _, _) => {
+        let path_copy = pools.clone();
+        for (index,pool) in pools.iter().enumerate() {
+            let (asset_token, debt_token) =
                     if pool.x_to_y {
                         (pool.y_address.clone(), pool.x_address.clone())
                     } else {
                         (pool.x_address.clone(), pool.y_address.clone())
-                    }
-                }
-                _ => ("".to_string(), "".to_string()),
-            };
+                    };
+
             let mut step_out =
                 StepOutput {
-                    target: contract_address.clone()
-                };
+                target: contract_address.clone()
+            };
 
-            let pool = step.get_pool();
             let pool_state = balance1.get(&pool).unwrap();
             // the two cases
             // 1. debt_token is input token
@@ -1431,8 +663,7 @@ impl MevPath {
             }
             if asset_token == *input_token {
                 balance1.get_mut(&pool).unwrap().insert(asset_token.clone(), true);
-            } else if let Some(pay_to_step) = step_stack.iter().find(|s| {
-                let p = s.get_pool();
+            } else if let Some(pay_to_step) = pools.iter().find(|p| {
                 if p.x_to_y {
                     p.x_address == asset_token && p.supports_callback_payment()
                 } else {
@@ -1440,14 +671,13 @@ impl MevPath {
                 }
             }) {
                 step_out = StepOutput {
-                    target: pay_to_step.get_pool().address
+                    target: pay_to_step.address.clone()
                 };
-                balance1.get_mut(&pay_to_step.get_pool()).unwrap().insert(asset_token.clone(), true);
+                balance1.get_mut(&pay_to_step).unwrap().insert(asset_token.clone(), true);
                 balance1.get_mut(&pool).unwrap().insert(asset_token.clone(), true);
             } else {
                 // or pay if there is support for pre payment
-                if let Some(pay_to_step) = path_copy[step_stack.len()..].iter().find(|s| {
-                    let p = s.get_pool();
+                if let Some(pay_to_step) = path_copy.iter().find(|p| {
                     if p.x_to_y {
                         p.x_address == asset_token && p.supports_pre_payment()
                     } else {
@@ -1455,13 +685,12 @@ impl MevPath {
                     }
                 }) {
                     step_out = StepOutput {
-                        target: pay_to_step.get_pool().address
+                        target: pay_to_step.address.clone()
                     };
-                    balance1.get_mut(&pay_to_step.get_pool()).unwrap().insert(asset_token.clone(), true);
+                    balance1.get_mut(&pay_to_step).unwrap().insert(asset_token.clone(), true);
                     balance1.get_mut(&pool).unwrap().insert(asset_token.clone(), true);
                 } else {
-                    if let Some(pay_to_step) = path_copy.iter().find(|s| {
-                        let p = s.get_pool();
+                    if let Some(pay_to_step) = path_copy.iter().find(|p| {
                         if p.x_to_y {
                             p.x_address == *input_token
                         } else {
@@ -1471,11 +700,10 @@ impl MevPath {
                         step_out = StepOutput {
                             target: contract_address.clone()
                         };
-                        balance1.get_mut(&pay_to_step.get_pool()).unwrap().insert(asset_token.clone(), true);
+                        balance1.get_mut(&pay_to_step).unwrap().insert(asset_token.clone(), true);
                         balance1.get_mut(&pool).unwrap().insert(asset_token.clone(), true);
                     } else {
-                        if let Some(pay_to_step) = path_copy.iter().find(|s| {
-                            let p = s.get_pool();
+                        if let Some(pay_to_step) = path_copy.iter().find(|p| {
                             if p.x_to_y {
                                 p.x_address == asset_token
                             } else {
@@ -1491,26 +719,25 @@ impl MevPath {
                     }
                 }
             }
-            step.update_output(&step_out);
+            path[index].update_output(&step_out);
 
-            step_stack.push(step.clone());
+            step_stack.push(path[index].clone());
         }
-        for step in &path {
-            let (asset_token, debt_token) = match step {
-                MevPathStep::ExactIn(pool, _, _) | MevPathStep::ExactOut(pool, _, _) => {
+        for (index,pool) in pools.iter().enumerate() {
+
+            let (asset_token, debt_token) =
+
                     if pool.x_to_y {
                         (pool.y_address.clone(), pool.x_address.clone())
                     } else {
                         (pool.x_address.clone(), pool.y_address.clone())
-                    }
-                }
-                _ => ("".to_string(), "".to_string()),
-            };
-            let pool = step.get_pool();
+                    };
+
+            let pool_arc = path[index].get_pool_arc();
             let pool_state = balance1.get(&pool).unwrap();
             if !pool_state.get(&debt_token).unwrap() && pool.supports_callback_payment() {
                 step_stack.push(MevPathStep::Payback(
-                    pool.clone(),
+                        pool_arc,
                     StepInput::default(),
                     debt_token == pool.x_address,
                 ));
