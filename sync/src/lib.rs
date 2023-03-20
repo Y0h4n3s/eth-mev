@@ -52,6 +52,7 @@ pub trait LiquidityProvider: EventEmitter<Box<dyn EventSource<Event = PoolUpdate
     fn get_metadata(&self) -> Self::Metadata;
     async fn get_pools(&self) -> HashMap<String, Pool>;
     async fn set_pools(&self, pools:HashMap<String, Pool>);
+    fn set_update_pools(&mut self, pools:Vec<[Arc<std::sync::RwLock<Pool>>; 2]>);
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()>;
     fn get_id(&self) -> LiquidityProviderId;
 }
@@ -722,7 +723,7 @@ pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>,
     pending_updated_q: kanal::AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>,
-    mut used_pools: tokio::sync::oneshot::Receiver<HashMap<String, Pool>>,
+    mut used_pools: tokio::sync::oneshot::Receiver<Vec<[Arc<std::sync::RwLock<Pool>>; 2]>>,
     nodes: NodeDispatcher,
     config: SyncConfig,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
@@ -772,8 +773,13 @@ pub async fn start(
             let used_pools = used_pools.await.unwrap();
             let mut emitters = vec![];
 
-            for amm in amms {
-                let my_pools = used_pools.clone().into_iter().filter(|(_, pl)| pl.provider.id() == amm.get_id()).collect::<HashMap<String, Pool>>();
+            for mut amm in amms {
+                let my_update_pools = used_pools.clone().into_iter().filter(|pools| pools[0].read().unwrap().provider.id() == amm.get_id()).collect::<Vec<[Arc<std::sync::RwLock<Pool>>;2]>>();
+                let mut my_pools = HashMap::new();
+                for pools in &my_update_pools {
+                    my_pools.insert(pools[0].read().unwrap().address.clone(), pools[0].read().unwrap().clone());
+                }
+                amm.set_update_pools(my_update_pools);
                 amm.set_pools(my_pools).await;
                 emitters.push(EventEmitter::<Box<dyn EventSource<Event=PoolUpdateEvent>>>::emit(&*amm));
                 emitters.push(EventEmitter::<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>::emit(&*amm));

@@ -553,6 +553,7 @@ pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
 pub struct UniSwapV3 {
     pub metadata: UniswapV3Metadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
+    pub update_pools: Arc<Vec<[Arc<std::sync::RwLock<Pool>>; 2]>>,
     subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
     pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>>,
     nodes: NodeDispatcher
@@ -563,6 +564,7 @@ impl UniSwapV3 {
         Self {
             metadata,
             pools: Arc::new(RwLock::new(HashMap::new())),
+            update_pools: Arc::new(Vec::new()),
             subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
             pending_subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
             nodes
@@ -584,6 +586,9 @@ impl LiquidityProvider for UniSwapV3 {
     async fn set_pools(&self, pools: HashMap<String, Pool>)  {
         let mut lock = self.pools.write().await;
         *lock = pools;
+    }
+    fn set_update_pools(&mut self, pools: Vec<[Arc<std::sync::RwLock<Pool>>; 2]>)  {
+        self.update_pools = Arc::new(pools);
     }
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()> {
         let metadata = self.metadata.clone();
@@ -723,41 +728,42 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
         self.subscribers.clone()
     }
     fn emit(&self) -> std::thread::JoinHandle<()> {
-        let pools = self.pools.clone();
+        let pools = self.update_pools.clone();
         let subscribers = self.subscribers.clone();
         let node_url = self.nodes.next_free();
 
         std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
             let pools = pools.clone();
-            rt.block_on( async move {
+            rt.block_on(async move {
                 let mut joins = vec![];
+
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();
                 provider.set_interval(Duration::from_millis(POLL_INTERVAL));
-                let client = Arc::new(
-                    provider
+                let clnt = Arc::new(
+                        provider
                 );
-                let latest_block = client.get_block_number().await.unwrap();
-    
-                
-                for pool in pools.read().await.values() {
+                let latest_block = clnt.get_block_number().await.unwrap();
+
+                for p in pools.iter() {
+                    let pls = p.clone();
+                    let mut pl = pls[0].read().unwrap().clone();
+
                     let subscribers = subscribers.clone();
-                    let mut pool = pool.clone();
-                    let client = client.clone();
                     let subscribers = subscribers.read().unwrap();
                     let sub = subscribers.first().unwrap().clone();
                     drop(subscribers);
+                    let client = clnt.clone();
 
-                    let pools = pools.clone();
                     joins.push(tokio::runtime::Handle::current().spawn(async move {
 
                         loop {
                             tokio::time::sleep(Duration::from_millis(POLL_INTERVAL)).await;
 
                             let mut block = 0;
-                            if let Some(mut pool_meta) = match pool.clone().provider {
+                            if let Some(mut pool_meta) = match pl.clone().provider {
                                 LiquidityProviders::UniswapV3(pool_meta) => Some(pool_meta),
                                 _ => None
                             } {
@@ -774,13 +780,17 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                                     }
                                     updated_meta.factory_address = pool_meta.factory_address;
                                     block = updated_meta.block_number;
+                                    for p in pls.iter() {
+                                        let mut w = p.write().unwrap();
+                                        w.x_amount = updated_meta.token_a_amount;
+                                        w.y_amount = updated_meta.token_b_amount;
+                                        w.provider = LiquidityProviders::UniswapV3(updated_meta.clone());
+                                    }
+                                    pl.x_amount = updated_meta.token_a_amount;
+                                    pl.y_amount = updated_meta.token_b_amount;
 
-                                    pool.x_amount = updated_meta.token_a_amount;
-                                    pool.y_amount = updated_meta.token_b_amount;
+                                    pl.provider = LiquidityProviders::UniswapV3(updated_meta);
 
-                                    pool.provider = LiquidityProviders::UniswapV3(updated_meta);
-                                    let mut w = pools.write().await;
-                                    w.insert(pool.address.clone(), pool.clone());
                                 } else {
                                     error!("Failed to get {:?} updates", LiquidityProviderId::UniswapV3);
                                     continue
@@ -788,7 +798,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
 
                             }
                             let event = PoolUpdateEvent {
-                                pool: pool.clone(),
+                                pool: pl.clone(),
                                 block_number: block,
                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
                             };
@@ -809,7 +819,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
         self.pending_subscribers.clone()
     }
     fn emit(&self) -> std::thread::JoinHandle<()> {
-        let pools = self.pools.clone();
+        let pools = self.update_pools.clone();
         let subscribers = self.pending_subscribers.clone();
         let node_url = self.nodes.next_free();
 
@@ -844,12 +854,10 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                             let sub = sub.clone();
                             let pools = pools.clone();
                             tokio::task::spawn(async move {
-                                let pools = pools
-                                .read()
-                                .await
-                                .values()
-                                .cloned()
-                                .collect::<Vec<Pool>>();
+                                                               let pools = pools
+                                    .iter()
+                                    .map(|p| p[0].read().unwrap().clone())
+                                    .collect::<Vec<Pool>>();
                                 if pools.len() <= 0 {
                                     return ;
                                 }

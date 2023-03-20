@@ -56,7 +56,7 @@ use garb_graph_eth::single_arb::ArbPath;
 use garb_sync_eth::node_dispatcher::NodeDispatcher;
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
-    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("3,5,6".to_string()))
+    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,3,5,6".to_string()))
         .split(",")
         .map(|i| LiquidityProviders::from(i))
         .collect()
@@ -101,7 +101,7 @@ pub async fn async_main() -> anyhow::Result<()> {
         kanal::bounded::<Vec<ArbPath>>(1000);
     let (pool_sender, mut pool_receiver) =
         kanal::bounded_async::<Pool>(10000);
-    let (used_pools_shot_tx, used_pools_shot_rx) = tokio::sync::oneshot::channel::<HashMap<String, Pool>>();
+    let (used_pools_shot_tx, used_pools_shot_rx) = tokio::sync::oneshot::channel::<Vec<[Arc<std::sync::RwLock<Pool>>; 2]>>();
     let sync_config = SyncConfig {
         providers: PROVIDERS.clone(),
     };

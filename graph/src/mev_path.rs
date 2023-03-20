@@ -9,6 +9,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::str::FromStr;
+use std::sync::{RwLock, Arc};
 use ethers::types::{Eip1559TransactionRequest, H160, H256, U128, U64, Address, Transaction};
 use garb_sync_eth::{
     uniswap_v2::UniswapV2Metadata, uniswap_v3::UniswapV3Metadata, LiquidityProviderId,
@@ -67,7 +68,7 @@ fn hash_to_function_name(hash: &String) -> String {
     }
 }
 
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct MevPath {
     pub path: Vec<MevPathStep>,
     pub pools: Vec<Pool>,
@@ -76,33 +77,33 @@ pub struct MevPath {
 }
 
 
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct StepInput {
     pub function_hash: String,
     pub pay_to: String,
     pub amount: u128,
 }
 
-#[derive(Hash, PartialEq, Eq, Debug, Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct StepOutput {
     target: String,
 }
 
-#[derive(Hash, PartialEq, Eq, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub enum MevPathStep {
-    ExactIn(Pool, StepInput, StepOutput),
-    ExactOut(Pool, StepInput, StepOutput),
+    ExactIn(Arc<RwLock<Pool>>, StepInput, StepOutput),
+    ExactOut(Arc<RwLock<Pool>>, StepInput, StepOutput),
     // pool: the pool to pay back
     // bool: the token we're paying back, true for x false for y
-    Payback(Pool, StepInput, bool),
+    Payback(Arc<RwLock<Pool>>, StepInput, bool),
 }
 
 impl Display for MevPathStep {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MevPathStep::ExactIn(pool, _, _) => write!(f, "ExactIn\n{}\n", pool),
-            MevPathStep::ExactOut(pool, _, _) => write!(f, "ExactOut\n{}\n", pool),
-            MevPathStep::Payback(pool, _, is_x) => write!(f, "Payback, To X: {}\n{}\n", is_x, pool),
+            MevPathStep::ExactIn(pool, _, _) => write!(f, "ExactIn\n{}\n", pool.read().unwrap()),
+            MevPathStep::ExactOut(pool, _, _) => write!(f, "ExactOut\n{}\n", pool.read().unwrap()),
+            MevPathStep::Payback(pool, _, is_x) => write!(f, "Payback, To X: {}\n{}\n", is_x, pool.read().unwrap()),
         }
     }
 }
@@ -127,28 +128,26 @@ impl MevPathStep {
             MevPathStep::Payback(_, _, _) => ()
         }
     }
-    pub fn update_pool(&mut self, updated_pool: &Pool) {
-        // x_to_y can never change
-        match self {
-            MevPathStep::ExactIn(pool, _, _)
-            | MevPathStep::ExactOut(pool, _, _)
-            | MevPathStep::Payback(pool, _, _) => {
-                let mut update = updated_pool.clone();
-                update.x_to_y = pool.x_to_y;
-                *pool = update;
-            }
-        }
-    }
+
 
     pub fn contains_pool(&self, pool: &Pool) -> bool {
         match self {
             MevPathStep::ExactIn(p, _, _)
             | MevPathStep::ExactOut(p, _, _)
-            | MevPathStep::Payback(p, _, _) => p.address == pool.address,
+            | MevPathStep::Payback(p, _, _) => p.read().unwrap().address == pool.address,
         }
     }
 
     pub fn get_pool(&self) -> Pool {
+        match self {
+            MevPathStep::ExactIn(p, _, _)
+            | MevPathStep::ExactOut(p, _, _)
+            | MevPathStep::Payback(p, _, _) => p.read().unwrap().clone(),
+        }
+    }
+
+
+    pub fn get_pool_arc(&self) -> Arc<RwLock<Pool>> {
         match self {
             MevPathStep::ExactIn(p, _, _)
             | MevPathStep::ExactOut(p, _, _)
@@ -219,16 +218,16 @@ pub struct PathResult {
 }
 
 impl MevPath {
-    pub fn new(pools: &Vec<Pool>, input_token: &String) -> Option<Self> {
+    pub fn new(pools: &Vec<Arc<RwLock<Pool>>>, input_token: &String) -> Option<Self> {
         let mut re = pools.clone();
         re.reverse();
-        let path = re.iter().map(|p| MevPathStep::ExactOut(p.clone(), StepInput::default(), StepOutput::default())).collect::<Vec<MevPathStep>>();
+        let path = re.into_iter().map(|p| MevPathStep::ExactOut(p, StepInput::default(), StepOutput::default())).collect::<Vec<MevPathStep>>();
 
         if let Ok(path) = Self::process_path(path, input_token) {
            Some(Self {
                input_token: input_token.clone(),
                path,
-               pools: pools.clone(),
+               pools: pools.iter().map(|p| p.read().unwrap().clone()).collect()
            })
         } else {
             None
@@ -284,12 +283,15 @@ impl MevPath {
             let mut sender = "self".to_string();
 
             // tries to complete steps
-            'inner: for (index, step) in path.iter().enumerate().collect::<Vec<(usize, &MevPathStep)>>() {
+            'inner: for step in path.iter() {
 
-                trace!("_Step: {} {}", index, step);
+                trace!("_Step:  {}",  step);
 
                 match &step {
                     MevPathStep::ExactIn(pool, input, out) | MevPathStep::ExactOut(pool, input, out) => {
+                        let r = pool.read().unwrap();
+                        let pool = r.clone();
+                        drop(r);
                         let asset_reciever = out.target.clone();
 
                         let (asset_token, debt_token) = if pool.x_to_y {
@@ -312,7 +314,7 @@ impl MevPath {
                         }
                         // calculate output for current step
                         let as_uint = asset.into_raw();
-                        if let Ok(in_) = calculator.calculate_in(as_uint, pool) {
+                        if let Ok(in_) = calculator.calculate_in(as_uint, &pool) {
                             let debt = I256::from_raw(in_)  ;
                             if debt == I256::zero() {
                                 right = mid;
@@ -422,6 +424,7 @@ impl MevPath {
                     }
 
                     MevPathStep::Payback(pool, input, is_x) => {
+                        let pool = pool.read().unwrap();
                         let token = if *is_x {
                             pool.x_address.clone()
                         } else {
@@ -477,6 +480,13 @@ impl MevPath {
                 mid = (left + right) / 2.0;
             }
     
+//                    info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+//
+//                    info!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
+//                    for step in &steps_meta[best_route_index] {
+//                        info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+//                    }
+//                    info!("\n\n\n");
         if best_route_profit > I256::from(0) {
 //            debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
 //
@@ -609,6 +619,7 @@ impl MevPath {
 
                     match &step {
                         MevPathStep::ExactIn(pool, input, out) | MevPathStep::ExactOut(pool, input, out) => {
+                            let pool = pool.read().unwrap();
                             let asset_reciever = out.target.clone();
 
                             let (asset_token, debt_token) = if pool.x_to_y {
@@ -637,7 +648,7 @@ impl MevPath {
 
                                     return Err(anyhow::Error::msg("Casting Error"));
                                 }
-                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
+                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), &pool) {
                                     let asset = I256::from_dec_str(&out_.to_string()).unwrap();
                                     if asset == I256::zero() {
                                         right = mid;
@@ -704,7 +715,7 @@ impl MevPath {
                                     trace!("Casting Error: Cast To Uint {}", asset);
                                     return Err(anyhow::Error::msg("Casting Error"));
                                 }
-                                if let Ok(in_) = calculator.calculate_in(as_uint.unwrap(), pool) {
+                                if let Ok(in_) = calculator.calculate_in(as_uint.unwrap(), &pool) {
                                     let debt = I256::from_dec_str(&in_.to_string()).unwrap();
                                     if debt == I256::zero() {
                                         right = mid;
@@ -796,7 +807,7 @@ impl MevPath {
                                     return Err(anyhow::Error::msg("Casting Error"));
                                 }
 
-                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
+                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), &pool) {
                                     let asset = I256::from_dec_str(&out_.to_string()).unwrap();
                                     if asset == I256::zero() {
                                         right = mid;
@@ -848,7 +859,7 @@ impl MevPath {
                                     return Err(anyhow::Error::msg("Casting Error"));
                                 }
 
-                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), pool) {
+                                if let Ok(out_) = calculator.calculate_out(as_uint.unwrap(), &pool) {
                                     let asset = I256::from_dec_str(&out_.to_string()).unwrap();
                                     if asset == I256::zero() {
                                         right = mid;
@@ -910,7 +921,7 @@ impl MevPath {
                                     trace!("Casting Error: Cast To Uint {}", asset);
                                     return Err(anyhow::Error::msg("Casting Error"));
                                 }
-                                if let Ok(in_) = calculator.calculate_in(as_uint.unwrap(), pool) {
+                                if let Ok(in_) = calculator.calculate_in(as_uint.unwrap(), &pool) {
                                     let debt = I256::from_dec_str(&in_.to_string()).unwrap();
                                     if debt == I256::zero() {
                                         right = mid;
@@ -1044,6 +1055,7 @@ impl MevPath {
                         }
 
                         MevPathStep::Payback(pool, input, is_x) => {
+                            let pool = pool.read().unwrap();
                             let token = if *is_x {
                                 pool.x_address.clone()
                             } else {
@@ -1186,7 +1198,7 @@ impl MevPath {
         // }
 
         if best_route_profit > I256::from(0) {
-                debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+//                debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
 
                 debug!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
                 for step in &steps_meta[best_route_index] {
@@ -1230,10 +1242,10 @@ impl MevPath {
             let function = ix[0..8].to_string();
             match step {
                 MevPathStep::ExactIn(pool, _, _) => {
-                    title += &(format!("_{:?}", pool.provider.id()) + "ExactIn" + &Self::function_type(function));
+                    title += &(format!("_{:?}", pool.read().unwrap().provider.id()) + "ExactIn" + &Self::function_type(function));
                 }
                 MevPathStep::ExactOut(pool, _, _) => {
-                    title += &(format!("_{:?}", pool.provider.id()) + "ExactOut" + &Self::function_type(function));
+                    title += &(format!("_{:?}", pool.read().unwrap().provider.id()) + "ExactOut" + &Self::function_type(function));
                 }
                 MevPathStep::Payback(_, _, _) => {
                     title += &format!("_{}{}", "Payback", &Self::function_type(function));
@@ -1286,13 +1298,6 @@ impl MevPath {
             return "0".to_string() + &encoded[index..];
         };
     }
-    pub fn update(&mut self, updated_pool: Pool) {
-            for mut step in (*self.path).iter_mut() {
-                if step.contains_pool(&updated_pool) {
-                    step.update_pool(&updated_pool);
-                }
-            }
-    }
 
     pub fn get_transaction(&self) -> Option<(Eip1559TransactionRequest, PathResult)> {
         let is_good = self.chained_out_path(self.path.clone());
@@ -1330,27 +1335,7 @@ impl MevPath {
     }
 
     pub fn get_backrun_for_update(&self, pending_tx: Transaction, updated_pool: Pool, gas_lookup: &HashMap<String, U256>, block_number: u64) -> Option<Backrun> {
-        let mut mock = self.clone();
-        mock.update(updated_pool);
-        if let Some((tx, result)) = mock.get_transaction() {
-
-            let mut gas_cost = U256::zero();
-            for pool in &mock.pools {
-                gas_cost += *gas_lookup.get(&pool.address).unwrap_or(&U256::from(100000));
-            }
-            Some(Backrun {
-                tx,
-                pending_tx,
-                path: mock,
-                profit: U256::from(result.profit),
-                gas_cost,
-                block_number,
-                result
-
-            })
-        } else {
-            None
-        }
+       None
     }
 
     pub fn is_valid(&self) -> bool {
@@ -1400,6 +1385,7 @@ impl MevPath {
         for step in path.iter_mut() {
             let (asset_token, debt_token) = match step {
                 MevPathStep::ExactIn(pool, _, _) | MevPathStep::ExactOut(pool, _, _) => {
+                    let pool = pool.read().unwrap();
                     if pool.x_to_y {
                         (pool.y_address.clone(), pool.x_address.clone())
                     } else {
@@ -1498,6 +1484,8 @@ impl MevPath {
         for step in &path {
             let (asset_token, debt_token) = match step {
                 MevPathStep::ExactIn(pool, _, _) | MevPathStep::ExactOut(pool, _, _) => {
+                    let pool = pool.read().unwrap();
+
                     if pool.x_to_y {
                         (pool.y_address.clone(), pool.x_address.clone())
                     } else {
@@ -1506,11 +1494,12 @@ impl MevPath {
                 }
                 _ => ("".to_string(), "".to_string()),
             };
+            let pool_arc = step.get_pool_arc();
             let pool = step.get_pool();
             let pool_state = balance1.get(&pool).unwrap();
             if !pool_state.get(&debt_token).unwrap() && pool.supports_callback_payment() {
                 step_stack.push(MevPathStep::Payback(
-                    pool.clone(),
+                        pool_arc,
                     StepInput::default(),
                     debt_token == pool.x_address,
                 ));
