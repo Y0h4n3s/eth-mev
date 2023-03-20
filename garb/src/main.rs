@@ -56,7 +56,7 @@ use garb_graph_eth::single_arb::ArbPath;
 use garb_sync_eth::node_dispatcher::NodeDispatcher;
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
-    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("3,4,5,6".to_string()))
+    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2,3,4,5,6".to_string()))
         .split(",")
         .map(|i| LiquidityProviders::from(i))
         .collect()
@@ -417,7 +417,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                                         if blk.base_fee_per_gas.is_none() {
                                             return
                                         }
-                                        let max_fee = opportunity.profit / gas_cost;
+                                        let max_fee = U256::from(result.profit) / gas_cost;
                                         let balance = U256::from(50000000000000000 as u128);
                                         let max_possible_fee = balance / gas_cost;
                                         let base_fee = calculate_next_block_base_fee(blk.clone()).unwrap();

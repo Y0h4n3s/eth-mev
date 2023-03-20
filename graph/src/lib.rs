@@ -662,10 +662,6 @@ DETACH DELETE n",
     }
 
     info!("Starting Listener thread");
-    info!(
-        "Clearing {} cached events",
-        updated_q.len() + pending_updated_q.len()
-    );
 
     let mut workers = vec![];
     let cores = num_cpus::get();
