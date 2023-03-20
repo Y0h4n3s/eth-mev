@@ -553,7 +553,7 @@ pub const POOL_CREATED_EVENT_SIGNATURE: H256 = H256([
 pub struct UniSwapV3 {
     pub metadata: UniswapV3Metadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
-    pub update_pools: Arc<Vec<[Arc<std::sync::RwLock<Pool>>; 2]>>,
+    pub update_pools: Arc<Vec<[Arc<RwLock<Pool>>; 2]>>,
     subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
     pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>>,
     nodes: NodeDispatcher
@@ -587,7 +587,7 @@ impl LiquidityProvider for UniSwapV3 {
         let mut lock = self.pools.write().await;
         *lock = pools;
     }
-    fn set_update_pools(&mut self, pools: Vec<[Arc<std::sync::RwLock<Pool>>; 2]>)  {
+    fn set_update_pools(&mut self, pools: Vec<[Arc<RwLock<Pool>>; 2]>)  {
         self.update_pools = Arc::new(pools);
     }
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()> {
@@ -749,7 +749,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
 
                 for p in pools.iter() {
                     let pls = p.clone();
-                    let mut pl = pls[0].read().unwrap().clone();
+                    let mut pl = pls[0].read().await.clone();
 
                     let subscribers = subscribers.clone();
                     let subscribers = subscribers.read().unwrap();
@@ -781,7 +781,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                                     updated_meta.factory_address = pool_meta.factory_address;
                                     block = updated_meta.block_number;
                                     for p in pls.iter() {
-                                        let mut w = p.write().unwrap();
+                                        let mut w = p.write().await;
                                         w.x_amount = updated_meta.token_a_amount;
                                         w.y_amount = updated_meta.token_b_amount;
                                         w.provider = LiquidityProviders::UniswapV3(updated_meta.clone());
@@ -854,9 +854,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
                             let sub = sub.clone();
                             let pools = pools.clone();
                             tokio::task::spawn(async move {
-                                                               let pools = pools
+                                let pools = futures::future::join_all(pools
                                     .iter()
-                                    .map(|p| p[0].read().unwrap().clone())
+                                    .map(|p| async {p[0].read().await.clone()})).await.into_iter()
                                     .collect::<Vec<Pool>>();
                                 if pools.len() <= 0 {
                                     return ;

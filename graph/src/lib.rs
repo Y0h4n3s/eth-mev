@@ -132,7 +132,7 @@ pub async fn start(
     pending_updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>,
     routes: Arc<RwLock<kanal::AsyncSender<Backrun>>>,
     single_routes: Arc<Mutex<kanal::Sender<Vec<ArbPath>>>>,
-    used_oneshot: tokio::sync::oneshot::Sender<Vec<[Arc<std::sync::RwLock<Pool>>; 2]>>,
+    used_oneshot: tokio::sync::oneshot::Sender<Vec<[Arc<RwLock<Pool>>; 2]>>,
     config: GraphConfig,
 ) -> anyhow::Result<()> {
     Graph::<String, Pool, Undirected>::new_undirected();
@@ -165,7 +165,7 @@ DETACH DELETE n",
     let pull_meta = Metadata::from_iter(vec![("n", 1)]);
     let (records, response) = conn.pull(Some(pull_meta)).await?;
 
-    let mut locked_pools: HashMap<Pool, [Arc<std::sync::RwLock<Pool>>; 2]> = HashMap::new();
+    let mut locked_pools: HashMap<Pool, [Arc<RwLock<Pool>>; 2]> = HashMap::new();
 
     for (_, pool) in pr.iter() {
         let mut pool_xy = pool.clone();
@@ -173,7 +173,13 @@ DETACH DELETE n",
         pool_xy.x_to_y = true;
         pool_yx.x_to_y = false;
 
-        locked_pools.insert(pool.clone(), [Arc::new(std::sync::RwLock::new(pool_xy)), Arc::new(std::sync::RwLock::new(pool_yx))]);
+        locked_pools.insert(
+            pool.clone(),
+            [
+                Arc::new(RwLock::new(pool_xy)),
+                Arc::new(RwLock::new(pool_yx)),
+            ],
+        );
         let res = conn
             .run(
                 "MERGE (t:Token {address: $address}) RETURN t",
@@ -288,7 +294,6 @@ DETACH DELETE n",
     ));
     let path_lookup1 = Arc::new(RwLock::new(HashMap::<Pool, Vec<MevPath>>::new()));
 
-
     let max_intermidiate_nodes = 4;
     for i in 2..max_intermidiate_nodes {
         info!("Preparing {} step routes ", i);
@@ -340,97 +345,103 @@ DETACH DELETE n",
                 let pools = pools.clone();
                 let locked_pools = locked_pools.clone();
                 handles.push(tokio::spawn(async move {
-                    let ps = pools.read().await;
-                    let mut pools = record
-                        .fields()
-                        .iter()
-                        .filter_map(|val| match val {
-                            Value::List(rels) => {
-                                let mut r = vec![];
-                                for rel in rels {
-                                    match rel {
-                                        Value::Node(rel) => {
-                                            if let Some(is_pool) = rel
-                                                .labels()
-                                                .iter()
-                                                .find(|p| *p == &"Pool".to_string())
-                                            {
-                                                let address = match rel.properties().get("address")
+                    let ps = pools.read().await.clone();
+                    let mut pools =
+                        futures::future::join_all(record.fields().into_iter().map(|val| async {
+                            match val.clone() {
+                                Value::List(rels) => {
+                                    let mut r = vec![];
+                                    for rel in rels {
+                                        match rel {
+                                            Value::Node(rel) => {
+                                                if let Some(is_pool) = rel
+                                                    .labels()
+                                                    .iter()
+                                                    .find(|p| *p == &"Pool".to_string())
                                                 {
-                                                    Some(Value::String(s)) => s.clone(),
-                                                    _ => "0x0".to_string(),
-                                                };
-                                                let provider =
-                                                    match rel.properties().get("provider") {
-                                                        Some(Value::String(provider)) => {
-                                                            LiquidityProviders::from(provider)
+                                                    let address =
+                                                        match rel.properties().get("address") {
+                                                            Some(Value::String(s)) => s.clone(),
+                                                            _ => "0x0".to_string(),
+                                                        };
+                                                    let provider =
+                                                        match rel.properties().get("provider") {
+                                                            Some(Value::String(provider)) => {
+                                                                LiquidityProviders::from(provider)
+                                                            }
+                                                            _ => LiquidityProviders::UniswapV2(
+                                                                Default::default(),
+                                                            ),
+                                                        };
+                                                    let x_to_y =
+                                                        match rel.properties().get("x_to_y") {
+                                                            Some(Value::String(x_to_y)) => {
+                                                                if x_to_y == &"true".to_string() {
+                                                                    true
+                                                                } else {
+                                                                    false
+                                                                }
+                                                            }
+                                                            _ => false,
+                                                        };
+                                                    match ps.iter().find(|(_, p)| {
+                                                        p.address == address
+                                                            && p.provider == provider
+                                                    }) {
+                                                        Some((s, pool)) => {
+                                                            let mut new = pool.clone();
+                                                            new.x_to_y = x_to_y;
+                                                            r.push(new)
                                                         }
-                                                        _ => LiquidityProviders::UniswapV2(
-                                                            Default::default(),
-                                                        ),
-                                                    };
-                                                let x_to_y = match rel.properties().get("x_to_y") {
-                                                    Some(Value::String(x_to_y)) => {
-                                                        if x_to_y == &"true".to_string() {
-                                                            true
-                                                        } else {
-                                                            false
-                                                        }
+                                                        _ => (),
                                                     }
-                                                    _ => false,
-                                                };
-                                                match ps.iter().find(|(_, p)| {
-                                                    p.address == address && p.provider == provider
-                                                }) {
-                                                    Some((s, pool)) => {
-                                                        let mut new = pool.clone();
-                                                        new.x_to_y = x_to_y;
-                                                        r.push(new)
-                                                    }
-                                                    _ => (),
                                                 }
                                             }
-                                        }
 
-                                        _ => (),
-                                    }
-                                }
-                                let mut seen_count = 0;
-                                r.iter().for_each(|p| {
-                                    if p.x_address == CHECKED_COIN.clone() {
-                                        seen_count = seen_count + 1;
-                                    }
-                                    if p.y_address == CHECKED_COIN.clone() {
-                                        seen_count = seen_count + 1;
-                                    }
-                                });
-
-                                if seen_count != 2 {
-                                    None
-                                } else {
-                                    let mut locked = vec![];
-                                    for pool in r {
-                                        let l_pools = locked_pools.get(&pool).unwrap();
-                                        if pool.x_to_y {
-                                            locked.push(l_pools[0].clone());
-                                        } else {
-                                            locked.push(l_pools[1].clone());
+                                            _ => (),
                                         }
                                     }
-                                    if let Some(mut path) = MevPath::new(&locked, &CHECKED_COIN.clone())
-                                    {
-                                        if path.is_valid() {
-                                            Some(path)
+                                    let mut seen_count = 0;
+                                    r.iter().for_each(|p| {
+                                        if p.x_address == CHECKED_COIN.clone() {
+                                            seen_count = seen_count + 1;
+                                        }
+                                        if p.y_address == CHECKED_COIN.clone() {
+                                            seen_count = seen_count + 1;
+                                        }
+                                    });
+
+                                    if seen_count != 2 {
+                                        None
+                                    } else {
+                                        let mut locked = vec![];
+                                        for pool in &r {
+                                            let l_pools = locked_pools.get(pool).unwrap();
+                                            if pool.x_to_y {
+                                                locked.push(l_pools[0].clone());
+                                            } else {
+                                                locked.push(l_pools[1].clone());
+                                            }
+                                        }
+                                        if let Some(mut path) =
+                                            MevPath::new(r, &locked, &CHECKED_COIN.clone()).await
+                                        {
+                                            if path.is_valid().await {
+                                                Some(path)
+                                            } else {
+                                                None
+                                            }
                                         } else {
                                             None
                                         }
-                                    } else {
-                                        None
                                     }
                                 }
+                                _ => None,
                             }
-                            _ => None,
-                        })
+                        }))
+                        .await
+                        .into_iter()
+                        .filter_map(|r| r)
                         .collect::<Vec<MevPath>>();
                     for p in pools {
                         let mut in_ = CHECKED_COIN.clone();
@@ -507,10 +518,11 @@ DETACH DELETE n",
         .unique()
         .collect::<Vec<Pool>>();
 
-    let uniq_locked = uniq.iter()
-            .map(|pl| locked_pools.get(pl).unwrap())
-    .cloned()
-        .collect::<Vec<[Arc<std::sync::RwLock<Pool>>; 2]>>();
+    let uniq_locked = uniq
+        .iter()
+        .map(|pl| locked_pools.get(pl).unwrap())
+        .cloned()
+        .collect::<Vec<[Arc<RwLock<Pool>>; 2]>>();
     //	return Ok(());
     info!(
         "Registering Gas consumption for {} pool transactions",
@@ -646,46 +658,38 @@ DETACH DELETE n",
         let updated_q = updated_q.clone();
         workers.push(tokio::spawn(async move {
             while let Ok(updated_market_event) = updated_q.recv().await {
-
                 let event = updated_market_event.get_event();
                 let mut updated_market = event.pool;
-                let market_routes = if let Some(market_routes) =
-                    path_lookup.read().await.get(&updated_market)
-                {
-                    market_routes.clone()
-                } else {
-                    debug!("No routes found for {}", updated_market);
-                    continue;
-                };
+                let market_routes =
+                    if let Some(market_routes) = path_lookup.read().await.get(&updated_market) {
+                        market_routes.clone()
+                    } else {
+                        debug!("No routes found for {}", updated_market);
+                        continue;
+                    };
                 let single_routes = single_routes.clone();
                 let gas_lookup = gas_lookup.clone();
 
-                std::thread::spawn(move || {
-                    let mut updated = market_routes
-                        .into_par_iter()
-                        .filter_map(|mut route| {
-                            if let Some((tx, result)) = route.get_transaction() {
-                                let r = gas_lookup.read().unwrap();
-                                let mut gas_cost = U256::zero();
-                                for pool in &route.pools {
-                                    gas_cost +=
-                                        *r.get(&pool.address).unwrap_or(&U256::from(100000));
-                                }
-                                drop(r);
-                                Some(ArbPath {
-                                    path: route,
-                                    tx,
-                                    profit: U256::from(result.profit),
-                                    gas_cost,
-                                    block_number: event.block_number,
-                                    result,
-                                })
-                            } else {
-                                None
+                tokio::spawn(async move {
+                    let mut updated = vec![];
+                    for route in market_routes {
+                        if let Some((tx, result)) = route.get_transaction().await {
+                            let r = gas_lookup.read().unwrap();
+                            let mut gas_cost = U256::zero();
+                            for pool in &route.pools {
+                                gas_cost += *r.get(&pool.address).unwrap_or(&U256::from(100000));
                             }
-                        })
-                        .collect::<Vec<ArbPath>>();
-
+                            drop(r);
+                            updated.push(ArbPath {
+                                path: route,
+                                tx,
+                                profit: U256::from(result.profit),
+                                gas_cost,
+                                block_number: event.block_number,
+                                result,
+                            })
+                        }
+                    }
                     let mut w = single_routes.lock().unwrap();
                     w.send(updated).unwrap();
                 });

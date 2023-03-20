@@ -117,7 +117,7 @@ impl Meta for BalancerWeigtedMetadata {
 pub struct BalancerWeighted {
     pub metadata: BalancerWeigtedMetadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
-    pub update_pools: Arc<Vec<[Arc<std::sync::RwLock<Pool>>; 2]>>,
+    pub update_pools: Arc<Vec<[Arc<RwLock<Pool>>; 2]>>,
     subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
     pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>>,
     nodes: NodeDispatcher
@@ -153,7 +153,7 @@ impl LiquidityProvider for BalancerWeighted {
         let mut lock = self.pools.write().await;
         *lock = pools;
     }
-    fn set_update_pools(&mut self, pools: Vec<[Arc<std::sync::RwLock<Pool>>; 2]>)  {
+    fn set_update_pools(&mut self, pools: Vec<[Arc<RwLock<Pool>>; 2]>)  {
         self.update_pools = Arc::new(pools);
     }
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()> {
@@ -268,7 +268,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
 
                 for p in pools.iter() {
                     let pls = p.clone();
-                    let mut pl = pls[0].read().unwrap().clone();
+                    let mut pl = pls[0].read().await.clone();
 
                     let subscribers = subscribers.clone();
                     let subscribers = subscribers.read().unwrap();
@@ -305,7 +305,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
                                         continue
                                     }
                                     for p in pls.iter() {
-                                        let mut w = p.write().unwrap();
+                                        let mut w = p.write().await;
                                         w.x_amount = meta.tokens.first().unwrap().balance;
                                         w.y_amount = meta.tokens.last().unwrap().balance;
                                         w.provider = LiquidityProviders::BalancerWeighted(meta.clone());

@@ -101,7 +101,7 @@ pub async fn async_main() -> anyhow::Result<()> {
         kanal::bounded::<Vec<ArbPath>>(1000);
     let (pool_sender, mut pool_receiver) =
         kanal::bounded_async::<Pool>(10000);
-    let (used_pools_shot_tx, used_pools_shot_rx) = tokio::sync::oneshot::channel::<Vec<[Arc<std::sync::RwLock<Pool>>; 2]>>();
+    let (used_pools_shot_tx, used_pools_shot_rx) = tokio::sync::oneshot::channel::<Vec<[Arc<RwLock<Pool>>; 2]>>();
     let sync_config = SyncConfig {
         providers: PROVIDERS.clone(),
     };

@@ -28,6 +28,7 @@ ethers-providers = "2.0.0"
 ethers-flashbots = { git = "https://github.com/onbjerg/ethers-flashbots" }
 url = "2.3.1"
 backtrack = "0.3.0"
+futures = "0.3.27"
 itertools = "0.10.5"
 num-traits = "0.2.15"
 tracing = "0.1.37"
