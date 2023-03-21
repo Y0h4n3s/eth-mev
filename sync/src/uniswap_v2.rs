@@ -260,7 +260,8 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                     drop(subs);
                     let client = clnt.clone();
                     joins.push(tokio::runtime::Handle::current().spawn(async move {
-
+                        let mut first = true;
+                        
 
                         loop {
                             tokio::time::sleep(Duration::from_millis(POLL_INTERVAL)).await;
@@ -298,6 +299,10 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                             pl.x_amount = updated_meta.reserve0;
                             pl.y_amount = updated_meta.reserve1;
                             pl.provider = LiquidityProviders::UniswapV2(updated_meta.clone());
+                            if first {
+                                first = false;
+                                continue
+                            }
                             let event = PoolUpdateEvent {
                                 pool: pl.clone(),
                                 block_number: updated_meta.block_number,

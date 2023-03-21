@@ -756,9 +756,9 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                     let sub = subscribers.first().unwrap().clone();
                     drop(subscribers);
                     let client = clnt.clone();
-
                     joins.push(tokio::runtime::Handle::current().spawn(async move {
-
+                        let mut first = true;
+                        
                         loop {
                             tokio::time::sleep(Duration::from_millis(POLL_INTERVAL)).await;
 
@@ -796,6 +796,10 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                                     continue
                                 }
 
+                            }
+                            if first {
+                                first = false;
+                                continue
                             }
                             let event = PoolUpdateEvent {
                                 pool: pl.clone(),

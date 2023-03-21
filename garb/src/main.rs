@@ -56,7 +56,7 @@ use garb_graph_eth::single_arb::ArbPath;
 use garb_sync_eth::node_dispatcher::NodeDispatcher;
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
-    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2,3,5,6".to_string()))
+    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("3,5,6".to_string()))
         .split(",")
         .map(|i| LiquidityProviders::from(i))
         .collect()
@@ -104,6 +104,7 @@ pub async fn async_main() -> anyhow::Result<()> {
     let (used_pools_shot_tx, used_pools_shot_rx) = tokio::sync::oneshot::channel::<Vec<[Arc<RwLock<Pool>>; 2]>>();
     let sync_config = SyncConfig {
         providers: PROVIDERS.clone(),
+        from_file: true
     };
 
     let nodes = NodeDispatcher::from_file("nodes").await?;
@@ -114,7 +115,7 @@ pub async fn async_main() -> anyhow::Result<()> {
     let mut joins = vec![];
 
     let graph_conifg = GraphConfig {
-        from_file: false,
+        from_file: true,
         save_only: false,
     };
     let graph_routes = routes_sender.clone();
@@ -218,19 +219,21 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
             ));
         bundle_handlers.push(client)
     }
-    for i in 0..cores/2 {
+    for i in 0..cores*2 {
 
         // backruns
-        let routes = rts.clone();
         let node_url = nodes.next_free();
-        let handlers = bundle_handlers.clone();
+        let update_started = update_started.clone();
+
+
+        // single transaction
+        let routes = rt.clone();
 
         let nonce = n.clone();
         let block = b.clone();
-        let update_started = update_started.clone();
+        let bundle_handlers = bundle_handlers.clone();
         workers.push(std::thread::spawn(move || {
             let mut rt = Runtime::new().unwrap();
-            let bundle_handlers = handlers;
 
             rt.block_on(async move {
                 let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
@@ -238,7 +241,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                 let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
                 let provider = ethers_providers::Provider::<Ws>::connect(node_url).await.unwrap();
                 let client = Arc::new(
-                    SignerMiddleware::new_with_provider_chain(provider.clone(), signer.clone()).await.unwrap());
+                        SignerMiddleware::new_with_provider_chain(provider.clone(), signer.clone()).await.unwrap());
 
                 let mut join_handles = vec![];
 
@@ -277,104 +280,6 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                 }
                 drop(w);
 
-                let signer = Arc::new(signer);
-
-
-                let signer = Arc::new(signer);
-                while let Ok(opportunity) = routes.recv().await {
-                    let pair_tx = opportunity.pending_tx.clone();
-                    let order = opportunity.tx.clone();
-                    let path = opportunity.path.clone();
-                    let gas_cost = opportunity.gas_cost;
-
-
-                    let mut handles = vec![];
-                    for handler in &bundle_handlers {
-                        let order = order.clone();
-                        let pair_tx = pair_tx.clone();
-                        let nonce_num = nonce.clone();
-                        let block = block.clone();
-                        let signer = signer.clone();
-                        let client = client.clone();
-                        let mut handler = handler.clone();
-                        let op = opportunity.clone();
-                        handles.push(tokio::runtime::Handle::current().spawn(async move {
-                            let mut tx_request = order;
-                            tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
-                            tx_request.from = Some(signer_wallet_address);
-                            let n = *nonce_num.read().await;
-                            let blk = block.read().await;
-                            if blk.base_fee_per_gas.is_none() {
-                                return
-                            }
-                            let base_fee = calculate_next_block_base_fee(blk.clone()).unwrap();
-                            let max_fee = opportunity.profit / gas_cost;
-                            let balance = U256::from(50000000000000000 as u128);
-                            let max_possible_fee = balance / gas_cost;
-                            tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
-                            tx_request.gas = Some(gas_cost);
-                            tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
-                            let blk = blk.number.unwrap().as_u64();
-                            drop(n);
-                            drop(blk);
-
-                            // profit doesn't cover tx_fees
-                            if tx_request.max_fee_per_gas.unwrap() <= base_fee {
-                                // warn!("Skipping {}. ->  {} {} {:?} {:?} ",i+1,tx_request.gas.unwrap(), opportunity.block_number,blk, tx_request.max_fee_per_gas.unwrap());
-                                return
-                            }
-                            tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
-
-                            tx_request.value = None;
-
-
-                            let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
-                            let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
-                            let signed_tx = typed_tx.rlp_signed(&tx_sig);
-                            let mut bundle = vec![];
-                            bundle.push(pair_tx.rlp());
-                            bundle.push(signed_tx);
-                             warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
-
-                            let res = FlashBotsBundleHandler::simulate(bundle, &handler, blk, false).await;
-                            if let Some(res) = res {
-
-//                                for step in &op.result.steps {
-//                                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
-//                                }
-//                                info!("\n{} {}\n\n", tx_request.gas.unwrap(), op.result.ix_data);
-                                // info!("{} {}", res.transactions.last().unwrap().gas_used, tx_request.gas.unwrap());
-                            }
-                            // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
-
-
-
-                        }));
-                    }
-                    futures::future::join_all(handles).await;
-
-                }
-                for task in join_handles {
-                    task.await.unwrap();
-                }
-            });
-        }));
-
-        // single transaction
-        let routes = rt.clone();
-
-        let nonce = n.clone();
-        let block = b.clone();
-        let bundle_handlers = bundle_handlers.clone();
-        workers.push(std::thread::spawn(move || {
-            let mut rt = Runtime::new().unwrap();
-
-            rt.block_on(async move {
-                let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
-
-                let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
-
-
 
                 let signer_wallet_address = signer.address();
                 let nonce_update = nonce.clone();
@@ -397,6 +302,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                             let mut max_count = 3;
                             loop {
                                 if max_count == 0 {
+                                    
                                     break;
                                 }
                                 max_count -= 1;

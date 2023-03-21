@@ -5,6 +5,9 @@
 #![allow(unreachable_patterns)]
 #![allow(unused)]
 
+#[macro_use]
+extern crate serde_derive;
+extern crate rmp_serde as rmps;
 mod abi;
 mod events;
 pub mod types;
@@ -46,6 +49,9 @@ use tracing::info;
 use crate::node_dispatcher::NodeDispatcher;
 use crate::sushiswap::SushiSwapMetadata;
 use tokio::runtime::Runtime;
+use rmps::{Deserializer, Serializer};
+
+
 #[async_trait]
 pub trait LiquidityProvider: EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> + EventEmitter<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>> {
     type Metadata;
@@ -234,7 +240,7 @@ impl LiquidityProviders {
     }
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Hash, Eq, PartialEq)]
 pub enum Curve {
     Uncorrelated,
     Stable,
@@ -247,7 +253,9 @@ pub trait PoolInfo {
     fn supports_pre_payment(&self) -> bool;
 }
 
-#[derive(Debug, Clone, Eq)]
+
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq)]
 pub struct Pool {
     pub address: String,
     pub x_address: String,
@@ -713,6 +721,7 @@ pub trait Meta {}
 
 pub struct SyncConfig {
     pub providers: Vec<LiquidityProviders>,
+    pub from_file: bool
 }
 
 pub async fn start(
@@ -724,11 +733,14 @@ pub async fn start(
     config: SyncConfig,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
 
+
     let mut join_handles = vec![];
     let mut amms = vec![];
     for provider in config.providers {
         let mut amm = provider.build(nodes.clone());
-        join_handles.push(amm.load_pools(vec![]));
+        if !config.from_file {
+            join_handles.push(amm.load_pools(vec![]));
+        }
         amm.subscribe(updated_q.clone());
         amm.subscribe(pending_updated_q.clone());
         amms.push(amm);
