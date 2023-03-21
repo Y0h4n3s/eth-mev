@@ -56,7 +56,7 @@ use garb_graph_eth::single_arb::ArbPath;
 use garb_sync_eth::node_dispatcher::NodeDispatcher;
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
-    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2,3,4,5,6".to_string()))
+    std::env::var("ETH_PROVIDERS").unwrap_or_else(|_| std::env::args().nth(5).unwrap_or("1,2,3,5,6".to_string()))
         .split(",")
         .map(|i| LiquidityProviders::from(i))
         .collect()
@@ -395,72 +395,77 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                             let mut handles = vec![];
 
                             let mut max_count = 3;
-                            while let Some((order, result)) = opportunity.path.get_transaction().await {
+                            loop {
                                 if max_count == 0 {
                                     break;
                                 }
                                 max_count -= 1;
-                                let gas_cost = opportunity.gas_cost;
-                                for handler in &bundle_handlers {
-                                    let mut tx_request = order.clone();
-                                    let op = opportunity.clone();
-                                    let nonce_num = nonce.clone();
-                                    let block = block.clone();
-                                    let signer = signer.clone();
-                                    let mut handler = handler.clone();
 
-                                    handles.push(tokio::runtime::Handle::current().spawn(async move {
-                                        tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
-                                        tx_request.from = Some(signer_wallet_address);
-                                        let n = * nonce_num.read().await ;
-                                        let blk = block.read().await;
-                                        if blk.base_fee_per_gas.is_none() {
-                                            return
-                                        }
-                                        let max_fee = U256::from(result.profit) / gas_cost;
-                                        let balance = U256::from(50000000000000000 as u128);
-                                        let max_possible_fee = balance / gas_cost;
-                                        let base_fee = calculate_next_block_base_fee(blk.clone()).unwrap();
-                                        tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
-                                        tx_request.gas = Some(gas_cost);
-                                        tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
-                                        let blk = blk.number.unwrap().as_u64();
-                                        drop(n);
-                                        drop(blk);
+                                if let Some((order, result)) = opportunity.path.get_transaction().await {
+                                    let gas_cost = opportunity.gas_cost;
+                                    for handler in &bundle_handlers {
+                                        let mut tx_request = order.clone();
+                                        let op = opportunity.clone();
+                                        let nonce_num = nonce.clone();
+                                        let block = block.clone();
+                                        let signer = signer.clone();
+                                        let mut handler = handler.clone();
 
-                                        // profit doesn't cover tx_fees
-                                        if tx_request.max_fee_per_gas.unwrap() <= base_fee {
-                                            // warn!("Skipping {}. ->  {} {} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk,  tx_request.max_fee_per_gas.unwrap());
-                                            return
-                                        }
-                                        tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
+                                        handles.push(tokio::runtime::Handle::current().spawn(async move {
+                                            tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
+                                            tx_request.from = Some(signer_wallet_address);
+                                            let n = * nonce_num.read().await ;
+                                            let blk = block.read().await;
+                                            if blk.base_fee_per_gas.is_none() {
+                                                return
+                                            }
+                                            let max_fee = U256::from(result.profit) / gas_cost;
+                                            let balance = U256::from(50000000000000000 as u128);
+                                            let max_possible_fee = balance / gas_cost;
+                                            let base_fee = calculate_next_block_base_fee(blk.clone()).unwrap();
+                                            tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
+                                            tx_request.gas = Some(gas_cost);
+                                            tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
+                                            let blk = blk.number.unwrap().as_u64();
+                                            drop(n);
+                                            drop(blk);
 
-                                        tx_request.value = None;
+                                            // profit doesn't cover tx_fees
+                                            if tx_request.max_fee_per_gas.unwrap() <= base_fee {
+                                                // warn!("Skipping {}. ->  {} {} {:?} {:?}",i+1,tx_request.gas.unwrap(),opportunity.block_number, blk,  tx_request.max_fee_per_gas.unwrap());
+                                                return
+                                            }
+                                            tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
+
+                                            tx_request.value = None;
 
 
-                                        let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
-                                        let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
-                                        let signed_tx = typed_tx.rlp_signed(&tx_sig);
-                                        let mut bundle = vec![];
-                                        bundle.push(signed_tx);
-                                        warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
+                                            let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
+                                            let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
+                                            let signed_tx = typed_tx.rlp_signed(&tx_sig);
+                                            let mut bundle = vec![];
+                                            bundle.push(signed_tx);
+                                            warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-//                                        let res = FlashBotsBundleHandler::simulate(bundle, &handler, blk, true).await;
-//                                        if let Some(res) = res {
-//                                            if res.transactions.iter().all(|tx| tx.error.is_none()) {
-//                                                for step in &op.result.steps {
-//                                                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step.get_pool().await, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
-//                                                }
-//                                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
-//
-//                                            }
-//                                        }
-                                        FlashBotsBundleHandler::submit(bundle, handler, blk, blk+2).await;
+                                            //                                        let res = FlashBotsBundleHandler::simulate(bundle, &handler, blk, true).await;
+                                            //                                        if let Some(res) = res {
+                                            //                                            if res.transactions.iter().all(|tx| tx.error.is_none()) {
+                                            //                                                for step in &op.result.steps {
+                                            //                                                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step.get_pool().await, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+                                            //                                                }
+                                            //                                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
+                                            //
+                                            //                                            }
+                                            //                                        }
+                                            FlashBotsBundleHandler::submit(bundle, handler, blk, blk+2).await;
 
-                                    }));
+                                        }));
+                                    }
                                 }
                                 tokio::time::sleep(Duration::from_millis(1000)).await;
+                                
                             }
+
                             futures::future::join_all(handles).await;
 
                         }));
