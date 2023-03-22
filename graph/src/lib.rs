@@ -518,12 +518,10 @@ DETACH DELETE n",
             let mut saved = HashMap::<Pool, Vec<Vec<Pool>>>::new();
             for (pool, paths) in path_lookup1.read().await.clone() {
                 for path in paths {
-                    let mut re = path.pools.clone();
-                    re.reverse();
                     if let Some(mut exsisting) = saved.get_mut(&pool) {
-                        exsisting.push(re)
+                        exsisting.push(path.pools)
                     } else {
-                        let v = vec![re];
+                        let v = vec![path.pools];
                         saved.insert(pool.clone(), v);
                     }
                 }
@@ -670,6 +668,9 @@ DETACH DELETE n",
                 | LiquidityProviderId::SushiSwap
                 | LiquidityProviderId::Solidly
                 | LiquidityProviderId::CroSwap
+                | LiquidityProviderId::ShibaSwap
+                | LiquidityProviderId::SaitaSwap
+                | LiquidityProviderId::ConvergenceSwap
                 | LiquidityProviderId::Pancakeswap => {
                     ix_data = "0e000000".to_string()
                         + if pool.x_to_y { "01" } else { "00" }

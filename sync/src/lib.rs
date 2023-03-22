@@ -9,56 +9,58 @@
 extern crate serde_derive;
 extern crate rmp_serde as rmps;
 mod abi;
+pub mod balancer_weighted;
 mod events;
+pub mod node_dispatcher;
+pub mod sushiswap;
 pub mod types;
 pub mod uniswap_v2;
-pub mod balancer_weighted;
 pub mod uniswap_v3;
-pub mod sushiswap;
-pub mod node_dispatcher;
+use crate::balancer_weighted::BalancerWeigtedMetadata;
 use crate::events::EventEmitter;
 use crate::uniswap_v2::UniswapV2Metadata;
 use crate::uniswap_v3::UniswapV3Metadata;
-use crate::balancer_weighted::BalancerWeigtedMetadata;
+use anyhow::Error;
 use async_std::sync::Arc;
 use async_trait::async_trait;
+use bincode::error::IntegerType::U128;
 use bincode::{Decode, Encode};
 use coingecko::response::coins::CoinsMarketItem;
-use ethers::types::{H160, H256, I256, Transaction, U256};
+use ethers::types::{Transaction, H160, H256, I256, U256};
 use ethers_providers::{Provider, Ws};
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::hash::*;
 use std::str::FromStr;
 use std::time::Duration;
-use anyhow::Error;
-use bincode::error::IntegerType::U128;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use once_cell::sync::Lazy;
 pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
     std::env::var("ETH_CHECKED_COIN")
-          .unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
+        .unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
 });
 
 pub const POLL_INTERVAL: u64 = 60;
-use nom::FindSubstring;
-use num_bigfloat::{BigFloat, RoundingMode};
-use tracing::info;
 use crate::node_dispatcher::NodeDispatcher;
 use crate::sushiswap::SushiSwapMetadata;
-use tokio::runtime::Runtime;
+use nom::FindSubstring;
+use num_bigfloat::{BigFloat, RoundingMode};
 use rmps::{Deserializer, Serializer};
-
+use tokio::runtime::Runtime;
+use tracing::info;
 
 #[async_trait]
-pub trait LiquidityProvider: EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> + EventEmitter<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>> {
+pub trait LiquidityProvider:
+    EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>>
+    + EventEmitter<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>
+{
     type Metadata;
     fn get_metadata(&self) -> Self::Metadata;
     async fn get_pools(&self) -> HashMap<String, Pool>;
-    async fn set_pools(&self, pools:HashMap<String, Pool>);
-    fn set_update_pools(&mut self, pools:Vec<[Arc<RwLock<Pool>>; 2]>);
+    async fn set_pools(&self, pools: HashMap<String, Pool>);
+    fn set_update_pools(&mut self, pools: Vec<[Arc<RwLock<Pool>>; 2]>);
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()>;
     fn get_id(&self) -> LiquidityProviderId;
 }
@@ -72,10 +74,13 @@ pub enum LiquidityProviders {
     BalancerWeighted(BalancerWeigtedMetadata),
     Solidly(UniswapV2Metadata),
     Pancakeswap(UniswapV2Metadata),
-    CroSwap(UniswapV2Metadata)
+    CroSwap(UniswapV2Metadata),
+    ShibaSwap(UniswapV2Metadata),
+    SaitaSwap(UniswapV2Metadata),
+    ConvergenceSwap(UniswapV2Metadata),
 }
 
-#[derive(Deserialize, Serialize,Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
 pub enum LiquidityProviderId {
     UniswapV2,
     UniswapV3,
@@ -84,6 +89,9 @@ pub enum LiquidityProviderId {
     Solidly,
     Pancakeswap,
     CroSwap,
+    ShibaSwap,
+    SaitaSwap,
+    ConvergenceSwap,
 }
 
 impl<T: Into<String>> From<T> for LiquidityProviders {
@@ -99,41 +107,41 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
             "5" => LiquidityProviders::Solidly(Default::default()),
             "6" => LiquidityProviders::Pancakeswap(Default::default()),
             "7" => LiquidityProviders::CroSwap(Default::default()),
+            "8" => LiquidityProviders::ShibaSwap(Default::default()),
+            "9" => LiquidityProviders::SaitaSwap(Default::default()),
+            "10" => LiquidityProviders::ConvergenceSwap(Default::default()),
             val => match val.find_substring("UniswapV2") {
                 Some(v) => serde_json::from_str(val).unwrap(),
-                None => {
-                    match val.find_substring("UniswapV3") {
+                None => match val.find_substring("UniswapV3") {
+                    Some(v) => serde_json::from_str(val).unwrap(),
+                    None => match val.find_substring("SushiSwap") {
                         Some(v) => serde_json::from_str(val).unwrap(),
-                        None => {
-                            match val.find_substring("SushiSwap") {
+                        None => match val.find_substring("BalancerWeighted") {
+                            Some(v) => serde_json::from_str(val).unwrap(),
+                            None => match val.find_substring("Solidly") {
                                 Some(v) => serde_json::from_str(val).unwrap(),
-                                None => {
-                                    match val.find_substring("BalancerWeighted") {
-                                        Some(v) => {
-                                            serde_json::from_str(val).unwrap()
-                                        },
-                                        None => match val.find_substring("Solidly") {
-                                            Some(v) => {
-                                                serde_json::from_str(val).unwrap()
+                                None => match val.find_substring("Pancake") {
+                                    Some(v) => serde_json::from_str(val).unwrap(),
+                                    None => match val.find_substring("Cro") {
+                                        Some(v) => serde_json::from_str(val).unwrap(),
+                                        None => match val.find_substring("Shiba") {
+                                            Some(v) => serde_json::from_str(val).unwrap(),
+                                            None => match val.find_substring("Saita") {
+                                                Some(v) => serde_json::from_str(val).unwrap(),
+                                                None => match val.find_substring("Convergence") {
+                                                    Some(v) => serde_json::from_str(val).unwrap(),
+                                                    None => {
+                                                        panic!("Invalid Liquidity Provider {}", val)
+                                                    }
+                                                },
                                             },
-                                            None => match val.find_substring("Pancake") {
-                                                Some(v) => {
-                                                    serde_json::from_str(val).unwrap()
-                                                },
-                                                None => match val.find_substring("Cro") {
-                                                Some(v) => {
-                                                    serde_json::from_str(val).unwrap()
-                                                },
-                                                None => panic!("Invalid Liquidity Provider {}", val)
-                                                }
-                                            }
-                                        }
-                                    }
+                                        },
+                                    },
                                 },
-                            }
+                            },
                         },
-                    }
-                }
+                    },
+                },
             },
         }
     }
@@ -149,6 +157,9 @@ impl From<LiquidityProviders> for u8 {
             LiquidityProviders::Solidly(_) => 5,
             LiquidityProviders::Pancakeswap(_) => 6,
             LiquidityProviders::CroSwap(_) => 7,
+            LiquidityProviders::ShibaSwap(_) => 8,
+            LiquidityProviders::SaitaSwap(_) => 9,
+            LiquidityProviders::ConvergenceSwap(_) => 10,
         }
     }
 }
@@ -156,23 +167,24 @@ pub trait EventSource: Send {
     type Event: Send;
     fn get_event(&self) -> Self::Event;
 }
-pub type BoxedLiquidityProvider = Box<
-    dyn LiquidityProvider<Metadata = Box<dyn Meta>>
-        + Send + Sync,
->;
+pub type BoxedLiquidityProvider =
+    Box<dyn LiquidityProvider<Metadata = Box<dyn Meta>> + Send + Sync>;
 
 impl LiquidityProviders {
     pub fn build_calculator(&self) -> Box<dyn Calculator> {
         match self {
             LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::CroSwap(meta) => Box::new(CpmmCalculator::new()),
+            LiquidityProviders::ShibaSwap(meta) => Box::new(CpmmCalculator::new()),
+            LiquidityProviders::ConvergenceSwap(meta) => Box::new(CpmmCalculator::new()),
+            LiquidityProviders::SaitaSwap(meta) => Box::new(SolidlyCalculator::new()),
             LiquidityProviders::Solidly(meta) => Box::new(SolidlyCalculator::new()),
             LiquidityProviders::Pancakeswap(meta) => Box::new(PancakeCalculator::new()),
-            LiquidityProviders::UniswapV3(meta) => {
-                Box::new(UniswapV3Calculator::new(meta.clone()))
-            }
+            LiquidityProviders::UniswapV3(meta) => Box::new(UniswapV3Calculator::new(meta.clone())),
             LiquidityProviders::SushiSwap(meta) => Box::new(CpmmCalculator::new()),
-            LiquidityProviders::BalancerWeighted(meta) => Box::new(BalancerWeightedCalculator::new(meta.clone())),
+            LiquidityProviders::BalancerWeighted(meta) => {
+                Box::new(BalancerWeightedCalculator::new(meta.clone()))
+            }
 
             _ => panic!("Invalid liquidity provider"),
         }
@@ -184,28 +196,77 @@ impl LiquidityProviders {
                     factory_address: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f".to_string(),
                     ..meta.clone()
                 };
-                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers, LiquidityProviderId::UniswapV2))
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::UniswapV2,
+                ))
             }
-             LiquidityProviders::Solidly(meta) => {
+            LiquidityProviders::Solidly(meta) => {
                 let metadata = UniswapV2Metadata {
                     factory_address: "0x777de5Fe8117cAAA7B44f396E93a401Cf5c9D4d6".to_string(),
                     ..meta.clone()
                 };
-                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers, LiquidityProviderId::Solidly))
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::Solidly,
+                ))
             }
             LiquidityProviders::Pancakeswap(meta) => {
                 let metadata = UniswapV2Metadata {
                     factory_address: "0x1097053Fd2ea711dad45caCcc45EfF7548fCB362".to_string(),
                     ..meta.clone()
                 };
-                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers, LiquidityProviderId::Pancakeswap))
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::Pancakeswap,
+                ))
             }
             LiquidityProviders::CroSwap(meta) => {
                 let metadata = UniswapV2Metadata {
                     factory_address: "0x9DEB29c9a4c7A88a3C0257393b7f3335338D9A9D".to_string(),
                     ..meta.clone()
                 };
-                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers, LiquidityProviderId::Pancakeswap))
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::CroSwap,
+                ))
+            }
+            LiquidityProviders::ShibaSwap(meta) => {
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0x115934131916C8b277DD010Ee02de363c09d037c".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::ShibaSwap,
+                ))
+            }
+            LiquidityProviders::SaitaSwap(meta) => {
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0x35113a300ca0D7621374890ABFEAC30E88f214b1".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::SaitaSwap,
+                ))
+            }
+            LiquidityProviders::ConvergenceSwap(meta) => {
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0x4eef5746ED22A2fD368629C1852365bf5dcb79f1".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::ConvergenceSwap,
+                ))
             }
             LiquidityProviders::UniswapV3(meta) => {
                 let metadata = UniswapV3Metadata {
@@ -226,13 +287,16 @@ impl LiquidityProviders {
                     factory_address: "0x8E9aa87E45e92bad84D5F8DD1bff34Fb92637dE9".to_string(),
                     ..meta.clone()
                 };
-                Box::new(balancer_weighted::BalancerWeighted::new(metadata, node_providers))
+                Box::new(balancer_weighted::BalancerWeighted::new(
+                    metadata,
+                    node_providers,
+                ))
             }
             _ => panic!("Invalid liquidity provider"),
         }
     }
-    
-    pub fn id(&self) -> LiquidityProviderId{
+
+    pub fn id(&self) -> LiquidityProviderId {
         match self {
             LiquidityProviders::UniswapV2(_) => LiquidityProviderId::UniswapV2,
             LiquidityProviders::UniswapV3(_) => LiquidityProviderId::UniswapV3,
@@ -241,8 +305,9 @@ impl LiquidityProviders {
             LiquidityProviders::Solidly(_) => LiquidityProviderId::Solidly,
             LiquidityProviders::Pancakeswap(_) => LiquidityProviderId::Pancakeswap,
             LiquidityProviders::CroSwap(_) => LiquidityProviderId::CroSwap,
-
-            
+            LiquidityProviders::ShibaSwap(_) => LiquidityProviderId::ShibaSwap,
+            LiquidityProviders::SaitaSwap(_) => LiquidityProviderId::SaitaSwap,
+            LiquidityProviders::ConvergenceSwap(_) => LiquidityProviderId::ConvergenceSwap,
         }
     }
 
@@ -255,6 +320,9 @@ impl LiquidityProviders {
             LiquidityProviders::Solidly(meta) => meta.factory_address.clone(),
             LiquidityProviders::Pancakeswap(meta) => meta.factory_address.clone(),
             LiquidityProviders::CroSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::ShibaSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::SaitaSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::ConvergenceSwap(meta) => meta.factory_address.clone(),
         }
     }
 }
@@ -271,8 +339,6 @@ pub trait PoolInfo {
     fn supports_callback_payment(&self) -> bool;
     fn supports_pre_payment(&self) -> bool;
 }
-
-
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq)]
 pub struct Pool {
@@ -292,7 +358,7 @@ impl PoolInfo for Pool {
     fn getX(&self) -> String {
         self.x_address.clone()
     }
-    
+
     fn getY(&self) -> String {
         self.y_address.clone()
     }
@@ -301,11 +367,14 @@ impl PoolInfo for Pool {
         match self.provider.id() {
             LiquidityProviderId::UniswapV2 => true,
             LiquidityProviderId::CroSwap => true,
+            LiquidityProviderId::ShibaSwap => true,
+            LiquidityProviderId::SaitaSwap => true,
+            LiquidityProviderId::ConvergenceSwap => true,
             LiquidityProviderId::Solidly => true,
             LiquidityProviderId::Pancakeswap => true,
             LiquidityProviderId::UniswapV3 => true,
-            LiquidityProviderId::SushiSwap=> true,
-            LiquidityProviderId::BalancerWeighted=> false,
+            LiquidityProviderId::SushiSwap => true,
+            LiquidityProviderId::BalancerWeighted => false,
         }
     }
 
@@ -313,6 +382,9 @@ impl PoolInfo for Pool {
         match self.provider.id() {
             LiquidityProviderId::UniswapV2 => false,
             LiquidityProviderId::CroSwap => false,
+            LiquidityProviderId::SaitaSwap => false,
+            LiquidityProviderId::ShibaSwap => false,
+            LiquidityProviderId::ConvergenceSwap => false,
             LiquidityProviderId::Solidly => false,
             LiquidityProviderId::Pancakeswap => false,
             LiquidityProviderId::UniswapV3 => false,
@@ -344,19 +416,19 @@ impl EventSource for Pool {
     }
 }
 
-#[derive(Debug, Clone, PartialEq,Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PoolUpdateEvent {
     pub pool: Pool,
     pub block_number: u64,
-    pub timestamp: u128
+    pub timestamp: u128,
 }
 
-#[derive(Debug, Clone, PartialEq,Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingPoolUpdateEvent {
     pub pool: Pool,
     pub pending_tx: Transaction,
     pub timestamp: u128,
-    pub block_number: u64
+    pub block_number: u64,
 }
 
 impl EventSource for PoolUpdateEvent {
@@ -409,7 +481,7 @@ impl Calculator for CpmmCalculator {
         };
 
         if swap_source_amount.is_zero() || swap_destination_amount.is_zero() {
-            return Err(Error::msg("Insufficient Liquidity"))
+            return Err(Error::msg("Insufficient Liquidity"));
         }
         let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 30));
         let numerator = amount_in_with_fee
@@ -418,12 +490,12 @@ impl Calculator for CpmmCalculator {
         let denominator = ((swap_source_amount) * 10000) + amount_in_with_fee;
         let amount_out = numerator / denominator;
         if amount_out > swap_destination_amount {
-            return Err(Error::msg("Insufficient Liquidity"))
+            return Err(Error::msg("Insufficient Liquidity"));
         }
 
         Ok(amount_out)
     }
-    
+
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
             (pool.x_amount, pool.y_amount)
@@ -431,19 +503,19 @@ impl Calculator for CpmmCalculator {
             (pool.y_amount, pool.x_amount)
         };
 
-        if swap_source_amount.is_zero() || swap_destination_amount.is_zero() || out_ >= swap_destination_amount  {
-            return Err(Error::msg("Insufficient Liquidity"))
+        if swap_source_amount.is_zero()
+            || swap_destination_amount.is_zero()
+            || out_ >= swap_destination_amount
+        {
+            return Err(Error::msg("Insufficient Liquidity"));
         }
 
-
-        if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
+        if let Some(numerator) = swap_source_amount.checked_mul(out_ * 10000) {
             let denominator = (swap_destination_amount - out_) * U256::from((9970) as u128);
             Ok((numerator / denominator) + 1)
-
         } else {
             Err(Error::msg("Multiplication Overflow"))
         }
-
     }
 }
 
@@ -467,24 +539,21 @@ impl PancakeCalculator {
     }
 }
 pub struct UniswapV3Calculator {
-    meta: UniswapV3Metadata
+    meta: UniswapV3Metadata,
 }
 
 pub struct BalancerWeightedCalculator {
-    meta: BalancerWeigtedMetadata
+    meta: BalancerWeigtedMetadata,
 }
 
 impl BalancerWeightedCalculator {
     pub fn new(meta: BalancerWeigtedMetadata) -> Self {
-        Self {
-            meta
-        }
+        Self { meta }
     }
 
     // TODO
     pub fn mul_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
         (x * y).round(18, RoundingMode::Up)
-
     }
 
     pub fn mul_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
@@ -492,15 +561,13 @@ impl BalancerWeightedCalculator {
     }
 
     pub fn div_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-
-        (x/y).round(18, RoundingMode::Up)
+        (x / y).round(18, RoundingMode::Up)
     }
     pub fn div_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x/y).round(18, RoundingMode::Down)
+        (x / y).round(18, RoundingMode::Down)
     }
 
     pub fn pow_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-
         if y == BigFloat::from(1) {
             x
         } else if y == BigFloat::from(2) {
@@ -509,10 +576,8 @@ impl BalancerWeightedCalculator {
             let square = self.mul_up(x, x);
             self.mul_up(square, square)
         } else {
-             x.pow(&y)
+            x.pow(&y)
         }
-
-
     }
 }
 
@@ -525,7 +590,7 @@ impl Calculator for SolidlyCalculator {
         };
 
         if swap_source_amount.is_zero() || swap_destination_amount.is_zero() {
-            return Err(Error::msg("Insufficient Liquidity"))
+            return Err(Error::msg("Insufficient Liquidity"));
         }
         let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 20));
         let numerator = amount_in_with_fee
@@ -534,7 +599,7 @@ impl Calculator for SolidlyCalculator {
         let denominator = ((swap_source_amount) * 10000) + amount_in_with_fee;
         let amount_out = numerator / denominator;
         if amount_out > swap_destination_amount {
-            return Err(Error::msg("Insufficient Liquidity"))
+            return Err(Error::msg("Insufficient Liquidity"));
         }
 
         Ok(amount_out)
@@ -547,21 +612,21 @@ impl Calculator for SolidlyCalculator {
             (pool.y_amount, pool.x_amount)
         };
 
-        if swap_source_amount.is_zero() || swap_destination_amount.is_zero() || out_ >= swap_destination_amount {
-            return Err(Error::msg("Insufficient Liquidity"))
+        if swap_source_amount.is_zero()
+            || swap_destination_amount.is_zero()
+            || out_ >= swap_destination_amount
+        {
+            return Err(Error::msg("Insufficient Liquidity"));
         }
 
-        if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
+        if let Some(numerator) = swap_source_amount.checked_mul(out_ * 10000) {
             let denominator = (swap_destination_amount - out_) * U256::from((9980) as u128);
             Ok((numerator / denominator) + 1)
-
         } else {
             Err(Error::msg("Multiplication Overflow"))
         }
-
     }
 }
-
 
 impl Calculator for PancakeCalculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
@@ -572,7 +637,7 @@ impl Calculator for PancakeCalculator {
         };
 
         if swap_source_amount.is_zero() || swap_destination_amount.is_zero() {
-            return Err(Error::msg("Insufficient Liquidity"))
+            return Err(Error::msg("Insufficient Liquidity"));
         }
         let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 25));
         let numerator = amount_in_with_fee
@@ -581,7 +646,7 @@ impl Calculator for PancakeCalculator {
         let denominator = ((swap_source_amount) * 10000) + amount_in_with_fee;
         let amount_out = numerator / denominator;
         if amount_out > swap_destination_amount {
-            return Err(Error::msg("Insufficient Liquidity"))
+            return Err(Error::msg("Insufficient Liquidity"));
         }
 
         Ok(amount_out)
@@ -594,29 +659,27 @@ impl Calculator for PancakeCalculator {
             (pool.y_amount, pool.x_amount)
         };
 
-        if swap_source_amount.is_zero() || swap_destination_amount.is_zero()  || out_ >= swap_destination_amount {
-            return Err(Error::msg("Insufficient Liquidity"))
+        if swap_source_amount.is_zero()
+            || swap_destination_amount.is_zero()
+            || out_ >= swap_destination_amount
+        {
+            return Err(Error::msg("Insufficient Liquidity"));
         }
 
-        if let Some(numerator) = swap_source_amount.checked_mul( out_ * 10000) {
+        if let Some(numerator) = swap_source_amount.checked_mul(out_ * 10000) {
             let denominator = (swap_destination_amount - out_) * U256::from((9975) as u128);
             Ok((numerator / denominator) + 1)
-
         } else {
             Err(Error::msg("Multiplication Overflow"))
         }
-
     }
 }
-
 
 impl UniswapV3Calculator {
     pub const MAX_SQRT_RATIO: &str = "1461446703485210103287273052203988822378723970342";
     pub const MIN_SQRT_RATIO: &str = "4295128739";
     pub fn new(meta: UniswapV3Metadata) -> Self {
-        Self {
-            meta,
-        }
+        Self { meta }
     }
 }
 #[async_trait]
@@ -629,47 +692,49 @@ impl Calculator for UniswapV3Calculator {
         };
 
         if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) {
-            return Err(Error::msg("Insufficient Liquidity"))
+            return Err(Error::msg("Insufficient Liquidity"));
         }
         let amount_out = self.meta.simulate_swap(pool.x_to_y, in_, true)?;
         if amount_out > swap_destination_amount {
-            return Err(Error::msg("Insufficient Liquidity"))
+            return Err(Error::msg("Insufficient Liquidity"));
         }
-                Ok(amount_out)
-        }
-    
+        Ok(amount_out)
+    }
+
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
             (pool.x_amount, pool.y_amount)
         } else {
             (pool.y_amount, pool.x_amount)
         };
-        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) || out_ >= swap_destination_amount {
-            return Err(Error::msg("Insufficient Liquidity"))
+        if pool.y_amount == U256::from(0)
+            || pool.x_amount == U256::from(0)
+            || out_ >= swap_destination_amount
+        {
+            return Err(Error::msg("Insufficient Liquidity"));
         }
 
         let amount_in = self.meta.simulate_swap(pool.x_to_y, out_, false)?;
         Ok(amount_in)
-
     }
-    
-    
-    
-    
-    }
-
-
+}
 
 #[async_trait]
 impl Calculator for BalancerWeightedCalculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let (source_token, dest_token) = if pool.x_to_y {
-            (self.meta.tokens.first().unwrap(), self.meta.tokens.last().unwrap())
+            (
+                self.meta.tokens.first().unwrap(),
+                self.meta.tokens.last().unwrap(),
+            )
         } else {
-            (self.meta.tokens.last().unwrap(), self.meta.tokens.first().unwrap())
+            (
+                self.meta.tokens.last().unwrap(),
+                self.meta.tokens.first().unwrap(),
+            )
         };
         if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) {
-            return Err(Error::msg("Insufficient Liquidity"))
+            return Err(Error::msg("Insufficient Liquidity"));
         }
 
         let bo = BigFloat::from_str(&dest_token.balance.to_string()).unwrap();
@@ -678,43 +743,52 @@ impl Calculator for BalancerWeightedCalculator {
         let wo = BigFloat::from_str(&dest_token.weight.to_string()).unwrap();
         let wi = BigFloat::from_str(&source_token.weight.to_string()).unwrap();
 
-
         let denominator = bi + ai;
         let base = self.div_up(bi, denominator);
         let exponent = self.div_down(wi, wo);
-        let power = self.pow_up(base,exponent);
+        let power = self.pow_up(base, exponent);
         let amount_out = self.mul_down(bo, power.sub(&BigFloat::from(1)));
         let amount_out_with_fee = self.div_up(
             amount_out,
-            BigFloat::from(1).sub(&BigFloat::from_str(&self.meta.swap_fee.to_string()).unwrap().div(&BigFloat::from(10).pow(&BigFloat::from(18)))));
+            BigFloat::from(1).sub(
+                &BigFloat::from_str(&self.meta.swap_fee.to_string())
+                    .unwrap()
+                    .div(&BigFloat::from(10).pow(&BigFloat::from(18))),
+            ),
+        );
 
         if let Some(amount_out_uint) = amount_out_with_fee.to_u128() {
             Ok(U256::from(amount_out_uint))
-
         } else {
             Err(Error::msg("Casting Error"))
-
         }
     }
 
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
         let (source_token, dest_token) = if pool.x_to_y {
-            (self.meta.tokens.first().unwrap(), self.meta.tokens.last().unwrap())
+            (
+                self.meta.tokens.first().unwrap(),
+                self.meta.tokens.last().unwrap(),
+            )
         } else {
-            (self.meta.tokens.last().unwrap(), self.meta.tokens.first().unwrap())
+            (
+                self.meta.tokens.last().unwrap(),
+                self.meta.tokens.first().unwrap(),
+            )
         };
 
-        if pool.y_amount == U256::from(0) || pool.x_amount == U256::from(0) || out_ >= dest_token.balance {
-            return Err(Error::msg("Insufficient Liquidity"))
+        if pool.y_amount == U256::from(0)
+            || pool.x_amount == U256::from(0)
+            || out_ >= dest_token.balance
+        {
+            return Err(Error::msg("Insufficient Liquidity"));
         }
-
 
         let bo = BigFloat::from_str(&dest_token.balance.to_string()).unwrap();
         let bi = BigFloat::from_str(&source_token.balance.to_string()).unwrap();
         let ao = BigFloat::from_str(&out_.to_string()).unwrap();
         let wo = BigFloat::from_str(&dest_token.weight.to_string()).unwrap();
         let wi = BigFloat::from_str(&source_token.weight.to_string()).unwrap();
-
 
         let base = self.div_up(bo, bo.sub(&ao));
         let exponent = self.div_up(wo, wi);
@@ -723,26 +797,24 @@ impl Calculator for BalancerWeightedCalculator {
         let amount_in = self.mul_up(bi, power.sub(&BigFloat::from(1)));
         let amount_in_with_fee = self.div_up(
             amount_in,
-            BigFloat::from(1).sub(&BigFloat::from_str(&self.meta.swap_fee.to_string()).unwrap().div(&BigFloat::from(10).pow(&BigFloat::from(18)))));
+            BigFloat::from(1).sub(
+                &BigFloat::from_str(&self.meta.swap_fee.to_string())
+                    .unwrap()
+                    .div(&BigFloat::from(10).pow(&BigFloat::from(18))),
+            ),
+        );
         if let Some(amount_in_uint) = amount_in_with_fee.to_u128() {
             Ok(U256::from(amount_in_uint))
-
         } else {
             Err(Error::msg("Casting Error"))
-
         }
-
     }
-
-
-
-
 }
 pub trait Meta {}
 
 pub struct SyncConfig {
     pub providers: Vec<LiquidityProviders>,
-    pub from_file: bool
+    pub from_file: bool,
 }
 
 pub async fn start(
@@ -753,8 +825,6 @@ pub async fn start(
     nodes: NodeDispatcher,
     config: SyncConfig,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-
-
     let mut join_handles = vec![];
     let mut amms = vec![];
     for provider in config.providers {
@@ -767,8 +837,10 @@ pub async fn start(
         amms.push(amm);
     }
 
-    let filter_tokens: Vec<String> = serde_json::from_str(&std::fs::read_to_string("blacklisted_tokens.json").unwrap()).unwrap();
-    let filter_pools: Vec<String> = serde_json::from_str(&std::fs::read_to_string("blacklisted_pools.json").unwrap()).unwrap();
+    let filter_tokens: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string("blacklisted_tokens.json").unwrap()).unwrap();
+    let filter_pools: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string("blacklisted_pools.json").unwrap()).unwrap();
     // Make sure pools are loaded before starting the listener
     info!("Loading Pools... ");
     for handle in join_handles {
@@ -793,8 +865,6 @@ pub async fn start(
     *pools = loaded_pools;
     std::mem::drop(pools);
 
-
-
     Ok(tokio::spawn(async move {
         let rt = Runtime::new().unwrap();
 
@@ -813,14 +883,17 @@ pub async fn start(
                     my_update_pools.push(pools.clone());
                 }
             }
-                amm.set_update_pools(my_update_pools);
-                amm.set_pools(my_pools).await;
-                emitters.push(EventEmitter::<Box<dyn EventSource<Event=PoolUpdateEvent>>>::emit(&*amm));
-                emitters.push(EventEmitter::<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>::emit(&*amm));
-            }
-            for emitter in emitters {
-                emitter.join().unwrap();
-            }
+            amm.set_update_pools(my_update_pools);
+            amm.set_pools(my_pools).await;
+            emitters
+                .push(EventEmitter::<Box<dyn EventSource<Event = PoolUpdateEvent>>>::emit(&*amm));
+            emitters.push(EventEmitter::<
+                Box<dyn EventSource<Event = PendingPoolUpdateEvent>>,
+            >::emit(&*amm));
+        }
+        for emitter in emitters {
+            emitter.join().unwrap();
+        }
     }))
 }
 
@@ -850,8 +923,26 @@ mod tests {
                 .await
                 .unwrap(),
         );
-        let x_y = abi::uniswap_v3::get_uniswap_v3_tick_data_batch_request(&meta, meta.tick, true, 160, None, eth_client.clone()).await.unwrap();
-        let y_x = abi::uniswap_v3::get_uniswap_v3_tick_data_batch_request(&meta, meta.tick, false, 160, None, eth_client.clone()).await.unwrap();
+        let x_y = abi::uniswap_v3::get_uniswap_v3_tick_data_batch_request(
+            &meta,
+            meta.tick,
+            true,
+            160,
+            None,
+            eth_client.clone(),
+        )
+        .await
+        .unwrap();
+        let y_x = abi::uniswap_v3::get_uniswap_v3_tick_data_batch_request(
+            &meta,
+            meta.tick,
+            false,
+            160,
+            None,
+            eth_client.clone(),
+        )
+        .await
+        .unwrap();
         meta.tick_bitmap_x_y = x_y;
         meta.tick_bitmap_y_x = y_x;
         let pool = Pool {
@@ -864,18 +955,15 @@ mod tests {
             x_amount: 0,
             y_amount: 0,
             x_to_y: true,
-            provider: LiquidityProviders::UniswapV3(meta.clone())
+            provider: LiquidityProviders::UniswapV3(meta.clone()),
         };
-    
-
 
         let calculator = pool.provider.build_calculator();
-        
-        let out_ = calculator.calculate_out(U256::from(10_u128.pow(8)) , &pool).unwrap();
-        let in_ = calculator.calculate_in(out_ , &pool).unwrap();
-        println!("{} {}", in_, out_);
 
+        let out_ = calculator
+            .calculate_out(U256::from(10_u128.pow(8)), &pool)
+            .unwrap();
+        let in_ = calculator.calculate_in(out_, &pool).unwrap();
+        println!("{} {}", in_, out_);
     }
-    
-    
 }

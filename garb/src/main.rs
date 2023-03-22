@@ -191,14 +191,17 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
          "https://builder0x69.io/".to_string(),
          "https://rpc.beaverbuild.org/".to_string(),
          "https://rsync-builder.xyz/".to_string(),
-//         "https://api.blocknative.com/v1/auction".to_string(),
-//         "https://api.edennetwork.io/v1/bundle".to_string(),
+         "https://relay.ultrasound.money/".to_string(),
+         "https://agnostic-relay.net/".to_string(),
+         "https://relayooor.wtf/".to_string(),
+         "https://api.blocknative.com/v1/auction".to_string(),
+         "https://api.edennetwork.io/v1/bundle".to_string(),
          "https://eth-builder.com".to_string(),
-//         "https://rpc.lightspeedbuilder.info/".to_string(),
-//        "https://api.securerpc.com/v1".to_string(),
+         "https://rpc.lightspeedbuilder.info/".to_string(),
+        "https://api.securerpc.com/v1".to_string(),
          "https://BuildAI.net".to_string(),
-//         "https://rpc.payload.de".to_string(),
-//         "https://rpc.nfactorial.xyz/".to_string()
+         "https://rpc.payload.de".to_string(),
+         "https://rpc.nfactorial.xyz/".to_string()
     ];
     let mut bundle_handlers = vec![];
     let node_url = nodes.next_free();
