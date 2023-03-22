@@ -266,6 +266,10 @@ impl MevPath {
                         } else {
                             (pool.x_address.clone(), pool.y_address.clone())
                         };
+                        if index == 0 && asset_token != self.input_token {
+                            return Err(anyhow::Error::msg("Invalid Path"));
+
+                        }
 
                         trace!("Recipient: {} Asset_Token: {} Debt_Token: {} ", asset_reciever, asset_token, debt_token);
 

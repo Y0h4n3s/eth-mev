@@ -42,7 +42,7 @@ pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
           .unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
 });
 
-pub const POLL_INTERVAL: u64 = 600;
+pub const POLL_INTERVAL: u64 = 50;
 use nom::FindSubstring;
 use num_bigfloat::{BigFloat, RoundingMode};
 use tracing::info;
@@ -756,8 +756,7 @@ pub async fn start(
     let mut loaded_pools = HashMap::new();
     for amm in &amms {
         let pools = amm.get_pools().await;
-        let keys: Vec<String> = pools.keys().cloned().collect();
-        std::fs::write(format!("{:?}", amm.get_id()), keys.join("\n")).expect("");
+
         for (addr, pool) in pools {
             if filter_tokens.contains(&pool.x_address) || filter_tokens.contains(&pool.y_address) {
                 continue;
@@ -784,6 +783,8 @@ pub async fn start(
         for mut amm in amms {
             let mut my_update_pools = vec![];
             let mut my_pools = HashMap::new();
+            let keys: Vec<String> = my_pools.keys().cloned().collect();
+            std::fs::write(format!("{:?}", amm.get_id()), keys.join("\n")).expect("");
             for pools in &used_pools {
                 let pool = pools[0].read().await;
                 if pool.provider.id() == amm.get_id() {

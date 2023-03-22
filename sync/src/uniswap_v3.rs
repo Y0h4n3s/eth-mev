@@ -5,21 +5,29 @@
 #![allow(unreachable_patterns)]
 #![allow(unused)]
 
-use crate::abi::{uniswap_v3::SwapFilter,IERC20};
+use crate::abi::uniswap_v3::{
+    get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3Pool,
+    UniswapV3TickData,
+};
+use crate::abi::{uniswap_v3::SwapFilter, IERC20};
+use crate::node_dispatcher::NodeDispatcher;
 use crate::types::UniSwapV3Pool;
 use crate::types::UniSwapV3Token;
-use crate::{LiquidityProviderId, Meta, PoolUpdateEvent, UniswapV3Calculator};
-use crate::{Curve, LiquidityProvider, LiquidityProviders};
 use crate::PendingPoolUpdateEvent;
+use crate::POLL_INTERVAL;
+use crate::{Curve, LiquidityProvider, LiquidityProviders};
 use crate::{EventEmitter, EventSource, Pool};
+use crate::{LiquidityProviderId, Meta, PoolUpdateEvent, UniswapV3Calculator};
 use async_std::sync::Arc;
 use async_trait::async_trait;
-use ethers::abi::AbiDecode;
 use bincode::{Decode, Encode};
 use coingecko::response::coins::CoinsMarketItem;
+use ethers::abi::AbiDecode;
 use ethers::abi::{AbiEncode, Address, Uint};
 use ethers::abi::{ParamType, Token};
-use ethers::providers::{Http, Middleware, Provider,StreamExt};
+use ethers::core::k256::elliptic_curve::consts::{U2, U25};
+use ethers::core::utils::ParseUnits;
+use ethers::providers::{Http, Middleware, Provider, StreamExt};
 use ethers::types::BlockNumber;
 use ethers::types::ValueOrArray;
 use ethers::types::{H160, H256, U256, U64};
@@ -31,22 +39,17 @@ use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
-use ethers::core::utils::ParseUnits;
 use std::collections::VecDeque;
 use std::error::Error;
 use std::ops::{Add, Div};
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use ethers::core::k256::elliptic_curve::consts::{U2, U25};
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
+use tracing::{debug, error, info, trace};
 use uniswap_v3_math::sqrt_price_math::FIXED_POINT_96_RESOLUTION;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
-use tracing::{info, debug, trace, error};
-use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3Pool, UniswapV3TickData};
-use crate::node_dispatcher::NodeDispatcher;
-use crate::POLL_INTERVAL;
 const TVL_FILTER_LEVEL: i32 = 0;
 // Todo: add word in here to update and remove middleware use in simulate_swap
 #[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
@@ -137,12 +140,13 @@ impl UniswapV3Metadata {
     // @returns { f64 } token_b_amount (swap through 1 token_a)
     //
     pub fn calculate_price(&self, base_token: String) -> f64 {
-        let sqrt_price =self.sqrt_price;
-    
+        let sqrt_price = self.sqrt_price;
+
         let price = if self.token_b_decimals > self.token_a_decimals {
             BigFloat::from_str(
                 &(U256::from(sqrt_price.overflowing_mul(sqrt_price).0) >> 128).to_string(),
-            ).unwrap()
+            )
+            .unwrap()
             .div(&BigFloat::from(2_u128.pow(64)))
             .div(&BigFloat::from(
                 10_u64.pow((self.token_b_decimals as i8 - self.token_a_decimals as i8) as u32),
@@ -150,7 +154,8 @@ impl UniswapV3Metadata {
         } else {
             BigFloat::from_str(
                 &(U256::from(sqrt_price.overflowing_mul(sqrt_price).0) >> 128).to_string(),
-            ).unwrap()
+            )
+            .unwrap()
             .div(&BigFloat::from(2_u128.pow(64)))
             .mul(&BigFloat::from(
                 10_u64.pow((self.token_a_decimals as i8 - self.token_b_decimals as i8) as u32),
@@ -162,7 +167,7 @@ impl UniswapV3Metadata {
             1.0 / price.to_f64()
         }
     }
-    
+
     pub fn calculate_compressed(&self, tick: i32) -> i32 {
         if tick < 0 && tick % self.tick_spacing != 0 {
             (tick / self.tick_spacing) - 1
@@ -170,11 +175,11 @@ impl UniswapV3Metadata {
             tick / self.tick_spacing
         }
     }
-    
+
     pub fn calculate_word_pos_bit_pos(&self, compressed: i32) -> (i16, u8) {
         uniswap_v3_math::tick_bit_map::position(compressed)
     }
-    
+
     pub async fn get_word(
         &self,
         word_pos: i16,
@@ -183,34 +188,38 @@ impl UniswapV3Metadata {
     ) -> anyhow::Result<U256> {
         if block_number.is_some() {
             //TODO: in the future, create a batch call to get this and liquidity net within the same call
-            Ok(
-                crate::abi::uniswap_v3::UniswapV3Pool::new(H160::from_str(&self.address)?, middleware.clone())
-                      .tick_bitmap(word_pos)
-                      .block(block_number.unwrap())
-                      .call()
-                      .await?,
+            Ok(crate::abi::uniswap_v3::UniswapV3Pool::new(
+                H160::from_str(&self.address)?,
+                middleware.clone(),
             )
+            .tick_bitmap(word_pos)
+            .block(block_number.unwrap())
+            .call()
+            .await?)
         } else {
             //TODO: in the future, create a batch call to get this and liquidity net within the same call
-            Ok(
-                crate::abi::uniswap_v3::UniswapV3Pool::new(H160::from_str(&self.address)?, middleware.clone())
-                      .tick_bitmap(word_pos)
-                      .call()
-                      .await?,
+            Ok(crate::abi::uniswap_v3::UniswapV3Pool::new(
+                H160::from_str(&self.address)?,
+                middleware.clone(),
             )
+            .tick_bitmap(word_pos)
+            .call()
+            .await?)
         }
     }
-    
+
     pub async fn get_tick_info(
         &self,
         tick: i32,
         middleware: Arc<Provider<Ws>>,
     ) -> anyhow::Result<(u128, i128, U256, U256, i64, U256, u32, bool)> {
-        let v3_pool =
-              crate::abi::uniswap_v3::UniswapV3Pool::new(H160::from_str(&self.address)?, middleware.clone());
-        
+        let v3_pool = crate::abi::uniswap_v3::UniswapV3Pool::new(
+            H160::from_str(&self.address)?,
+            middleware.clone(),
+        );
+
         let tick_info = v3_pool.ticks(tick).call().await?;
-        
+
         Ok((
             tick_info.0,
             tick_info.1,
@@ -222,7 +231,7 @@ impl UniswapV3Metadata {
             tick_info.7,
         ))
     }
-    
+
     pub async fn get_liquidity_net(
         &self,
         tick: i32,
@@ -231,12 +240,12 @@ impl UniswapV3Metadata {
         let tick_info = self.get_tick_info(tick, middleware).await?;
         Ok(tick_info.1)
     }
-    
+
     pub fn simulate_swap(
         &self,
         zero_for_one: bool,
         amount_in: U256,
-        exact_in: bool
+        exact_in: bool,
     ) -> anyhow::Result<U256> {
         if amount_in.is_zero() {
             return Ok(U256::zero());
@@ -247,10 +256,6 @@ impl UniswapV3Metadata {
         if !exact_in {
             amount_in = -amount_in;
         }
-
-
-
-
 
         //TODO: make this a queue instead of vec and then an iterator FIXME::
         let mut tick_data = if zero_for_one {
@@ -270,11 +275,11 @@ impl UniswapV3Metadata {
 
         //Initialize a mutable state state struct to hold the dynamic simulated state of the pool
         let mut current_state = CurrentState {
-            sqrt_price_x_96: self.sqrt_price, //Active price on the pool
-            amount_calculated: I256::zero(),  //Amount of token_out that has been calculated
+            sqrt_price_x_96: self.sqrt_price,      //Active price on the pool
+            amount_calculated: I256::zero(),       //Amount of token_out that has been calculated
             amount_specified_remaining: amount_in, //Amount of token_in that has not been swapped
-            tick: self.tick,                                       //Current i24 tick of the pool
-            liquidity: self.liquidity, //Current available liquidity in the tick range
+            tick: self.tick,                       //Current i24 tick of the pool
+            liquidity: self.liquidity,             //Current available liquidity in the tick range
         };
 
         while current_state.amount_specified_remaining != I256::zero()
@@ -289,14 +294,13 @@ impl UniswapV3Metadata {
             let next_tick_data = if let Some(tick_data) = tick_data_iter.next() {
                 tick_data
             } else {
-
-                    //This should never happen, but if it does, we should return an error because something is wrong
-                    return Err(anyhow::Error::msg("UniswapV3Calculator: Out of tick liquidity"));
-
+                //This should never happen, but if it does, we should return an error because something is wrong
+                return Err(anyhow::Error::msg(
+                    "UniswapV3Calculator: Out of tick liquidity",
+                ));
             };
 
             step.tick_next = next_tick_data.tick;
-
 
             //Get the next sqrt price from the input amount
             step.sqrt_price_next_x96 =
@@ -340,9 +344,10 @@ impl UniswapV3Metadata {
             } else {
                 current_state.amount_specified_remaining += I256::from_raw(step.amount_out);
                 current_state.amount_calculated = current_state
-                    .amount_calculated.overflowing_add(I256::from_raw(
-                    step.amount_in.overflowing_add(step.fee_amount).0,
-                ))
+                    .amount_calculated
+                    .overflowing_add(I256::from_raw(
+                        step.amount_in.overflowing_add(step.fee_amount).0,
+                    ))
                     .0;
             }
 
@@ -357,7 +362,10 @@ impl UniswapV3Metadata {
                     }
 
                     current_state.liquidity = if liquidity_net < I256::zero() {
-                        current_state.liquidity.checked_sub((-liquidity_net).into_raw()).unwrap_or(U256::from(0))
+                        current_state
+                            .liquidity
+                            .checked_sub((-liquidity_net).into_raw())
+                            .unwrap_or(U256::from(0))
                     } else {
                         current_state.liquidity + (liquidity_net.into_raw())
                     };
@@ -387,12 +395,11 @@ impl UniswapV3Metadata {
         Ok(amount)
     }
 
-
     pub fn simulate_swap_mut(
         &mut self,
         zero_for_one: bool,
         amount_in: U256,
-        exact_in: bool
+        exact_in: bool,
     ) -> anyhow::Result<U256> {
         if amount_in.is_zero() {
             return Ok(U256::zero());
@@ -422,11 +429,11 @@ impl UniswapV3Metadata {
 
         //Initialize a mutable state state struct to hold the dynamic simulated state of the pool
         let mut current_state = CurrentState {
-            sqrt_price_x_96: self.sqrt_price, //Active price on the pool
-            amount_calculated: I256::zero(),  //Amount of token_out that has been calculated
+            sqrt_price_x_96: self.sqrt_price,      //Active price on the pool
+            amount_calculated: I256::zero(),       //Amount of token_out that has been calculated
             amount_specified_remaining: amount_in, //Amount of token_in that has not been swapped
-            tick: self.tick,                                       //Current i24 tick of the pool
-            liquidity: self.liquidity, //Current available liquidity in the tick range
+            tick: self.tick,                       //Current i24 tick of the pool
+            liquidity: self.liquidity,             //Current available liquidity in the tick range
         };
         let mut liquidity_net = self.liquidity_net;
         while current_state.amount_specified_remaining != I256::zero()
@@ -441,14 +448,13 @@ impl UniswapV3Metadata {
             let next_tick_data = if let Some(tick_data) = tick_data_iter.next() {
                 tick_data
             } else {
-
                 //This should never happen, but if it does, we should return an error because something is wrong
-                return Err(anyhow::Error::msg("UniswapV3Calculator: Out of tick liquidity"));
-
+                return Err(anyhow::Error::msg(
+                    "UniswapV3Calculator: Out of tick liquidity",
+                ));
             };
 
             step.tick_next = next_tick_data.tick;
-
 
             //Get the next sqrt price from the input amount
             step.sqrt_price_next_x96 =
@@ -492,16 +498,17 @@ impl UniswapV3Metadata {
             } else {
                 current_state.amount_specified_remaining += I256::from_raw(step.amount_out);
                 current_state.amount_calculated = current_state
-                    .amount_calculated.overflowing_add(I256::from_raw(
-                    step.amount_in.overflowing_add(step.fee_amount).0,
-                ))
+                    .amount_calculated
+                    .overflowing_add(I256::from_raw(
+                        step.amount_in.overflowing_add(step.fee_amount).0,
+                    ))
                     .0;
             }
 
             //If the price moved all the way to the next price, recompute the liquidity change for the next iteration
             if current_state.sqrt_price_x_96 == step.sqrt_price_next_x96 {
                 if next_tick_data.initialized {
-                     liquidity_net = next_tick_data.liquidity_net;
+                    liquidity_net = next_tick_data.liquidity_net;
 
                     // we are on a tick boundary, and the next tick is initialized, so we must charge a protocol fee
                     if zero_for_one {
@@ -509,7 +516,10 @@ impl UniswapV3Metadata {
                     }
 
                     current_state.liquidity = if liquidity_net < I256::zero() {
-                        current_state.liquidity.checked_sub((-liquidity_net).into_raw()).unwrap_or(U256::from(0))
+                        current_state
+                            .liquidity
+                            .checked_sub((-liquidity_net).into_raw())
+                            .unwrap_or(U256::from(0))
                     } else {
                         current_state.liquidity + (liquidity_net.into_raw())
                     };
@@ -554,9 +564,12 @@ pub struct UniSwapV3 {
     pub metadata: UniswapV3Metadata,
     pub pools: Arc<RwLock<HashMap<String, Pool>>>,
     pub update_pools: Arc<Vec<[Arc<RwLock<Pool>>; 2]>>,
-    subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
-    pending_subscribers: Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>>,
-    nodes: NodeDispatcher
+    subscribers:
+        Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>,
+    pending_subscribers: Arc<
+        std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>,
+    >,
+    nodes: NodeDispatcher,
 }
 
 impl UniSwapV3 {
@@ -567,11 +580,10 @@ impl UniSwapV3 {
             update_pools: Arc::new(Vec::new()),
             subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
             pending_subscribers: Arc::new(std::sync::RwLock::new(Vec::new())),
-            nodes
+            nodes,
         }
     }
 }
-
 
 #[async_trait]
 impl LiquidityProvider for UniSwapV3 {
@@ -583,11 +595,11 @@ impl LiquidityProvider for UniSwapV3 {
         let lock = self.pools.read().await;
         lock.clone()
     }
-    async fn set_pools(&self, pools: HashMap<String, Pool>)  {
+    async fn set_pools(&self, pools: HashMap<String, Pool>) {
         let mut lock = self.pools.write().await;
         *lock = pools;
     }
-    fn set_update_pools(&mut self, pools: Vec<[Arc<RwLock<Pool>>; 2]>)  {
+    fn set_update_pools(&mut self, pools: Vec<[Arc<RwLock<Pool>>; 2]>) {
         self.update_pools = Arc::new(pools);
     }
     fn load_pools(&self, filter_tokens: Vec<String>) -> JoinHandle<()> {
@@ -597,18 +609,14 @@ impl LiquidityProvider for UniSwapV3 {
         let node_url = self.nodes.next_free();
         tokio::spawn(async move {
             let client = reqwest::Client::new();
-            let eth_client = Arc::new(
-                Provider::<Ws>::connect(&node_url)
-                    .await
-                    .unwrap(),
-            );
+            let eth_client = Arc::new(Provider::<Ws>::connect(&node_url).await.unwrap());
             let current_block = eth_client.get_block_number().await.unwrap().0[0];
 
             let step = 100000_u64;
             let mut handles = vec![];
 
             let cores = num_cpus::get();
-            let permits = Arc::new(Semaphore::new(cores*2));
+            let permits = Arc::new(Semaphore::new(cores * 2));
             let mut indices: Arc<Mutex<VecDeque<(u64, u64)>>> =
                 Arc::new(Mutex::new(VecDeque::new()));
 
@@ -646,9 +654,12 @@ impl LiquidityProvider for UniSwapV3 {
                             for chunk in logs
                                 .iter()
                                 .filter_map(|log| {
-
-                                    let token_a = hex_to_address_string(log.topics.get(1).unwrap().encode_hex());
-                                    let token_b = hex_to_address_string(log.topics.get(2).unwrap().encode_hex());
+                                    let token_a = hex_to_address_string(
+                                        log.topics.get(1).unwrap().encode_hex(),
+                                    );
+                                    let token_b = hex_to_address_string(
+                                        log.topics.get(2).unwrap().encode_hex(),
+                                    );
                                     let tokens = ethers::abi::decode(
                                         &[ParamType::Uint(32), ParamType::Address],
                                         &log.data,
@@ -670,11 +681,16 @@ impl LiquidityProvider for UniSwapV3 {
                                     )
                                     .await;
                                 if let Ok(mut pairs_data) = pairs_data {
-
                                     for meta in pairs_data {
-                                        let min_0 = U256::from(10).pow(U256::from(meta.token_a_decimals as i32 + TVL_FILTER_LEVEL));
-                                        let min_1 = U256::from(10).pow(U256::from(meta.token_b_decimals as i32 + TVL_FILTER_LEVEL));
-                                        if meta.token_a_amount.lt(&min_0) || meta.token_b_amount.lt(&min_1)  {
+                                        let min_0 = U256::from(10).pow(U256::from(
+                                            meta.token_a_decimals as i32 + TVL_FILTER_LEVEL,
+                                        ));
+                                        let min_1 = U256::from(10).pow(U256::from(
+                                            meta.token_b_decimals as i32 + TVL_FILTER_LEVEL,
+                                        ));
+                                        if meta.token_a_amount.lt(&min_0)
+                                            || meta.token_b_amount.lt(&min_1)
+                                        {
                                             continue;
                                         }
                                         let pool = Pool {
@@ -698,7 +714,6 @@ impl LiquidityProvider for UniSwapV3 {
                                 }
                             }
                         } else {
-
                         }
                         drop(permit);
                     }));
@@ -707,7 +722,6 @@ impl LiquidityProvider for UniSwapV3 {
             for handle in handles {
                 handle.await;
             }
-
 
             info!(
                 "{:?} Pools: {}",
@@ -724,7 +738,10 @@ fn hex_to_address_string(hex: String) -> String {
     ("0x".to_string() + hex.split_at(26).1).to_string()
 }
 impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
-    fn get_subscribers(&self) -> Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>> {
+    fn get_subscribers(
+        &self,
+    ) -> Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PoolUpdateEvent>>>>>>
+    {
         self.subscribers.clone()
     }
     fn emit(&self) -> std::thread::JoinHandle<()> {
@@ -738,45 +755,48 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
             rt.block_on(async move {
                 let mut joins = vec![];
 
-                let mut provider = Provider::<Ws>::connect(&node_url)
+                let mut provider = Provider::<Ws>::connect("ws://91.205.173.242:8546")
                     .await
                     .unwrap();
                 provider.set_interval(Duration::from_millis(POLL_INTERVAL));
-                let clnt = Arc::new(
-                        provider
-                );
+                let clnt = Arc::new(provider);
                 let latest_block = clnt.get_block_number().await.unwrap();
 
                 for p in pools.iter() {
                     let pls = p.clone();
-                    let mut pl = pls[0].read().await.clone();
+                    let mut pl = Arc::new(RwLock::new(pls[0].read().await.clone()));
 
                     let subscribers = subscribers.clone();
                     let subscribers = subscribers.read().unwrap();
-                    let sub = subscribers.first().unwrap().clone();
+                    let subs = subscribers.first().unwrap().clone();
                     drop(subscribers);
                     let client = clnt.clone();
+                    let pool = pl.clone();
+                    let sub = subs.clone();
                     joins.push(tokio::runtime::Handle::current().spawn(async move {
                         let mut first = true;
-                        
-                        loop {
-                            tokio::time::sleep(Duration::from_millis(POLL_INTERVAL)).await;
 
+                        loop {
+                            let r = pool.read().await;
+                            let pl = r.clone();
+                            drop(r);
                             let mut block = 0;
                             if let Some(mut pool_meta) = match pl.clone().provider {
                                 LiquidityProviders::UniswapV3(pool_meta) => Some(pool_meta),
-                                _ => None
+                                _ => None,
                             } {
-                                if let Ok(metas) = get_complete_pool_data_batch_request(vec![H160::from_str(&pool_meta.address).unwrap()], &client)
-                                    .await {
-                                    let mut updated_meta = metas
-                                        .first()
-                                        .unwrap()
-                                        .to_owned();
-                                    if updated_meta.token_a_amount == pool_meta.token_a_amount &&
-                                        updated_meta.token_b_amount == pool_meta.token_b_amount &&
-                                        updated_meta.sqrt_price == pool_meta.sqrt_price {
-                                        continue
+                                if let Ok(metas) = get_complete_pool_data_batch_request(
+                                    vec![H160::from_str(&pool_meta.address).unwrap()],
+                                    &client,
+                                )
+                                .await
+                                {
+                                    let mut updated_meta = metas.first().unwrap().to_owned();
+                                    if updated_meta.token_a_amount == pool_meta.token_a_amount
+                                        && updated_meta.token_b_amount == pool_meta.token_b_amount
+                                        && updated_meta.sqrt_price == pool_meta.sqrt_price
+                                    {
+                                        continue;
                                     }
                                     updated_meta.factory_address = pool_meta.factory_address;
                                     block = updated_meta.block_number;
@@ -784,31 +804,117 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                                         let mut w = p.write().await;
                                         w.x_amount = updated_meta.token_a_amount;
                                         w.y_amount = updated_meta.token_b_amount;
-                                        w.provider = LiquidityProviders::UniswapV3(updated_meta.clone());
+                                        w.provider =
+                                            LiquidityProviders::UniswapV3(updated_meta.clone());
                                     }
+                                    let mut pl = pool.write().await;
                                     pl.x_amount = updated_meta.token_a_amount;
                                     pl.y_amount = updated_meta.token_b_amount;
 
                                     pl.provider = LiquidityProviders::UniswapV3(updated_meta);
+                                    if first {
+                                        first = false;
+                                        continue;
+                                    }
+                                    let event = PoolUpdateEvent {
+                                        pool: pl.clone(),
+                                        block_number: block,
+                                        timestamp: SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_millis(),
+                                    };
 
+                                    let res = sub
+                                .send(Box::new(event.clone()))
+                                .await
+                                .map_err(|e| info!("sync_service> UniswapV3 Send Error {:?}", e));
                                 } else {
-                                    error!("Failed to get {:?} updates", LiquidityProviderId::UniswapV3);
-                                    continue
+                                    error!(
+                                        "Failed to get {:?} updates",
+                                        LiquidityProviderId::UniswapV3
+                                    );
+                                    continue;
                                 }
-
                             }
-                            if first {
-                                first = false;
-                                continue
+
+                            tokio::time::sleep(Duration::from_millis(5000)).await;
+                        }
+                    }));
+                    let pool = pl.clone();
+                    let client = clnt.clone();
+                    let pls = p.clone();
+                    let sub = subs.clone();
+
+                    joins.push(tokio::runtime::Handle::current().spawn(async move {
+                        let r = pool.read().await;
+                        let pl = r.clone();
+                        drop(r);
+                        let contract = crate::abi::uniswap_v3::UniswapV3Pool::new(
+                            H160::from_str(&pl.address).unwrap(),
+                            client.clone(),
+                        );
+                        let events = contract.events();
+
+                        let mut stream = events.stream().await.unwrap();
+                        while let Some(_) = stream.next().await {
+                            let r = pool.read().await;
+                            let pl = r.clone();
+                            drop(r);
+                            let mut block = 0;
+
+                            if let Some(mut pool_meta) = match pl.clone().provider {
+                                LiquidityProviders::UniswapV3(pool_meta) => Some(pool_meta),
+                                _ => None,
+                            } {
+                                if let Ok(metas) = get_complete_pool_data_batch_request(
+                                    vec![H160::from_str(&pool_meta.address).unwrap()],
+                                    &client,
+                                )
+                                .await
+                                {
+                                    let mut updated_meta = metas.first().unwrap().to_owned();
+                                    if updated_meta.token_a_amount == pool_meta.token_a_amount
+                                        && updated_meta.token_b_amount == pool_meta.token_b_amount
+                                        && updated_meta.sqrt_price == pool_meta.sqrt_price
+                                    {
+                                        continue;
+                                    }
+                                    updated_meta.factory_address = pool_meta.factory_address;
+                                    block = updated_meta.block_number;
+                                    for p in pls.iter() {
+                                        let mut w = p.write().await;
+                                        w.x_amount = updated_meta.token_a_amount;
+                                        w.y_amount = updated_meta.token_b_amount;
+                                        w.provider =
+                                            LiquidityProviders::UniswapV3(updated_meta.clone());
+                                    }
+                                    let mut pl = pool.write().await;
+                                    pl.x_amount = updated_meta.token_a_amount;
+                                    pl.y_amount = updated_meta.token_b_amount;
+
+                                    pl.provider = LiquidityProviders::UniswapV3(updated_meta);
+                                    let event = PoolUpdateEvent {
+                                        pool: pl.clone(),
+                                        block_number: block,
+                                        timestamp: SystemTime::now()
+                                            .duration_since(UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_millis(),
+                                    };
+
+                                    let res =
+                                        sub.send(Box::new(event.clone())).await.map_err(|e| {
+                                            info!("sync_service> UniswapV3 Send Error {:?}", e)
+                                        });
+                                } else {
+                                    error!(
+                                        "Failed to get {:?} updates",
+                                        LiquidityProviderId::UniswapV3
+                                    );
+                                    continue;
+                                }
                             }
-                            let event = PoolUpdateEvent {
-                                pool: pl.clone(),
-                                block_number: block,
-                                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis(),
-                            };
-
-                            let res = sub.send(Box::new(event.clone())).await.map_err(|e| info!("sync_service> UniswapV3 Send Error {:?}", e));
-
                         }
                     }));
                 }
@@ -818,8 +924,12 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
     }
 }
 
-impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwapV3 {
-    fn get_subscribers(&self) -> Arc<std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>>>> {
+impl EventEmitter<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>> for UniSwapV3 {
+    fn get_subscribers(
+        &self,
+    ) -> Arc<
+        std::sync::RwLock<Vec<AsyncSender<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>>>,
+    > {
         self.pending_subscribers.clone()
     }
     fn emit(&self) -> std::thread::JoinHandle<()> {
@@ -828,9 +938,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
         let node_url = self.nodes.next_free();
 
         std::thread::spawn(move || {
+            return;
             let mut rt = Runtime::new().unwrap();
             let pools = pools.clone();
-
             rt.block_on(async move {
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
@@ -1013,4 +1123,3 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for UniSwa
         })
     }
 }
-

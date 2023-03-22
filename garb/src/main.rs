@@ -116,7 +116,7 @@ pub async fn async_main() -> anyhow::Result<()> {
 
     let graph_conifg = GraphConfig {
         from_file: true,
-        save_only: false,
+        save_only: true,
     };
     let graph_routes = routes_sender.clone();
     joins.push(std::thread::spawn(move || {
@@ -191,14 +191,14 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
          "https://builder0x69.io/".to_string(),
          "https://rpc.beaverbuild.org/".to_string(),
          "https://rsync-builder.xyz/".to_string(),
-         "https://api.blocknative.com/v1/auction".to_string(),
-         "https://api.edennetwork.io/v1/bundle".to_string(),
+//         "https://api.blocknative.com/v1/auction".to_string(),
+//         "https://api.edennetwork.io/v1/bundle".to_string(),
          "https://eth-builder.com".to_string(),
-         "https://rpc.lightspeedbuilder.info/".to_string(),
-        "https://api.securerpc.com/v1".to_string(),
+//         "https://rpc.lightspeedbuilder.info/".to_string(),
+//        "https://api.securerpc.com/v1".to_string(),
          "https://BuildAI.net".to_string(),
-         "https://rpc.payload.de".to_string(),
-         "https://rpc.nfactorial.xyz/".to_string()
+//         "https://rpc.payload.de".to_string(),
+//         "https://rpc.nfactorial.xyz/".to_string()
     ];
     let mut bundle_handlers = vec![];
     let node_url = nodes.next_free();
@@ -216,7 +216,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
             ));
         bundle_handlers.push(client)
     }
-    for i in 0..cores*5 {
+    for i in 0..cores*2 {
 
         // backruns
         let node_url = nodes.next_free();
@@ -271,7 +271,6 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
 
 
                 let signer_wallet_address = signer.address();
-                let nonce_update = nonce.clone();
 
 
                 let signer = Arc::new(signer);
@@ -332,17 +331,17 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                                 bundle.push(signed_tx);
                                 warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                                //                                        let res = FlashBotsBundleHandler::simulate(bundle, &handler, blk, true).await;
-                                //                                        if let Some(res) = res {
-                                //                                            if res.transactions.iter().all(|tx| tx.error.is_none()) {
-                                //                                                for step in &op.result.steps {
-                                //                                                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step.get_pool().await, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
-                                //                                                }
-                                //                                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
-                                //
-                                //                                            }
-                                //                                        }
-                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+2).await;
+                                let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, true).await;
+                                        if let Some(res) = res {
+                                            if res.transactions.iter().all(|tx| tx.error.is_none()) {
+                                                for step in &op.result.steps {
+                                                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step.get_pool().await, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+                                                }
+                                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
+
+                                            }
+                                        }
+//                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+2).await;
 
                             }));
                         }
