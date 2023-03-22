@@ -518,10 +518,13 @@ DETACH DELETE n",
             let mut saved = HashMap::<Pool, Vec<Vec<Pool>>>::new();
             for (pool, paths) in path_lookup1.read().await.clone() {
                 for path in paths {
+                    let mut re = path.pools.clone();
+                    re.reverse();
                     if let Some(mut exsisting) = saved.get_mut(&pool) {
-                        exsisting.push(path.pools)
+
+                        exsisting.push(re)
                     } else {
-                        let v = vec![path.pools];
+                        let v = vec![re];
                         saved.insert(pool.clone(), v);
                     }
                 }
@@ -530,21 +533,19 @@ DETACH DELETE n",
             let file = std::fs::File::create("paths.json").unwrap();
             let mut writer = std::io::BufWriter::new(file);
             rmp_serde::encode::write(&mut writer, &saved).unwrap();
-            return Ok(())
+            return Ok(());
         }
     } else {
         let file = std::fs::File::open("paths.json").unwrap();
         let mut reader = std::io::BufReader::new(file);
-        let saved: HashMap::<Pool, Vec<Vec<Pool>>> = rmp_serde::decode::from_read(reader).unwrap();
-        let unique_pools = saved.clone().into_iter()
-        .map(|(pool, path)| {
-            path.into_iter()
-                .flatten()
-                .collect::<Vec<Pool>>()
-        })
-        .flatten()
-        .unique()
-        .collect::<Vec<Pool>>();
+        let saved: HashMap<Pool, Vec<Vec<Pool>>> = rmp_serde::decode::from_read(reader).unwrap();
+        let unique_pools = saved
+            .clone()
+            .into_iter()
+            .map(|(pool, path)| path.into_iter().flatten().collect::<Vec<Pool>>())
+            .flatten()
+            .unique()
+            .collect::<Vec<Pool>>();
 
         for pool in unique_pools {
             let mut pool_xy = pool.clone();
@@ -553,15 +554,14 @@ DETACH DELETE n",
             pool_yx.x_to_y = false;
 
             locked_pools.insert(
-                    pool.clone(),
+                pool.clone(),
                 [
                     Arc::new(RwLock::new(pool_xy)),
                     Arc::new(RwLock::new(pool_yx)),
-                    ],
+                ],
             );
 
             let paths = saved.get(&pool).unwrap();
-
         }
 
         for (pool, paths) in saved {
@@ -575,8 +575,7 @@ DETACH DELETE n",
                         locked.push(l_pools[1].clone());
                     }
                 }
-                if let Some(mut path) =
-                                    MevPath::new(r, &locked, &CHECKED_COIN.clone()).await {
+                if let Some(mut path) = MevPath::new(r, &locked, &CHECKED_COIN.clone()).await {
                     let mut w = path_lookup1.write().await;
                     if let Some(mut existing) = w.get_mut(&pool) {
                         existing.push(path);
@@ -588,16 +587,11 @@ DETACH DELETE n",
                 }
             }
         }
-
-
-
     }
 
     let mut total_paths = 0;
     for (_pool, paths) in path_lookup1.read().await.clone() {
-        for path in paths {
-            total_paths += path.path.len();
-        }
+        total_paths += paths.len();
     }
     info!("Found {} routes", total_paths);
     let mut uniq = path_lookup1
@@ -753,89 +747,130 @@ DETACH DELETE n",
     let cores = num_cpus::get();
 
     let gas_lookup = gas_map.clone();
+
     for i in 0..cores / 2 {
         let gas_lookup = gas_lookup.clone();
         let path_lookup = path_lookup1.clone();
         let single_routes = single_routes.clone();
         let updated_q = updated_q.clone();
-        workers.push(tokio::spawn(async move {
-            while let Ok(updated_market_event) = updated_q.recv().await {
-                let event = updated_market_event.get_event();
-                let mut updated_market = event.pool;
-                let market_routes =
-                    if let Some(market_routes) = path_lookup.read().await.get(&updated_market) {
+        let locked_pools = locked_pools.clone();
+        workers.push(std::thread::spawn(move || {
+            let mut rt = Runtime::new().unwrap();
+
+            rt.block_on(async move {
+                while let Ok(updated_market_event) = updated_q.recv().await {
+                    let event = updated_market_event.get_event();
+                    let mut updated_market = event.pool;
+                    let market_routes = if let Some(market_routes) =
+                        path_lookup.read().await.get(&updated_market)
+                    {
                         market_routes.clone()
                     } else {
                         debug!("No routes found for {}", updated_market);
                         continue;
                     };
-                let single_routes = single_routes.clone();
-                let gas_lookup = gas_lookup.clone();
+                    let single_routes = single_routes.clone();
+                    let gas_lookup = gas_lookup.clone();
+                    let locked_pools = locked_pools.clone();
 
-                tokio::spawn(async move {
-                    let mut updated = vec![];
-                    for route in market_routes {
-                        if let Some((tx, result)) = route.get_transaction().await {
-                            let r = gas_lookup.read().unwrap();
-                            let mut gas_cost = U256::zero();
-                            for pool in &route.pools {
-                                gas_cost += *r.get(&pool.address).unwrap_or(&U256::from(100000));
-                            }
-                            drop(r);
-                            updated.push(ArbPath {
-                                path: route,
-                                tx,
-                                profit: U256::from(result.profit),
-                                gas_cost,
-                                block_number: event.block_number,
-                                result,
+                    tokio::spawn(async move {
+                        let needed_reads = futures::future::join_all(
+                            market_routes
+                                .clone()
+                                .into_iter()
+                                .map(|path| path.pools.clone())
+                                .flatten()
+                                .unique()
+                                .map(|pl| async {
+                                    if pl.x_to_y {
+                                        let locked = locked_pools.get(&pl).unwrap();
+                                        drop(pl);
+                                        locked[0].read().await.clone()
+                                    } else {
+                                        let locked = locked_pools.get(&pl).unwrap();
+                                        drop(pl);
+                                        locked[1].read().await.clone()
+                                    }
+                                }),
+                        )
+                        .await
+                        .into_iter()
+                        .map(|pool| (pool.address.clone(), pool))
+                        .collect::<HashMap<String, Pool>>();
+                        let r = gas_lookup.read().unwrap().clone();
+                        let mut updated = market_routes
+                            .into_par_iter()
+                            .filter_map(|route| {
+                                let r = r.clone();
+                                let mut pools = vec![];
+                                for pool in &route.pools {
+                                    pools.push(needed_reads.get(&pool.address).unwrap().clone())
+                                }
+                                if let Some((tx, result)) = route.get_transaction_sync(pools) {
+                                    let mut gas_cost = U256::zero();
+                                    for pool in &route.pools {
+                                        gas_cost +=
+                                            *r.get(&pool.address).unwrap_or(&U256::from(100000));
+                                    }
+                                    drop(r);
+                                    Some(ArbPath {
+                                        path: route,
+                                        tx,
+                                        profit: U256::from(result.profit),
+                                        gas_cost,
+                                        block_number: event.block_number,
+                                        result,
+                                    })
+                                } else {
+                                    None
+                                }
                             })
-                        }
-                    }
-                    let mut w = single_routes.lock().unwrap();
-                    w.send(updated).unwrap();
-                });
-            }
+                            .collect::<Vec<ArbPath>>();
+                        let mut w = single_routes.lock().unwrap();
+                        w.send(updated).unwrap();
+                    });
+                }
+            });
         }));
     }
 
     let gas_lookup = gas_map.clone();
-    for i in 0..cores / 2 {
-        let gas_lookup = gas_lookup.read().unwrap().clone();
-
-        let path_lookup = path_lookup1.clone();
-        let routes = routes.read().await.clone();
-        let pending_updated_q = pending_updated_q.clone();
-        workers.push(tokio::spawn(async move {
-            while let Ok(updated_market_event) = pending_updated_q.recv().await {
-                let event = updated_market_event.get_event();
-                let mut updated_market = event.pool;
-                let routes = routes.clone();
-                let market_routes =
-                    if let Some(market_routes) = path_lookup.read().await.get(&updated_market) {
-                        market_routes.clone()
-                    } else {
-                        debug!("No routes found for pending update {}", updated_market);
-                        continue;
-                    };
-                let mut updated = market_routes
-                    .into_par_iter()
-                    .filter_map(|mut route| {
-                        route.get_backrun_for_update(
-                            event.pending_tx.clone(),
-                            updated_market.clone(),
-                            &gas_lookup,
-                            event.block_number,
-                        )
-                    })
-                    .collect::<Vec<Backrun>>();
-
-                for opportunity in updated {
-                    routes.send(opportunity).await;
-                }
-            }
-        }));
-    }
+    //    for i in 0..cores / 2 {
+    //        let gas_lookup = gas_lookup.read().unwrap().clone();
+    //
+    //        let path_lookup = path_lookup1.clone();
+    //        let routes = routes.read().await.clone();
+    //        let pending_updated_q = pending_updated_q.clone();
+    //        workers.push(tokio::spawn(async move {
+    //            while let Ok(updated_market_event) = pending_updated_q.recv().await {
+    //                let event = updated_market_event.get_event();
+    //                let mut updated_market = event.pool;
+    //                let routes = routes.clone();
+    //                let market_routes =
+    //                    if let Some(market_routes) = path_lookup.read().await.get(&updated_market) {
+    //                        market_routes.clone()
+    //                    } else {
+    //                        debug!("No routes found for pending update {}", updated_market);
+    //                        continue;
+    //                    };
+    //                let mut updated = market_routes
+    //                    .into_par_iter()
+    //                    .filter_map(|mut route| {
+    //                        route.get_backrun_for_update(
+    //                            event.pending_tx.clone(),
+    //                            updated_market.clone(),
+    //                            &gas_lookup,
+    //                            event.block_number,
+    //                        )
+    //                    })
+    //                    .collect::<Vec<Backrun>>();
+    //
+    //                for opportunity in updated {
+    //                    routes.send(opportunity).await;
+    //                }
+    //            }
+    //        }));
+    //    }
 
     let mut watch_pools: HashMap<String, Pool> = HashMap::new();
     uniq.iter().for_each(|pool| {
@@ -843,7 +878,7 @@ DETACH DELETE n",
     });
     used_oneshot.send(uniq_locked).unwrap();
     for worker in workers {
-        worker.await.unwrap();
+        worker.join();
     }
 
     Ok(())

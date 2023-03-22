@@ -204,11 +204,13 @@ impl MevPath {
             .map(|p| MevPathStep::ExactOut(p, StepInput::default(), StepOutput::default()))
             .collect::<Vec<MevPathStep>>();
 
+        let mut re = pools.clone();
+        re.reverse();
         if let Ok(path) = Self::process_path(path, input_token).await {
             Some(Self {
                 input_token: input_token.clone(),
                 path,
-                pools,
+                pools: re,
             })
         } else {
             None
@@ -225,6 +227,8 @@ impl MevPath {
         }
         trace!("{}\n", fin);
     }
+
+
 
     async fn chained_out_path(&self, mut path: Vec<MevPathStep>) -> anyhow::Result<PathResult> {
         // binary search for optimal input
@@ -511,6 +515,288 @@ impl MevPath {
         }
     }
 
+    fn chained_out_path_sync(&self, mut path: Vec<Pool>) -> anyhow::Result<PathResult> {
+        // binary search for optimal input
+        let mut best_route_size = 0.0;
+        let mut best_route_profit = I256::from(0);
+        let mut best_route_index = 0;
+        let mut mid = 6.0;
+
+        let mut left = 0.0;
+        let mut right = mid * 2.0;
+        let decimals = crate::decimals(self.input_token.clone());
+        let mut instructions = vec![];
+        let mut steps_meta = vec![];
+
+        let contract_address = "<contract_address>".to_string();
+        'binary_search: for i in 0..8 {
+            let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
+            let mut asset = I256::from(i_atomic as u128);
+
+            let mut instruction = Vec::with_capacity(path.len());
+            let mut steps_taken = Vec::with_capacity(path.len());
+            let mut sender = "self".to_string();
+
+            // tries to complete steps
+            'inner: for (index, pool) in path.iter().enumerate() {
+
+                if index == path.len() - 1 {
+                    let token = self.input_token.clone();
+
+                    // make sure all other steps are done before paying back
+                        trace!("Amount For Payment: {}", asset);
+                    steps_taken.push(StepMeta {
+                        step_id: "PaybackSender".to_string(),
+                        asset: asset,
+                        debt: asset,
+                        asset_token: token.clone(),
+                        debt_token: token.clone(),
+                        step: self.path.get(index).unwrap().clone(),
+                    });
+                    let packed_amount = Self::encode_packed(asset);
+                    instruction.push(
+                            PAY_SENDER.to_string()
+                            + &token[2..]
+                            + &(packed_amount.len() as u8).encode_hex()[64..]
+                            + &packed_amount,
+                        );
+                } else {
+                        let asset_reciever = if index == 0 {
+                            contract_address.clone()
+                        } else {
+                            sender.clone()
+                        };
+
+                        let (asset_token, debt_token) = if pool.x_to_y {
+                            (pool.y_address.clone(), pool.x_address.clone())
+                        } else {
+                            (pool.x_address.clone(), pool.y_address.clone())
+                        };
+                        if index == 0 && asset_token != self.input_token {
+                            return Err(anyhow::Error::msg("Invalid Path"));
+                        }
+
+                        trace!(
+                                "Recipient: {} Asset_Token: {} Debt_Token: {} ",
+                            asset_reciever,
+                            asset_token,
+                            debt_token
+                        );
+
+                        let calculator = pool.provider.build_calculator();
+                        // used later to build step instruction
+                        let mut d: I256 = I256::from(0);
+                        let mut a: I256 = I256::from(0);
+
+                        let dt = debt_token.clone();
+
+                        if asset < I256::from(0) {
+                            asset = -asset;
+                        }
+                        // calculate output for current step
+                        let as_uint = asset.into_raw();
+                        if let Ok(in_) = calculator.calculate_in(as_uint, &pool) {
+                            let debt = I256::from_raw(in_);
+                            if debt == I256::zero() {
+                                right = mid;
+                                mid = (left + right) / 2.0;
+                                continue 'binary_search;
+                            }
+                            a = asset;
+                            d = debt;
+                            trace!("Type AssetIsDebtedToOther > Asset {} Debt {}", a, d);
+
+                            if pool.provider.id() == LiquidityProviderId::BalancerWeighted
+                               && index + 1 != path.len()
+                            {
+                                trace!("Unproccessable AssetIsDebtedToOther step");
+                                return Err(anyhow::Error::msg(
+                                        "Unproccessable AssetIsDebtedToOther Step",
+                                ));
+                            } else {
+                                // update asset reciever balance
+                                asset = debt
+                            }
+
+                            steps_taken.push(StepMeta {
+                                step_id: "AssetIsDebtedToOther".to_string(),
+                                asset: a,
+                                debt: d,
+                                asset_token: asset_token.clone(),
+                                debt_token: debt_token.clone(),
+                                step: self.path.get(index).unwrap().clone(),
+                            });
+                        } else {
+                            right = mid;
+                            mid = (left + right) / 2.0;
+                            continue 'binary_search;
+                        }
+
+                        match pool.provider.id() {
+                            LiquidityProviderId::UniswapV2
+                            | LiquidityProviderId::SushiSwap
+                            | LiquidityProviderId::Solidly
+                            | LiquidityProviderId::Pancakeswap
+                            | LiquidityProviderId::CroSwap
+                            | LiquidityProviderId::ShibaSwap
+                            | LiquidityProviderId::SaitaSwap
+                            | LiquidityProviderId::ConvergenceSwap => {
+                                // update with reserves
+                                let (function, pay_to, token) = if sender == asset_reciever {
+                                    (
+                                            UNISWAP_V2_EXACT_OUT_PAY_TO_SENDER.to_string(),
+                                        "".to_string(),
+                                        asset_token[2..].to_string(),
+                                    )
+                                } else if asset_reciever != contract_address {
+                                    (
+                                            UNISWAP_V2_EXACT_OUT_PAY_TO_ADDRESS.to_string(),
+                                        asset_reciever[2..].to_string(),
+                                        asset_token[2..].to_string(),
+                                    )
+                                } else {
+                                    (
+                                            UNISWAP_V2_EXACT_OUT_PAY_TO_SELF.to_string(),
+                                        "".to_string(),
+                                        "".to_string(),
+                                    )
+                                };
+                                let packed_asset = Self::encode_packed(a);
+                                let packed_debt = Self::encode_packed(d);
+                                instruction.push(
+                                        function
+                                        + if pool.x_to_y { "01" } else { "00" }
+                                        + &token
+                                        + &pool.address[2..]
+                                        + &pay_to
+                                        + &(packed_asset.len() as u8).encode_hex()[64..]
+                                        + &packed_asset,
+                                )
+                            }
+                            LiquidityProviderId::UniswapV3 => {
+                                // update with ...
+                                let (function, pay_to) = if sender == asset_reciever {
+                                    (
+                                            UNISWAP_V3_EXACT_OUT_PAY_TO_SENDER.to_string(),
+                                        "".to_string(),
+                                    )
+                                } else if asset_reciever != contract_address {
+                                    (
+                                            UNISWAP_V3_EXACT_OUT_PAY_TO_ADDRESS.to_string(),
+                                        asset_reciever[2..].to_string(),
+                                    )
+                                } else {
+                                    (UNISWAP_V3_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string())
+                                };
+                                let packed_asset = Self::encode_packed(a);
+                                instruction.push(
+                                        function
+                                        + if pool.x_to_y { "01" } else { "00" }
+                                        + &pool.address[2..]
+                                        + &pay_to
+                                        + &(packed_asset.len() as u8).encode_hex()[64..]
+                                        + &packed_asset,
+                                )
+                            }
+                            LiquidityProviderId::BalancerWeighted => {
+                                // update with ...
+                                let (function, pay_to) = if sender == asset_reciever {
+                                    (BALANCER_EXACT_OUT_PAY_TO_SENDER.to_string(), "".to_string())
+                                } else if asset_reciever != contract_address {
+                                    (
+                                            BALANCER_EXACT_OUT_PAY_TO_SENDER.to_string(),
+                                        asset_reciever[2..].to_string(),
+                                    )
+                                } else {
+                                    (BALANCER_EXACT_OUT_PAY_TO_SELF.to_string(), "".to_string())
+                                };
+                                let packed_asset = Self::encode_packed(a);
+                                let packed_debt = Self::encode_packed(d);
+                                let meta = match &pool.provider {
+                                    LiquidityProviders::BalancerWeighted(meta) => meta,
+                                    _ => panic!(),
+                                };
+                                instruction.push(
+                                        function
+                                        + &meta.id[2..]
+                                        + &debt_token[2..]
+                                        + &asset_token[2..]
+                                        + &(packed_asset.len() as u8).encode_hex()[64..]
+                                        + &packed_asset
+                                        + &(packed_debt.len() as u8).encode_hex()[64..]
+                                        + &packed_debt,
+                                )
+                            }
+                        }
+                        sender = pool.address.clone();
+
+
+                    }
+            }
+            instructions.push(instruction);
+            steps_meta.push(steps_taken);
+            let mut final_balance = sub_i256(I256::from(i_atomic as u128), asset);
+            // info!("profit {}, iatomic {} ", final_balance.as_i128() as f64 / 10_f64.powf(18.0), i_atomic);
+
+            if i == 0 {
+                best_route_profit = final_balance;
+                best_route_size = i_atomic;
+                if best_route_profit > I256::from(0) {
+                    left = mid;
+                } else {
+                    right = mid;
+                }
+            } else if final_balance >= best_route_profit {
+                best_route_profit = final_balance;
+                best_route_size = i_atomic;
+                best_route_index = instructions.len() - 1;
+                if best_route_profit > I256::from(0) {
+                    left = mid;
+                } else {
+                    right = mid;
+                }
+            } else {
+                best_route_profit = final_balance;
+                best_route_size = i_atomic;
+                right = mid;
+            }
+            mid = (left + right) / 2.0;
+        }
+
+        //                    info!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+        //
+        //                    info!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
+        //                    for step in &steps_meta[best_route_index] {
+        //                        info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+        //                    }
+        //                    info!("\n\n\n");
+        if best_route_profit > I256::from(0) {
+            //            debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
+            //
+            //            debug!("Size: {} Profit: {}", best_route_size / 10_f64.powf(18.0), best_route_profit.as_i128() as f64 / 10_f64.powf(18.0));
+            //            for step in &steps_meta[best_route_index] {
+            //                debug!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+            //            }
+            //            debug!("\n\n\n");
+
+            let mut final_data = instructions[best_route_index].join("");
+
+            Ok(PathResult {
+                ix_data: final_data,
+                profit: best_route_profit.as_u128(),
+                is_good: true,
+                steps: steps_meta[best_route_index].clone(),
+            })
+        } else {
+            Ok(PathResult {
+                ix_data: "".to_string(),
+                profit: 0,
+                is_good: false,
+                steps: vec![],
+            })
+        }
+    }
+
     async fn path_to_solidity_test(path: &Vec<MevPathStep>, instructions: &Vec<String>) -> String {
         let mut builder = "".to_string();
         let mut title = "function test".to_string();
@@ -588,6 +874,39 @@ impl MevPath {
         } else {
             return "0".to_string() + &encoded[index..];
         };
+    }
+
+    pub fn get_transaction_sync(&self, pools_path: Vec<Pool>) -> Option<(Eip1559TransactionRequest, PathResult)> {
+        let is_good = self.chained_out_path_sync(pools_path);
+        match &is_good {
+            Ok(data) => {
+                if !data.is_good {
+                    return None;
+                } else {
+                    let tx_request = Eip1559TransactionRequest {
+                        // update later
+                        to: None,
+                        // update later
+                        from: None,
+                        data: Some(ethers::types::Bytes::from_str(&data.ix_data).unwrap()),
+                        chain_id: Some(U64::from(1)),
+                        max_priority_fee_per_gas: None,
+                        // update later
+                        max_fee_per_gas: None,
+                        gas: None,
+                        // update later
+                        nonce: None,
+                        value: None,
+                        access_list: AccessList::default(),
+                    };
+                    return Some((tx_request, data.clone()));
+                }
+            }
+            Err(e) => {
+                trace!("{:?}", e);
+                None
+            }
+        }
     }
 
     pub async fn get_transaction(&self) -> Option<(Eip1559TransactionRequest, PathResult)> {
