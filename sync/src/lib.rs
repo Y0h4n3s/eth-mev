@@ -42,7 +42,7 @@ pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
           .unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
 });
 
-pub const POLL_INTERVAL: u64 = 50;
+pub const POLL_INTERVAL: u64 = 60;
 use nom::FindSubstring;
 use num_bigfloat::{BigFloat, RoundingMode};
 use tracing::info;
@@ -71,7 +71,8 @@ pub enum LiquidityProviders {
     SushiSwap(UniswapV2Metadata),
     BalancerWeighted(BalancerWeigtedMetadata),
     Solidly(UniswapV2Metadata),
-    Pancakeswap(UniswapV2Metadata)
+    Pancakeswap(UniswapV2Metadata),
+    CroSwap(UniswapV2Metadata)
 }
 
 #[derive(Deserialize, Serialize,Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
@@ -81,7 +82,8 @@ pub enum LiquidityProviderId {
     SushiSwap,
     BalancerWeighted,
     Solidly,
-    Pancakeswap
+    Pancakeswap,
+    CroSwap,
 }
 
 impl<T: Into<String>> From<T> for LiquidityProviders {
@@ -96,6 +98,7 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
             "4" => LiquidityProviders::BalancerWeighted(Default::default()),
             "5" => LiquidityProviders::Solidly(Default::default()),
             "6" => LiquidityProviders::Pancakeswap(Default::default()),
+            "7" => LiquidityProviders::CroSwap(Default::default()),
             val => match val.find_substring("UniswapV2") {
                 Some(v) => serde_json::from_str(val).unwrap(),
                 None => {
@@ -117,7 +120,12 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
                                                 Some(v) => {
                                                     serde_json::from_str(val).unwrap()
                                                 },
+                                                None => match val.find_substring("Cro") {
+                                                Some(v) => {
+                                                    serde_json::from_str(val).unwrap()
+                                                },
                                                 None => panic!("Invalid Liquidity Provider {}", val)
+                                                }
                                             }
                                         }
                                     }
@@ -140,6 +148,7 @@ impl From<LiquidityProviders> for u8 {
             LiquidityProviders::BalancerWeighted(_) => 4,
             LiquidityProviders::Solidly(_) => 5,
             LiquidityProviders::Pancakeswap(_) => 6,
+            LiquidityProviders::CroSwap(_) => 7,
         }
     }
 }
@@ -156,6 +165,7 @@ impl LiquidityProviders {
     pub fn build_calculator(&self) -> Box<dyn Calculator> {
         match self {
             LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new()),
+            LiquidityProviders::CroSwap(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::Solidly(meta) => Box::new(SolidlyCalculator::new()),
             LiquidityProviders::Pancakeswap(meta) => Box::new(PancakeCalculator::new()),
             LiquidityProviders::UniswapV3(meta) => {
@@ -186,6 +196,13 @@ impl LiquidityProviders {
             LiquidityProviders::Pancakeswap(meta) => {
                 let metadata = UniswapV2Metadata {
                     factory_address: "0x1097053Fd2ea711dad45caCcc45EfF7548fCB362".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers, LiquidityProviderId::Pancakeswap))
+            }
+            LiquidityProviders::CroSwap(meta) => {
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0x9DEB29c9a4c7A88a3C0257393b7f3335338D9A9D".to_string(),
                     ..meta.clone()
                 };
                 Box::new(uniswap_v2::UniSwapV2::new(metadata, node_providers, LiquidityProviderId::Pancakeswap))
@@ -223,6 +240,7 @@ impl LiquidityProviders {
             LiquidityProviders::BalancerWeighted(_) => LiquidityProviderId::BalancerWeighted,
             LiquidityProviders::Solidly(_) => LiquidityProviderId::Solidly,
             LiquidityProviders::Pancakeswap(_) => LiquidityProviderId::Pancakeswap,
+            LiquidityProviders::CroSwap(_) => LiquidityProviderId::CroSwap,
 
             
         }
@@ -236,6 +254,7 @@ impl LiquidityProviders {
             LiquidityProviders::BalancerWeighted(meta) => meta.factory_address.clone(),
             LiquidityProviders::Solidly(meta) => meta.factory_address.clone(),
             LiquidityProviders::Pancakeswap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::CroSwap(meta) => meta.factory_address.clone(),
         }
     }
 }
@@ -281,6 +300,7 @@ impl PoolInfo for Pool {
     fn supports_callback_payment(&self) -> bool {
         match self.provider.id() {
             LiquidityProviderId::UniswapV2 => true,
+            LiquidityProviderId::CroSwap => true,
             LiquidityProviderId::Solidly => true,
             LiquidityProviderId::Pancakeswap => true,
             LiquidityProviderId::UniswapV3 => true,
@@ -292,6 +312,7 @@ impl PoolInfo for Pool {
     fn supports_pre_payment(&self) -> bool {
         match self.provider.id() {
             LiquidityProviderId::UniswapV2 => false,
+            LiquidityProviderId::CroSwap => false,
             LiquidityProviderId::Solidly => false,
             LiquidityProviderId::Pancakeswap => false,
             LiquidityProviderId::UniswapV3 => false,

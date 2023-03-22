@@ -669,6 +669,7 @@ DETACH DELETE n",
                 LiquidityProviderId::UniswapV2
                 | LiquidityProviderId::SushiSwap
                 | LiquidityProviderId::Solidly
+                | LiquidityProviderId::CroSwap
                 | LiquidityProviderId::Pancakeswap => {
                     ix_data = "0e000000".to_string()
                         + if pool.x_to_y { "01" } else { "00" }

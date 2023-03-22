@@ -321,7 +321,7 @@ impl MevPath {
 
 
                         match pool.provider.id() {
-                            LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap | LiquidityProviderId::Solidly | LiquidityProviderId::Pancakeswap => {
+                            LiquidityProviderId::UniswapV2 | LiquidityProviderId::SushiSwap | LiquidityProviderId::Solidly | LiquidityProviderId::Pancakeswap | LiquidityProviderId::CroSwap => {
                                 // update with reserves
                                 let (function, pay_to, token) = if sender == asset_reciever {
                                     (UNISWAP_V2_EXACT_OUT_PAY_TO_SENDER.to_string(), "".to_string(), asset_token[2..].to_string())
