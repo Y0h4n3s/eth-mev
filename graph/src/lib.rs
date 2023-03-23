@@ -160,7 +160,12 @@ pub async fn start(
         let cores = num_cpus::get();
 
         // Create a connection pool. This should be shared across your application.
-        let conn_pool = Arc::new(BPool::builder().max_size(cores as u32 + 1).build(manager).await?);
+        let conn_pool = Arc::new(
+            BPool::builder()
+                .max_size(cores as u32 + 1)
+                .build(manager)
+                .await?,
+        );
 
         // Fetch and use a connection from the pool
         let mut conn = conn_pool.get().await?;
@@ -176,7 +181,6 @@ DETACH DELETE n",
         let (records, response) = conn.pull(Some(pull_meta)).await?;
 
         for (_, pool) in pr.into_iter() {
-
             let mut pool_xy = pool.clone();
             let mut pool_yx = pool.clone();
             pool_xy.x_to_y = true;
@@ -190,33 +194,34 @@ DETACH DELETE n",
                 ],
             );
 
-
             let res = conn
-            .run(
+                .run(
                     "MERGE (t:Token {address: $address}) RETURN t",
-                Some(Params::from_iter(vec![("address", pool.x_address.clone())])),
-                None,
-            )
-            .await.unwrap();
+                    Some(Params::from_iter(vec![("address", pool.x_address.clone())])),
+                    None,
+                )
+                .await
+                .unwrap();
             let pull_meta = Metadata::from_iter(vec![("n", -1)]);
             let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
             match response {
                 Message::Failure(reason) => info!("IgnoredX: {}", pool.address),
-                _ => ()
+                _ => (),
             }
             let res = conn
-            .run(
+                .run(
                     "MERGE (t:Token {address: $address}) RETURN t",
-                Some(Params::from_iter(vec![("address", pool.y_address.clone())])),
-                None,
-            )
-            .await.unwrap();
+                    Some(Params::from_iter(vec![("address", pool.y_address.clone())])),
+                    None,
+                )
+                .await
+                .unwrap();
 
             let pull_meta = Metadata::from_iter(vec![("n", -1)]);
             let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
             match response {
                 Message::Failure(reason) => info!("IgnoredY: {}", pool.address),
-    _ => ()
+                _ => (),
             }
             let res = conn
             .run(
@@ -234,7 +239,7 @@ DETACH DELETE n",
             let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
             match response {
                 Message::Failure(reason) => info!("IgnoredXY: {}", pool.address),
-    _ => ()
+                _ => (),
             }
             let res = conn
             .run(
@@ -252,7 +257,7 @@ DETACH DELETE n",
             let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
             match response {
                 Message::Failure(reason) => info!("IgnoredYX: {}", pool.address),
-    _ => ()
+                _ => (),
             }
             let res = conn
             .run(
@@ -267,8 +272,8 @@ DETACH DELETE n",
             let pull_meta = Metadata::from_iter(vec![("n", -1)]);
             let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
             match response {
-                Message::Failure(reason)  => info!("IgnoredAXY:  {} {:?}", pool.address, reason),
-                _ => ()
+                Message::Failure(reason) => info!("IgnoredAXY:  {} {:?}", pool.address, reason),
+                _ => (),
             }
             let res = conn
             .run(
@@ -283,8 +288,8 @@ DETACH DELETE n",
             let pull_meta = Metadata::from_iter(vec![("n", -1)]);
             let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
             match response {
-                Message::Failure(reason)  => info!("IgnoredAYX:  {} {:?}", pool.address, reason),
-    _ => ()
+                Message::Failure(reason) => info!("IgnoredAYX:  {} {:?}", pool.address, reason),
+                _ => (),
             }
             let res = conn
             .run(
@@ -299,8 +304,8 @@ DETACH DELETE n",
             let pull_meta = Metadata::from_iter(vec![("n", -1)]);
             let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
             match response {
-                Message::Failure(reason)  => info!("IgnoredDXY:  {} {:?}", pool.address, reason),
-    _ => ()
+                Message::Failure(reason) => info!("IgnoredDXY:  {} {:?}", pool.address, reason),
+                _ => (),
             }
             let res = conn
             .run(
@@ -315,8 +320,8 @@ DETACH DELETE n",
             let pull_meta = Metadata::from_iter(vec![("n", -1)]);
             let (records, response) = conn.pull(Some(pull_meta)).await.unwrap();
             match response {
-                Message::Failure(reason)  => info!("IgnoredDYX: {} {:?}", pool.address, reason),
-                _ => ()
+                Message::Failure(reason) => info!("IgnoredDYX: {} {:?}", pool.address, reason),
+                _ => (),
             }
         }
 
@@ -327,7 +332,7 @@ DETACH DELETE n",
 
         let path_lookup = Arc::new(RwLock::new(
             HashMap::<Pool, HashSet<(String, Vec<Pool>)>>::new(),
-        ));//140 311 10869 12059
+        )); //140 311 10869 12059
 
         let max_intermidiate_nodes = 3;
         for i in 2..max_intermidiate_nodes {
@@ -368,18 +373,20 @@ DETACH DELETE n",
             info!("{}", query);
 
             let res = conn.run(query, None, None).await?;
-            let pull_meta = Metadata::from_iter(vec![("n", 50000)]);
+            let pull_meta = Metadata::from_iter(vec![("n", 1000)]);
             let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
             loop {
                 let mut handles = vec![];
+                let permit = permits.clone().acquire_owned().await?;
+                let path_lookup1 = path_lookup1.clone();
+                let pools = pools.clone();
+                let locked_pools = locked_pools.clone();
+                handles.push(tokio::spawn(async move {
+                    let mut futs = FuturesUnordered::new();
 
-                // populate path_lookup with this batch
-                for record in records {
-                    let permit = permits.clone().acquire_owned().await?;
-                    let path_lookup1 = path_lookup1.clone();
-                    let pools = pools.clone();
-                    let locked_pools = locked_pools.clone();
-                    handles.push(tokio::spawn(async move {
+                    // populate path_lookup with this batch
+                    for record in records {
+                        let pools = pools.clone();
                         let ps = pools.read().await.clone();
                         let mut pools = record
                             .fields()
@@ -442,8 +449,7 @@ DETACH DELETE n",
                                 _ => None,
                             })
                             .collect::<Vec<Vec<Pool>>>();
-                        let mut futs = FuturesUnordered::new();
-                        pools.into_iter().for_each(|r|
+                        pools.into_iter().for_each(|r| {
                             futs.push(async {
                                 let mut seen_count = 0;
                                 r.iter().for_each(|p| {
@@ -480,27 +486,28 @@ DETACH DELETE n",
                                     }
                                 }
                             })
-                        );
-                        let paths = futs
-                            .collect::<Vec<Option<MevPath>>>()
-                            .await
-                            .into_iter()
-                            .filter_map(|p| p);
-                        for p in paths {
-                            for pool in p.pools.iter() {
-                                let mut w = path_lookup1.write().await;
-                                if let Some(mut existing) = w.get_mut(&pool) {
-                                    existing.push(p.clone());
-                                } else {
-                                    let mut set = vec![];
-                                    set.push(p.clone());
-                                    w.insert(pool.clone(), set);
-                                }
+                        });
+                    }
+                    let paths = futs
+                        .collect::<Vec<Option<MevPath>>>()
+                        .await
+                        .into_iter()
+                        .filter_map(|p| p);
+                    for p in paths {
+                        for pool in p.pools.iter() {
+                            let mut w = path_lookup1.write().await;
+                            if let Some(mut existing) = w.get_mut(&pool) {
+                                existing.push(p.clone());
+                            } else {
+                                let mut set = vec![];
+                                set.push(p.clone());
+                                w.insert(pool.clone(), set);
                             }
                         }
-                        drop(permit);
-                    }));
-                }
+                    }
+                    drop(permit);
+                }));
+
                 for handle in handles {
                     handle.await?;
                 }
@@ -530,7 +537,7 @@ DETACH DELETE n",
 
             let mut total_paths = 0;
             for (_pool, paths) in path_lookup1.read().await.clone() {
-                    total_paths += paths.len();
+                total_paths += paths.len();
             }
             info!("Done {} step {}", i, total_paths);
         }
@@ -769,7 +776,7 @@ DETACH DELETE n",
 
     let gas_lookup = gas_map.clone();
 
-    for i in 0..3 {
+    for i in 0..cores {
         let gas_lookup = gas_lookup.clone();
         let path_lookup = path_lookup1.clone();
         let single_routes = single_routes.clone();
@@ -790,68 +797,65 @@ DETACH DELETE n",
                 let gas_lookup = gas_lookup.clone();
                 let locked_pools = locked_pools.clone();
 
-                tokio::spawn(async move {
-                    let mut futs = FuturesUnordered::new();
+                let mut futs = FuturesUnordered::new();
 
-                    market_routes
-                        .clone()
-                        .into_iter()
-                        .map(|path| path.pools.clone())
-                        .flatten()
-                        .unique()
-                        .for_each(|pl| {
-                            futs.push(async {
-                                if pl.x_to_y {
-                                    let locked = locked_pools.get(&pl).unwrap();
-                                    drop(pl);
-                                    locked[0].read().await.clone()
-                                } else {
-                                    let locked = locked_pools.get(&pl).unwrap();
-                                    drop(pl);
-                                    locked[1].read().await.clone()
-                                }
-                            })
-                        });
-                    let needed_reads = futs
-                        .collect::<Vec<Pool>>()
-                        .await
-                        .into_iter()
-                        .map(|pool| (pool.address.clone(), pool))
-                        .collect::<HashMap<String, Pool>>();
-                    let r = gas_lookup.read().unwrap().clone();
-                    let mut updated = market_routes
-                        .into_par_iter()
-                        .filter_map(|route| {
-                            let r = r.clone();
-                            let mut pools = vec![];
-                            for pool in &route.pools {
-                                let mut p = needed_reads.get(&pool.address).unwrap().clone();
-                                p.x_to_y = pool.x_to_y;
-                                pools.push(p)
-                            }
-                            if let Some((tx, result)) = route.get_transaction_sync(pools) {
-                                let mut gas_cost = U256::zero();
-                                for pool in &route.pools {
-                                    gas_cost +=
-                                        *r.get(&pool.address).unwrap_or(&U256::from(100000));
-                                }
-                                drop(r);
-                                Some(ArbPath {
-                                    path: route,
-                                    tx,
-                                    profit: U256::from(result.profit),
-                                    gas_cost,
-                                    block_number: event.block_number,
-                                    result,
-                                })
+                market_routes
+                    .clone()
+                    .into_iter()
+                    .map(|path| path.pools.clone())
+                    .flatten()
+                    .unique()
+                    .for_each(|pl| {
+                        futs.push(async {
+                            if pl.x_to_y {
+                                let locked = locked_pools.get(&pl).unwrap();
+                                drop(pl);
+                                locked[0].read().await.clone()
                             } else {
-                                None
+                                let locked = locked_pools.get(&pl).unwrap();
+                                drop(pl);
+                                locked[1].read().await.clone()
                             }
                         })
-                        .collect::<Vec<ArbPath>>();
-                    let mut w = single_routes.lock().unwrap();
-                    w.send(updated).unwrap();
-                });
+                    });
+                let needed_reads = futs
+                    .collect::<Vec<Pool>>()
+                    .await
+                    .into_iter()
+                    .map(|pool| (pool.address.clone(), pool))
+                    .collect::<HashMap<String, Pool>>();
+                let r = gas_lookup.read().unwrap().clone();
+                let mut updated = market_routes
+                    .into_par_iter()
+                    .filter_map(|route| {
+                        let r = r.clone();
+                        let mut pools = vec![];
+                        for pool in &route.pools {
+                            let mut p = needed_reads.get(&pool.address).unwrap().clone();
+                            p.x_to_y = pool.x_to_y;
+                            pools.push(p)
+                        }
+                        if let Some((tx, result)) = route.get_transaction_sync(pools) {
+                            let mut gas_cost = U256::zero();
+                            for pool in &route.pools {
+                                gas_cost += *r.get(&pool.address).unwrap_or(&U256::from(100000));
+                            }
+                            drop(r);
+                            Some(ArbPath {
+                                path: route,
+                                tx,
+                                profit: U256::from(result.profit),
+                                gas_cost,
+                                block_number: event.block_number,
+                                result,
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<ArbPath>>();
+                let mut w = single_routes.lock().unwrap();
+                w.send(updated).unwrap();
             }
         }));
     }

@@ -540,7 +540,7 @@ impl MevPath {
             // tries to complete steps
             'inner: for (index, pool) in path.iter().enumerate() {
 
-                if index == path.len() - 1 {
+                if index == path.len() - 1 && path[path.len()-1].address == path[path.len()-2].address {
                     let token = self.input_token.clone();
 
                     // make sure all other steps are done before paying back
