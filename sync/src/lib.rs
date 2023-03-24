@@ -225,6 +225,7 @@ impl LiquidityProviders {
                 ))
             }
             LiquidityProviders::CroSwap(meta) => {
+                //croDefiSwapCall(address sender, uint amount0, uint amount1, bytes calldata data) external;
                 let metadata = UniswapV2Metadata {
                     factory_address: "0x9DEB29c9a4c7A88a3C0257393b7f3335338D9A9D".to_string(),
                     ..meta.clone()
@@ -247,6 +248,7 @@ impl LiquidityProviders {
                 ))
             }
             LiquidityProviders::SaitaSwap(meta) => {
+                // function SaitaSwapCall(address sender, uint amount0, uint amount1, bytes calldata data) external;
                 let metadata = UniswapV2Metadata {
                     factory_address: "0x35113a300ca0D7621374890ABFEAC30E88f214b1".to_string(),
                     ..meta.clone()
@@ -258,6 +260,7 @@ impl LiquidityProviders {
                 ))
             }
             LiquidityProviders::ConvergenceSwap(meta) => {
+                //function swapCall(address sender, uint amount0, uint amount1, bytes calldata data) external;
                 let metadata = UniswapV2Metadata {
                     factory_address: "0x4eef5746ED22A2fD368629C1852365bf5dcb79f1".to_string(),
                     ..meta.clone()
@@ -849,7 +852,11 @@ pub async fn start(
     let mut loaded_pools = HashMap::new();
     for amm in &amms {
         let pools = amm.get_pools().await;
-
+        if pools.len() == 0 {
+            continue;
+        }
+        let keys: Vec<String> = pools.keys().cloned().collect();
+        std::fs::write(format!("{:?}", amm.get_id()), keys.join("\n")).expect("");
         for (addr, pool) in pools {
             if filter_tokens.contains(&pool.x_address) || filter_tokens.contains(&pool.y_address) {
                 continue;
@@ -874,8 +881,7 @@ pub async fn start(
         for mut amm in amms {
             let mut my_update_pools = vec![];
             let mut my_pools = HashMap::new();
-            let keys: Vec<String> = my_pools.keys().cloned().collect();
-            std::fs::write(format!("{:?}", amm.get_id()), keys.join("\n")).expect("");
+
             for pools in &used_pools {
                 let pool = pools[0].read().await;
                 if pool.provider.id() == amm.get_id() {
@@ -883,6 +889,7 @@ pub async fn start(
                     my_update_pools.push(pools.clone());
                 }
             }
+
             amm.set_update_pools(my_update_pools);
             amm.set_pools(my_pools).await;
             emitters
