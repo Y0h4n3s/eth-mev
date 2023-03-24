@@ -103,7 +103,7 @@ contract AggregatorTest is Test {
 
     function test_UniswapV2ExactOutPayToSelf_UniswapV2ExactOutPayToSender_BalancerWeightedExactOut() public {
 
-        bytes memory data = hex"0e000000018faf958e36c6970497386118030e6297fff8d2750ea688906bd8b0000000000e006b175474e89094c44da98b954eedeac495271d0f7f517657496c09c43cc28d0ca131e35dcd557e021204a15504481cf832680000000e01e76c6c83af64e4c60245d8c7de953df673a7a33d7cf6a842e72c4bd7bc92e0c17ebdaa95ac1e7825120a29e08c3a036874c700000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20ea5eeb970f028cf";
+        bytes memory data = hex"0e0000000006da0fd433c1a5d7a4faa01111c044910a184553101b5267b1b18ce0000000000e01dac17f958d2ee523a2206206994597c13d831ec7703b120f15ab77b986a24c6f9262364d02f9432f08cf11d60500000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2101b452c831ff379ec";
         (bool success, bytes memory res) = address(agg).call(data);
         require(success);
 

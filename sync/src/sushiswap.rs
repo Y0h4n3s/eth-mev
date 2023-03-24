@@ -108,6 +108,8 @@ impl LiquidityProvider for SushiSwap {
                     .await
                     .unwrap(),
             );
+            #[cfg(feature = "ipc")]
+            let eth_client = Arc::new(ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap());
             let factory = UniswapV2Factory::new(factory_address, eth_client.clone());
 
             let pairs_length: U256 = factory.all_pairs_length().call().await.unwrap();
@@ -228,6 +230,8 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();
+                #[cfg(feature = "ipc")]
+                let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap();
                 provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let clnt = Arc::new(
                         provider
@@ -389,6 +393,8 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();
+                #[cfg(feature = "ipc")]
+                let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap();
                 provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let client = Arc::new(
                     provider

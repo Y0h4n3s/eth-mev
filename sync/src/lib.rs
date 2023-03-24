@@ -908,25 +908,26 @@ pub async fn start(
 mod tests {
     use ethers::providers::{Provider, Ws};
     use tokio::test;
+    use super::*;
     #[test]
     async fn test_uniswap_v3_calculator() {
         let mut meta = UniswapV3Metadata {
             factory_address: "".to_string(),
-            address: "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640".to_string(),
-            token_a: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48".to_string(),
-            token_b: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".to_string(),
-            token_a_decimals: 6,
+            address: "0xad57b47a8b403b1d756e3c2253248b3039c9b3e0".to_string(),
+            token_a: "0x767fe9edc9e0df98e07454847909b5e959d7ca0e".to_string(),
+            token_b: "0x7e77dcb127f99ece88230a64db8d595f31f1b068".to_string(),
+            token_a_decimals: 18,
             token_b_decimals: 18,
-            fee: 500,
-            liquidity: 229553535761302309707,
-            sqrt_price: "2030685815623659403894576284118504".to_string(),
-            tick: 203048,
-            tick_spacing: 10,
-            liquidity_net: 0,
+            fee: 10000,
+            liquidity: U256::from(2935216657493028029013 as u128),
+            sqrt_price: U256::from_dec_str("93069955451674004580333445571").unwrap(),
+            tick: -59012,
+            tick_spacing: 60,
+            liquidity_net: I256::zero(),
             ..Default::default()
         };
         let eth_client = Arc::new(
-            Provider::<Ws>::connect("ws://65.21.198.115:8546")
+                Provider::<Ws>::connect("ws://89.58.31.215:8546")
                 .await
                 .unwrap(),
         );
@@ -934,7 +935,7 @@ mod tests {
             &meta,
             meta.tick,
             true,
-            160,
+            150,
             None,
             eth_client.clone(),
         )
@@ -944,7 +945,7 @@ mod tests {
             &meta,
             meta.tick,
             false,
-            160,
+            150,
             None,
             eth_client.clone(),
         )
@@ -952,25 +953,24 @@ mod tests {
         .unwrap();
         meta.tick_bitmap_x_y = x_y;
         meta.tick_bitmap_y_x = y_x;
+        let complete_meta = abi::uniswap_v3::get_complete_pool_data_batch_request(vec![H160::from_str(&meta.address).unwrap()], &eth_client).await.unwrap().first().unwrap().clone();
+        println!("{:?}", complete_meta);
         let pool = Pool {
             address: "".to_string(),
-            x_address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 ".to_string(),
+            x_address: "0x33349b282065b0284d756f0577fb39c158f935e6 ".to_string(),
             y_address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 ".to_string(),
             curve: None,
             curve_type: Curve::Uncorrelated,
             fee_bps: 0,
-            x_amount: 0,
-            y_amount: 0,
+            x_amount: U256::from(113005855278874616752 as u128),
+            y_amount: U256::from(113005855278874616752 as u128),
             x_to_y: true,
-            provider: LiquidityProviders::UniswapV3(meta.clone()),
+            provider: LiquidityProviders::UniswapV3(complete_meta.clone()),
         };
 
         let calculator = pool.provider.build_calculator();
 
-        let out_ = calculator
-            .calculate_out(U256::from(10_u128.pow(8)), &pool)
-            .unwrap();
-        let in_ = calculator.calculate_in(out_, &pool).unwrap();
-        println!("{} {}", in_, out_);
+        let in_ = calculator.calculate_in(U256::from(3490852256887603537 as u128), &pool).unwrap();
+        println!("{} ", in_);
     }
 }

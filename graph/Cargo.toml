@@ -23,8 +23,8 @@ kanal = "0.1.0-pre7"
 neo4rs = "0.5.9"
 bb8-bolt = "0.8.0"
 bolt-proto = "0.12.0"
-ethers = "2.0.0"
-ethers-providers = "2.0.0"
+ethers = "2.0.1"
+ethers-providers = "2.0.1"
 ethers-flashbots = { git = "https://github.com/onbjerg/ethers-flashbots" }
 url = "2.3.1"
 backtrack = "0.3.0"
@@ -36,3 +36,6 @@ tracing-subscriber = "0.3.16"
 rayon = "1.6.1"
 rmp-serde = "1.1.1"
 rand = "0.8.5"
+
+[features]
+ipc = []

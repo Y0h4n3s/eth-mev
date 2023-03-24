@@ -242,13 +242,11 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                                             .into_int()
                                             .unwrap())
                                             .as_i32(),
-                                        tick_spacing: pool_data[8]
+                                        tick_spacing: I256::from_raw(pool_data[8]
                                             .to_owned()
                                             .into_int()
-                                            .unwrap()
-                                            .to_string()
-                                            .parse::<i32>()
-                                            .unwrap(),
+                                            .unwrap())
+                                            .as_i32(),
                                         fee: pool_data[9]
                                             .to_owned()
                                             .into_uint()

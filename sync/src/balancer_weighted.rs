@@ -260,6 +260,9 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();
+                #[cfg(feature = "ipc")]
+                let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap();
+
                 provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let clnt = Arc::new(
                         provider

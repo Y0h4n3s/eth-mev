@@ -48,7 +48,7 @@ impl NodeDispatcher {
             }
         }
         w.insert(min_url.clone(), min + 1);
-        info!("Node: {}", min_url);
+        debug!("Node: {}", min_url);
         min_url
     }
 }

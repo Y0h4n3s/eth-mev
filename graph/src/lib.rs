@@ -654,6 +654,13 @@ DETACH DELETE n",
     let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
     let signer_wallet_address = signer.address();
     let provider = ethers_providers::Provider::<Http>::connect(&node_url).await;
+    #[cfg(feature = "ipc")]
+    let provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(
+        "$HOME/.ethereum/geth.ipc",
+    )
+    .await
+    .unwrap();
+
     let block = provider
         .get_block(BlockNumber::Latest)
         .await
@@ -775,7 +782,12 @@ DETACH DELETE n",
     let cores = num_cpus::get();
 
     let gas_lookup = gas_map.clone();
+    used_oneshot.send(uniq_locked).unwrap();
+    tokio::time::sleep(Duration::from_secs(30)).await;
 
+    while updated_q.len() != 0 {
+        drop(updated_q.recv().await);
+    }
     for i in 0..cores {
         let gas_lookup = gas_lookup.clone();
         let path_lookup = path_lookup1.clone();
@@ -859,11 +871,6 @@ DETACH DELETE n",
             }
         }));
     }
-    let mut watch_pools: HashMap<String, Pool> = HashMap::new();
-    uniq.iter().for_each(|pool| {
-        watch_pools.insert(pool.address.clone(), pool.clone());
-    });
-    used_oneshot.send(uniq_locked).unwrap();
     for worker in workers {
         worker.await.unwrap();
     }

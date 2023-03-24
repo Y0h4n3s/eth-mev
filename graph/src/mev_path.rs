@@ -789,32 +789,32 @@ impl MevPath {
         if best_route_profit > I256::from(0) {
             //            debug!("{}", Self::path_to_solidity_test(&path, &instructions[best_route_index]));
             //
-//            info!(
-//                "Size: {} Profit: {}",
-//                best_route_size / 10_f64.powf(18.0),
-//                best_route_profit.as_i128() as f64 / 10_f64.powf(18.0)
-//            );
-//            for (i, step) in steps_meta[best_route_index].iter().enumerate() {
-//                let pool = if i > path.len() - 1 {
-//                    path[path.len() - 1].clone()
-//                } else {
-//                    path[i].clone()
-//                };
-//                info!(
-//                    "{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ",
-//                    pool,
-//                    step.step.get_output(),
-//                    step.step_id,
-//                    step.asset_token,
-//                    step.asset,
-//                    step.debt_token,
-//                    step.debt
-//                );
-//            }
+            info!(
+                "Size: {} Profit: {}",
+                best_route_size / 10_f64.powf(18.0),
+                best_route_profit.as_i128() as f64 / 10_f64.powf(18.0)
+            );
+            for (i, step) in steps_meta[best_route_index].iter().enumerate() {
+                let pool = if i > path.len() - 1 {
+                    path[path.len() - 1].clone()
+                } else {
+                    path[i].clone()
+                };
+                info!(
+                    "{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ",
+                    pool,
+                    step.step.get_output(),
+                    step.step_id,
+                    step.asset_token,
+                    step.asset,
+                    step.debt_token,
+                    step.debt
+                );
+            }
 
             let mut final_data = instructions[best_route_index].join("");
-//            info!("{} {}", path.len(), final_data);
-//            info!("\n\n\n");
+            info!("{} {}", path.len(), final_data);
+            info!("\n\n\n");
 
             Ok(PathResult {
                 ix_data: final_data,
