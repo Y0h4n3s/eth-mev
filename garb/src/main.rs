@@ -219,7 +219,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
             ));
         bundle_handlers.push(client)
     }
-    for i in 0..cores*2 {
+    for i in 0..cores {
 
         // backruns
         let node_url = nodes.next_free();
@@ -229,10 +229,7 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
         let routes = rt.clone();
 
         let bundle_handlers = bundle_handlers.clone();
-        workers.push(std::thread::spawn(move || {
-            let mut rt = Runtime::new().unwrap();
-
-            rt.block_on(async move {
+        workers.push(tokio::spawn(async move  {
                 let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
                 let nonce = Arc::new(tokio::sync::RwLock::new(U256::from(0)));
                 let block : Arc<tokio::sync::RwLock<Block<H256>>> = Arc::new(tokio::sync::RwLock::new(Block::default()));
@@ -334,17 +331,17 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                                 bundle.push(signed_tx);
                                 warn!("Trying {}. ->  {} {} {:?} {:?} {:?}",i+1,tx_request.gas.unwrap(), opportunity.block_number, blk, tx_request.max_priority_fee_per_gas.unwrap(), tx_request.max_fee_per_gas.unwrap());
 
-                                let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, true).await;
-                                        if let Some(res) = res {
-                                            if res.transactions.iter().all(|tx| tx.error.is_none()) {
-                                                for step in &op.result.steps {
-                                                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step.get_pool().await, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
-                                                }
-                                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
-
-                                            }
-                                        }
-//                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+2).await;
+//                                let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, true).await;
+//                                        if let Some(res) = res {
+//                                            if res.transactions.iter().all(|tx| tx.error.is_none()) {
+//                                                for step in &op.result.steps {
+//                                                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step.get_pool().await, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
+//                                                }
+//                                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
+//
+//                                            }
+//                                        }
+                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
 
                             }));
                         }
@@ -352,12 +349,12 @@ pub async fn transactor(rts: &mut kanal::AsyncReceiver<Backrun>, rt: &mut kanal:
                     }
                     futures::future::join_all(handles).await;
                 }
+            
 
-            });
         }));
     }
     for worker in workers {
-        worker.join();
+        worker.await.unwrap();
     }
 
 
@@ -443,7 +440,7 @@ impl FlashBotsBundleHandler {
 
             let res = flashbots.send_bundle(&bundle).await;
             if let Ok(res) = res {
-                debug!("{:?}", res.bundle_hash);
+                info!("{:?}", res.await);
                 // let bundle_status = flashbots.get_bundle_stats(res.bundle_hash, res.block).await;
                 // if let Ok(stats) = bundle_status {
                 //         info!("{:?}",  stats);

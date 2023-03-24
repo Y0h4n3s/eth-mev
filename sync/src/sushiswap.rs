@@ -225,7 +225,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
             rt.block_on(async move {
                 let mut joins = vec![];
 
-                let mut provider = Provider::<Ws>::connect("ws://91.205.173.242:8546")
+                let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();
                 provider.set_interval(Duration::from_millis(POLL_INTERVAL));
