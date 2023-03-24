@@ -492,7 +492,10 @@ pub struct FlashBotsBundleHandler {}
 impl FlashBotsBundleHandler {
     async fn submit(
         txs: Vec<Bytes>,
+        #[cfg(not(feature = "ipc"))]
         flashbots: Arc<FlashbotsMiddleware<Provider<Ws>, LocalWallet>>,
+        #[cfg(feature = "ipc")]
+        flashbots: Arc<FlashbotsMiddleware<Provider<ethers_providers::Ipc>, LocalWallet>>,
         from_block: u64,
         to_block: u64,
     ) {
@@ -527,7 +530,10 @@ impl FlashBotsBundleHandler {
 
     async fn simulate(
         txs: Vec<Bytes>,
+        #[cfg(not(feature = "ipc"))]
         flashbots: &Arc<FlashbotsMiddleware<Provider<Ws>, LocalWallet>>,
+        #[cfg(feature = "ipc")]
+        flashbots: Arc<FlashbotsMiddleware<Provider<ethers_providers::Ipc>, LocalWallet>>,
         block: u64,
         only_successful: bool,
     ) -> Option<SimulatedBundle> {
@@ -574,6 +580,7 @@ impl FlashBotsBundleHandler {
         }
         None
     }
+
 }
 
 #[derive(Serialize, Deserialize, Clone)]
