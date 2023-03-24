@@ -65,7 +65,13 @@ use tokio::sync::{RwLock, Semaphore};
 use tokio::time::Duration;
 use tracing::{debug, error, info};
 use url::Url;
-
+static IPC_PATH: Lazy<String> = Lazy::new(|| {
+    std::env::var("ETH_IPC_PATH").unwrap_or_else(|_| {
+        std::env::args()
+            .nth(6)
+            .unwrap_or("/root/.ethereum/geth.ipc".to_string())
+    })
+});
 static PRIVATE_KEY: Lazy<String> = Lazy::new(|| std::env::var("ETH_PRIVATE_KEY").unwrap());
 static BUNDLE_SIGNER_PRIVATE_KEY: Lazy<String> =
     Lazy::new(|| std::env::var("ETH_BUNDLE_SIGNER_PRIVATE_KEY").unwrap());
@@ -655,11 +661,7 @@ DETACH DELETE n",
     let signer_wallet_address = signer.address();
     let provider = ethers_providers::Provider::<Http>::connect(&node_url).await;
     #[cfg(feature = "ipc")]
-    let provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(
-        "$HOME/.ethereum/geth.ipc",
-    )
-    .await
-    .unwrap();
+    let provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
 
     let block = provider
         .get_block(BlockNumber::Latest)

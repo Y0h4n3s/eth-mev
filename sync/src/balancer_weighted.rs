@@ -50,7 +50,7 @@ use tracing::{info, debug, trace, error, warn};
 use crate::abi::uniswap_v3::{get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3Pool, UniswapV3TickData};
 use crate::node_dispatcher::NodeDispatcher;
 use crate::POLL_INTERVAL;
-
+use crate::IPC_PATH;
 fn from_float_str<'de, D>(deserializer: D) -> Result<U256, D::Error>
     where
         D: Deserializer<'de>,
@@ -261,7 +261,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
                     .await
                     .unwrap();
                 #[cfg(feature = "ipc")]
-                let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap();
+                let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
 
                 provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let clnt = Arc::new(

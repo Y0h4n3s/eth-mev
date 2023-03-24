@@ -47,6 +47,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::task::{JoinHandle, LocalSet};
+use crate::IPC_PATH;
 use tracing::{debug, error, info, trace};
 use uniswap_v3_math::sqrt_price_math::FIXED_POINT_96_RESOLUTION;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
@@ -611,7 +612,7 @@ impl LiquidityProvider for UniSwapV3 {
             let client = reqwest::Client::new();
             let eth_client = Arc::new(Provider::<Ws>::connect(&node_url).await.unwrap());
             #[cfg(feature = "ipc")]
-            let eth_client = Arc::new(ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap());
+            let eth_client = Arc::new(ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap());
             let current_block = eth_client.get_block_number().await.unwrap().0[0];
 
             let step = 100000_u64;
@@ -761,7 +762,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                     .await
                     .unwrap();
                 #[cfg(feature = "ipc")]
-                let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap();
+                let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
                 provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let clnt = Arc::new(provider);
                 let latest_block = clnt.get_block_number().await.unwrap();

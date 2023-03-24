@@ -41,7 +41,13 @@ pub static CHECKED_COIN: Lazy<String> = Lazy::new(|| {
     std::env::var("ETH_CHECKED_COIN")
         .unwrap_or("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2".to_string())
 });
-
+static IPC_PATH: Lazy<String> = Lazy::new(|| {
+    std::env::var("ETH_IPC_PATH").unwrap_or_else(|_| {
+        std::env::args()
+            .nth(6)
+            .unwrap_or("/root/.ethereum/geth.ipc".to_string())
+    })
+});
 pub const POLL_INTERVAL: u64 = 60;
 use crate::node_dispatcher::NodeDispatcher;
 use crate::sushiswap::SushiSwapMetadata;

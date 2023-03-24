@@ -85,6 +85,13 @@ static CONTRACT_ADDRESS: Lazy<Address> = Lazy::new(|| {
     .unwrap()
 });
 
+static IPC_PATH: Lazy<String> = Lazy::new(|| {
+    std::env::var("ETH_IPC_PATH").unwrap_or_else(|_| {
+        std::env::args()
+            .nth(6)
+            .unwrap_or("/root/.ethereum/geth.ipc".to_string())
+    })
+});
 static NODE_URL: Lazy<Url> = Lazy::new(|| {
     let url = std::env::var("ETH_NODE_URL").unwrap_or_else(|_| {
         std::env::args()
@@ -252,7 +259,7 @@ pub async fn transactor(
         .await
         .unwrap();
     #[cfg(feature = "ipc")]
-    let provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap();
+    let provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
 
     let briber = Arc::new(abi::FlashbotsCheckAndSend::new(
         H160::from_str("0xc4595e3966e0ce6e3c46854647611940a09448d3").unwrap(),
@@ -277,9 +284,8 @@ pub async fn transactor(
         let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
 
         let provider = ethers_providers::Provider::<ethers_providers::Ws>::connect(&node_url).await.unwrap();
-
         #[cfg(feature = "ipc")]
-        let provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap();
+        let provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
 
         // single transaction
         let routes = rt.clone();
@@ -533,7 +539,7 @@ impl FlashBotsBundleHandler {
         #[cfg(not(feature = "ipc"))]
         flashbots: &Arc<FlashbotsMiddleware<Provider<Ws>, LocalWallet>>,
         #[cfg(feature = "ipc")]
-        flashbots: Arc<FlashbotsMiddleware<Provider<ethers_providers::Ipc>, LocalWallet>>,
+        flashbots: &Arc<FlashbotsMiddleware<Provider<ethers_providers::Ipc>, LocalWallet>>,
         block: u64,
         only_successful: bool,
     ) -> Option<SimulatedBundle> {

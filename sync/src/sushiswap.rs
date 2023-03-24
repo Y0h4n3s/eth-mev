@@ -34,7 +34,7 @@ use tracing::{debug, error, info, trace};
 use std::cmp::min;
 use crate::node_dispatcher::NodeDispatcher;
 use crate::uniswap_v2::UniswapV2Metadata;
-
+use crate::IPC_PATH;
 const SUSHISWAP_ROUTER: &str = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F";
 const TVL_FILTER_LEVEL: i32 = 0;
 
@@ -109,7 +109,7 @@ impl LiquidityProvider for SushiSwap {
                     .unwrap(),
             );
             #[cfg(feature = "ipc")]
-            let eth_client = Arc::new(ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap());
+            let eth_client = Arc::new(ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap());
             let factory = UniswapV2Factory::new(factory_address, eth_client.clone());
 
             let pairs_length: U256 = factory.all_pairs_length().call().await.unwrap();
@@ -231,7 +231,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
                     .await
                     .unwrap();
                 #[cfg(feature = "ipc")]
-                let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap();
+                let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
                 provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let clnt = Arc::new(
                         provider
@@ -394,7 +394,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>> for SushiS
                     .await
                     .unwrap();
                 #[cfg(feature = "ipc")]
-                let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc("$HOME/.ethereum/geth.ipc").await.unwrap();
+                let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
                 provider.set_interval(Duration::from_millis(POLL_INTERVAL));
                 let client = Arc::new(
                     provider
