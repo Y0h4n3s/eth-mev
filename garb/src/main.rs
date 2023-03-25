@@ -333,6 +333,7 @@ pub async fn transactor(
         let signer = Arc::new(signer);
         let signer_wallet_address = signer.address();
 
+        let briber = briber.clone();
         workers.push(tokio::spawn(async move  {
 
                 let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
@@ -355,6 +356,8 @@ pub async fn transactor(
                             let block = block.clone();
                             let signer = signer.clone();
                             let mut handler = handler.clone();
+                            let briber = briber.clone();
+
                             futs.push(async move {
                                 tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
                                 tx_request.from = Some(signer_wallet_address);
@@ -363,7 +366,10 @@ pub async fn transactor(
                                     warn!("Skipping block not loaded {}. ->  {} {} ",i+1,gas_cost,opportunity.block_number);
                                     return
                                 }
-                                let max_fee = op.profit / gas_cost;
+                                let gas_cost = gas_cost + U256::from(40000);
+                                let bribe = (op.profit * U256::from(10) ) / U256::from(100);
+                                let profit = op.profit - bribe;
+                                let max_fee = profit / gas_cost;
                                 let balance = U256::from(50000000000000000 as u128);
                                 let max_possible_fee = balance / gas_cost;
                                 let base_fee = calculate_next_block_base_fee(block.clone()).unwrap();
@@ -386,6 +392,7 @@ pub async fn transactor(
                                      );
                                     return
                                 }
+
                                 tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
 
                                 tx_request.value = None;
@@ -395,6 +402,14 @@ pub async fn transactor(
                                 let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
                                 let signed_tx = typed_tx.rlp_signed(&tx_sig);
                                 let mut bundle = vec![];
+                                bundle.push(signed_tx);
+                                let typed_bribe_tx = briber.check_32_bytes_and_send(
+                                        H160::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(),
+                                Bytes::from_str("0x313ce567").unwrap(),
+                                H256::from_str("0x0000000000000000000000000000000000000000000000000000000000000012").unwrap().0)
+                                .gas(U256::from(40000)).gas_price(base_fee).value(bribe).tx;
+                                let tx_sig = signer.sign_transaction(&typed_bribe_tx).await.unwrap();
+                                let signed_tx = typed_bribe_tx.rlp_signed(&tx_sig);
                                 bundle.push(signed_tx);
                                 warn!(
                                         "Trying {}. ->  {} {} {:?} {:?} {:?}",
