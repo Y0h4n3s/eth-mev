@@ -233,7 +233,7 @@ impl MevPath {
         let mut best_route_size = 0.0;
         let mut best_route_profit = I256::from(0);
         let mut best_route_index = 0;
-        let mut mid = 6.0;
+        let mut mid = 20.0;
 
         let mut left = 0.0;
         let mut right = mid * 2.0;
@@ -242,7 +242,7 @@ impl MevPath {
         let mut steps_meta = vec![];
 
         let contract_address = "<contract_address>".to_string();
-        'binary_search: for i in 0..8 {
+        'binary_search: for i in 0..10 {
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
             let mut asset = I256::from(i_atomic as u128);
 

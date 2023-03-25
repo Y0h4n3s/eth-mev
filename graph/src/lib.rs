@@ -761,7 +761,7 @@ DETACH DELETE n",
                 if tx.error.is_none() && tx.revert.is_none() {
                     w.insert(pool.address.clone(), gas_used + U256::from(5000));
                 } else {
-                    w.insert(pool.address.clone(), gas_used + U256::from(20000));
+                    w.insert(pool.address.clone(), gas_used + U256::from(10000));
                 }
                 debug!("{} uses {:?}", pool.address, gas_used + U256::from(300))
             } else {
