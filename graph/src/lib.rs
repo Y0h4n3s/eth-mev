@@ -596,11 +596,20 @@ DETACH DELETE n",
 
             let paths = saved.get(&pool).unwrap();
         }
-
-        for (pool, paths) in saved {
+        let filter_tokens: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string("blacklisted_tokens.json").unwrap()).unwrap();
+        let filter_pools: Vec<String> =
+        serde_json::from_str(&std::fs::read_to_string("blacklisted_pools.json").unwrap()).unwrap();
+        'main: for (pool, paths) in saved {
             for r in paths {
                 let mut locked = vec![];
                 for pool in &r {
+                    if filter_tokens.contains(&pool.x_address) || filter_tokens.contains(&pool.y_address) {
+                        continue 'main;
+                    }
+                    if filter_pools.contains(&pool.address) {
+                        continue 'main;
+                    }
                     let l_pools = locked_pools.get(pool).unwrap();
                     if pool.x_to_y {
                         locked.push(l_pools[0].clone());
