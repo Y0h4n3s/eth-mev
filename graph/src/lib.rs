@@ -91,7 +91,6 @@ static NEO4J_PASS: Lazy<String> =
     Lazy::new(|| std::env::var("ETH_NEO4J_PASS").unwrap_or("neo4j".to_string()));
 static NEO4J_URL: Lazy<String> =
     Lazy::new(|| std::env::var("ETH_NEO4J_URL").unwrap_or("127.0.0.1:7687".to_string()));
-
 fn combinations<T>(v: &[T], k: usize) -> Vec<Vec<T>>
 where
     T: Clone,
@@ -340,7 +339,7 @@ DETACH DELETE n",
             HashMap::<Pool, HashSet<(String, Vec<Pool>)>>::new(),
         )); //140 311 10869 12059
 
-        let max_intermidiate_nodes = 3;
+        let max_intermidiate_nodes = 4;
         for i in 2..max_intermidiate_nodes {
             info!("Preparing {} step routes ", i);
             let path_lookup = path_lookup.clone();
@@ -379,7 +378,7 @@ DETACH DELETE n",
             info!("{}", query);
 
             let res = conn.run(query, None, None).await?;
-            let pull_meta = Metadata::from_iter(vec![("n", 1000)]);
+            let pull_meta = Metadata::from_iter(vec![("n", 10000)]);
             let (mut records, mut response) = conn.pull(Some(pull_meta.clone())).await?;
             loop {
                 let mut handles = vec![];
@@ -388,18 +387,18 @@ DETACH DELETE n",
                 let pools = pools.clone();
                 let locked_pools = locked_pools.clone();
                 handles.push(tokio::spawn(async move {
-                    let mut futs = FuturesUnordered::new();
+                    let ps = pools.read().await.clone();
 
-                    // populate path_lookup with this batch
-                    for record in records {
-                        let pools = pools.clone();
-                        let ps = pools.read().await.clone();
-                        let mut pools = record
+                    let paths = records.into_par_iter().map(|record| {
+                        let record = record.clone();
+                        record
                             .fields()
-                            .into_par_iter()
-                            .filter_map(|val| match val.clone() {
-                                Value::List(rels) => Some(
-                                    rels.iter()
+                            .to_vec()
+                            .into_iter()
+                            .filter_map(|val| {
+                                let r = match val.clone() {
+                                    Value::List(rels) =>
+                                            rels.iter()
                                         .filter_map(|rel| match rel {
                                             Value::Node(rel) => {
                                                 if let Some(is_pool) = rel
@@ -409,32 +408,32 @@ DETACH DELETE n",
                                                 {
                                                     let address =
                                                         match rel.properties().get("address") {
-                                                            Some(Value::String(s)) => s.clone(),
+                                                        Some(Value::String(s)) => s.clone(),
                                                             _ => "0x0".to_string(),
                                                         };
                                                     let provider =
                                                         match rel.properties().get("provider") {
-                                                            Some(Value::String(provider)) => {
-                                                                LiquidityProviders::from(provider)
-                                                            }
+                                                        Some(Value::String(provider)) => {
+                                                            LiquidityProviders::from(provider)
+                                                        }
                                                             _ => LiquidityProviders::UniswapV2(
-                                                                Default::default(),
+                                                                    Default::default(),
                                                             ),
                                                         };
                                                     let x_to_y =
                                                         match rel.properties().get("x_to_y") {
-                                                            Some(Value::String(x_to_y)) => {
-                                                                if x_to_y == &"true".to_string() {
-                                                                    true
-                                                                } else {
-                                                                    false
-                                                                }
+                                                        Some(Value::String(x_to_y)) => {
+                                                            if x_to_y == &"true".to_string() {
+                                                                true
+                                                            } else {
+                                                                false
                                                             }
+                                                        }
                                                             _ => false,
                                                         };
                                                     match ps.iter().find(|(_, p)| {
                                                         p.address == address
-                                                            && p.provider == provider
+                                                        && p.provider == provider
                                                     }) {
                                                         Some((s, pool)) => {
                                                             let mut new = pool.clone();
@@ -451,12 +450,8 @@ DETACH DELETE n",
                                             _ => None,
                                         })
                                         .collect::<Vec<Pool>>(),
-                                ),
-                                _ => None,
-                            })
-                            .collect::<Vec<Vec<Pool>>>();
-                        pools.into_iter().for_each(|r| {
-                            futs.push(async {
+                                    _ => vec![],
+                                };
                                 let mut seen_count = 0;
                                 r.iter().for_each(|p| {
                                     if p.x_address == CHECKED_COIN.clone() {
@@ -470,8 +465,10 @@ DETACH DELETE n",
                                 if seen_count != 2 {
                                     None
                                 } else {
+                                    let mut pools = r;
+                                    pools.reverse();
                                     let mut locked = vec![];
-                                    for pool in &r {
+                                    for pool in &pools {
                                         let l_pools = locked_pools.get(pool).unwrap();
                                         if pool.x_to_y {
                                             locked.push(l_pools[0].clone());
@@ -479,37 +476,33 @@ DETACH DELETE n",
                                             locked.push(l_pools[1].clone());
                                         }
                                     }
-                                    if let Some(mut path) =
-                                        MevPath::new(r, &locked, &CHECKED_COIN.clone()).await
-                                    {
-                                        if path.is_valid().await {
+                                    let mut path =
+                                        MevPath::new(pools, &locked, &CHECKED_COIN.clone());
+
+                                        if let Ok(kind) = path.process_path(path.pools.clone(), &path.input_token) {
+                                            path.optimal_path = kind;
                                             Some(path)
                                         } else {
                                             None
                                         }
-                                    } else {
-                                        None
-                                    }
+
                                 }
-                            })
-                        });
-                    }
-                    let paths = futs
-                        .collect::<Vec<Option<MevPath>>>()
-                        .await
-                        .into_iter()
-                        .filter_map(|p| p);
+                            }).collect_vec()
+
+
+
+                    }).flatten().collect::<Vec<MevPath>>();
                     for p in paths {
-                        for pool in p.pools.iter() {
-                            let mut w = path_lookup1.write().await;
-                            if let Some(mut existing) = w.get_mut(&pool) {
-                                existing.push(p.clone());
-                            } else {
-                                let mut set = vec![];
-                                set.push(p.clone());
-                                w.insert(pool.clone(), set);
+                            for pool in p.pools.iter() {
+                                let mut w = path_lookup1.write().await;
+                                if let Some(mut existing) = w.get_mut(&pool) {
+                                    existing.push(p.clone());
+                                } else {
+                                    let mut set = vec![];
+                                    set.push(p.clone());
+                                    w.insert(pool.clone(), set);
+                                }
                             }
-                        }
                     }
                     drop(permit);
                 }));
@@ -552,12 +545,10 @@ DETACH DELETE n",
             let mut saved = HashMap::<Pool, Vec<Vec<Pool>>>::new();
             for (pool, paths) in path_lookup1.read().await.clone() {
                 for path in paths {
-                    let mut re = path.pools.clone();
-                    re.reverse();
                     if let Some(mut exsisting) = saved.get_mut(&pool) {
-                        exsisting.push(re)
+                        exsisting.push(path.pools)
                     } else {
-                        let v = vec![re];
+                        let v = vec![path.pools];
                         saved.insert(pool.clone(), v);
                     }
                 }
@@ -617,16 +608,22 @@ DETACH DELETE n",
                         locked.push(l_pools[1].clone());
                     }
                 }
-                if let Some(mut path) = MevPath::new(r, &locked, &CHECKED_COIN.clone()).await {
-                    let mut w = path_lookup1.write().await;
-                    if let Some(mut existing) = w.get_mut(&pool) {
-                        existing.push(path);
+                let mut path = MevPath::new(r, &locked, &CHECKED_COIN.clone());
+                    if let Ok(kind) = path.process_path(path.pools.clone(), &path.input_token) {
+                        path.optimal_path = kind;
+                        let mut w = path_lookup1.write().await;
+                        if let Some(mut existing) = w.get_mut(&pool) {
+                            existing.push(path);
+                        } else {
+                            let mut set = vec![];
+                            set.push(path);
+                            w.insert(pool.clone(), set);
+                        }
                     } else {
-                        let mut set = vec![];
-                        set.push(path);
-                        w.insert(pool.clone(), set);
+                        continue
                     }
-                }
+
+                
             }
         }
     }
@@ -799,7 +796,7 @@ DETACH DELETE n",
     while updated_q.len() != 0 {
         drop(updated_q.recv().await);
     }
-    for i in 0..cores {
+    for i in 0..1 {
         let gas_lookup = gas_lookup.clone();
         let path_lookup = path_lookup1.clone();
         let single_routes = single_routes.clone();

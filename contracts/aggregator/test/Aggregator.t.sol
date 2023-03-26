@@ -93,21 +93,21 @@ contract AggregatorTest is Test {
 //        (bool success, bytes memory res) = address(agg).call(data);
 //        require(success);
 //    }
-//    function test_SushiSwapExactOutPayToSelf_SushiSwapExactOutPayToSender_SushiSwapExactOutPayToSender_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_PaybackPayToSender() public {
-//
-//        bytes memory data = hex"0e00000000cb2286d9471cc185281c4f763d34a962ed2129621001a055690d9db8000000000e01ebd49b4c8f7f0ded2ca8b951cf92a583e7b4c8e70a258b3294990000000e00ba87dc891945dbb3caeeaf822de208d7ea89b298120750f9cb63cd2e6aed00002000000ed8721b9f1af5f0bea82d4407b56ef011dc7b33080b7c5d9c0000200000840deeef2f115cf50da625f7368c24af6fe7441010018d4840c05703a000000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc210018fc1190ad7db17";
-//        (bool success, bytes memory res) = address(agg).call(data);
-//        require(success);
-//    }
+    function test_SushiSwapExactOutPayToSelf_SushiSwapExactOutPayToSender_SushiSwapExactOutPayToSender_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_PaybackPayToSender() public {
 
-
-    function test_UniswapV2ExactOutPayToSelf_UniswapV2ExactOutPayToSender_BalancerWeightedExactOut() public {
-
-        bytes memory data = hex"000006000188e6a0c2ddd26feeb64f039a2c41296fcb3f56400ea688906bd8b0000000200000e1fc415f87465b024ee62f55ef33d8f822705b5b0804e54d9a0000000e01d9016a907dc0ecfa3ca425ab20b6b785b42f2373f68d0d896cc3b6ea1872f80c143b9a4026caa77a122e2b0c8c29ac79151200000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20e15316a1d8301c3";
+        bytes memory data = hex"00000600e42318ea3b998e8355a3da364eb9d48ec725eb45001002d89577d7d4020000000700a4e0faa58465a2d369aa21b3e42d43374c6f9613001002a8e8613d3b4e8a00000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc21002d893eedb86c233000400009f9d900462492d4c21e9523ca95a7cd86142f2980002000000000000000004620xe42318ea3b998e8355a3da364eb9d48ec725eb45ae78736cd615f374d3085123a210448e74fc6393d33526068d116ce69f19a9ee46f0bd304f21a51f107d64ed83209278a21002a8e8613d3b4e8a";
         (bool success, bytes memory res) = address(agg).call(data);
         require(success);
-
     }
+
+
+//    function test_UniswapV2ExactOutPayToSelf_UniswapV2ExactOutPayToSender_BalancerWeightedExactOut() public {
+//
+  //      bytes memory data = hex"000006000188e6a0c2ddd26feeb64f039a2c41296fcb3f56400ea688906bd8b0000000200000e1fc415f87465b024ee62f55ef33d8f822705b5b0804e54d9a0000000e01d9016a907dc0ecfa3ca425ab20b6b785b42f2373f68d0d896cc3b6ea1872f80c143b9a4026caa77a122e2b0c8c29ac79151200000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20e15316a1d8301c3";
+    //    (bool success, bytes memory res) = address(agg).call(data);
+     //   require(success);
+//
+  //  }
 
 
 }

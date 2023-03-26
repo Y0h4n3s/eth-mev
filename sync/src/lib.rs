@@ -177,6 +177,68 @@ pub type BoxedLiquidityProvider =
     Box<dyn LiquidityProvider<Metadata = Box<dyn Meta>> + Send + Sync>;
 
 impl LiquidityProviders {
+    pub fn pay_address_signature(&self, inline: bool) -> String {
+        match self {
+
+            LiquidityProviders::UniswapV3(_) => "00000900".to_string(),
+            LiquidityProviders::BalancerWeighted(_) => "00040000".to_string(),
+            _ => {
+                if inline {
+                    "00006000".to_string()
+
+                } else {
+                    "00005000".to_string()
+
+                }
+            }
+        }
+    }
+    pub fn pay_next_signature(&self, inline: bool) -> String {
+        match self {
+
+            LiquidityProviders::UniswapV3(_) => "00000800".to_string(),
+            LiquidityProviders::BalancerWeighted(_) => "00030000".to_string(),
+            _ => {
+                if inline {
+                    "00008000".to_string()
+
+                } else {
+                    "00007000".to_string()
+
+                }
+            }
+        }
+    }
+    pub fn pay_self_signature(&self, inline: bool) -> String {
+        match self {
+            LiquidityProviders::UniswapV3(_) => "00000600".to_string(),
+            LiquidityProviders::BalancerWeighted(_) => "00010000".to_string(),
+            _ => {
+                if inline {
+                    "00004000".to_string()
+
+                } else {
+                    "00003000".to_string()
+
+                }
+            }
+        }
+    }
+    pub fn pay_sender_signature(&self, inline: bool) -> String {
+        match self {
+            LiquidityProviders::UniswapV3(_) => "00000700".to_string(),
+            LiquidityProviders::BalancerWeighted(_) => "00020000".to_string(),
+            _ => {
+                if inline {
+                    "00002000".to_string()
+
+                } else {
+                    "00001000".to_string()
+
+                }
+            }
+        }
+    }
     pub fn build_calculator(&self) -> Box<dyn Calculator> {
         match self {
             LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new()),
@@ -374,31 +436,18 @@ impl PoolInfo for Pool {
 
     fn supports_callback_payment(&self) -> bool {
         match self.provider.id() {
-            LiquidityProviderId::UniswapV2 => true,
-            LiquidityProviderId::CroSwap => true,
-            LiquidityProviderId::ShibaSwap => true,
-            LiquidityProviderId::SaitaSwap => true,
-            LiquidityProviderId::ConvergenceSwap => true,
-            LiquidityProviderId::Solidly => true,
-            LiquidityProviderId::Pancakeswap => true,
+
             LiquidityProviderId::UniswapV3 => true,
-            LiquidityProviderId::SushiSwap => true,
             LiquidityProviderId::BalancerWeighted => false,
+            _ => true
         }
     }
 
     fn supports_pre_payment(&self) -> bool {
         match self.provider.id() {
-            LiquidityProviderId::UniswapV2 => false,
-            LiquidityProviderId::CroSwap => false,
-            LiquidityProviderId::SaitaSwap => false,
-            LiquidityProviderId::ShibaSwap => false,
-            LiquidityProviderId::ConvergenceSwap => false,
-            LiquidityProviderId::Solidly => false,
-            LiquidityProviderId::Pancakeswap => false,
             LiquidityProviderId::UniswapV3 => false,
-            LiquidityProviderId::SushiSwap => false,
             LiquidityProviderId::BalancerWeighted => false,
+            _ => true
         }
     }
 }

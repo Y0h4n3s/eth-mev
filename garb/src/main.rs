@@ -69,7 +69,7 @@ static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
         .unwrap_or_else(|_| {
             std::env::args()
                 .nth(5)
-                .unwrap_or("3,5,6,8".to_string())
+                .unwrap_or("2,3,4,5,6,8".to_string())
         })
         .split(",")
         .map(|i| LiquidityProviders::from(i))
@@ -403,11 +403,13 @@ pub async fn transactor(
                                 let signed_tx = typed_tx.rlp_signed(&tx_sig);
                                 let mut bundle = vec![];
                                 bundle.push(signed_tx);
-                                let typed_bribe_tx = briber.check_32_bytes_and_send(
+                                let mut typed_bribe_tx = briber.check_32_bytes_and_send(
                                         H160::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(),
                                 Bytes::from_str("0x313ce567").unwrap(),
                                 H256::from_str("0x0000000000000000000000000000000000000000000000000000000000000012").unwrap().0)
-                                .gas(U256::from(40000)).gas_price(base_fee).value(bribe).tx;
+                                .gas(U256::from(50000)).gas_price(base_fee).value(bribe).from(signer_wallet_address).tx;
+                                typed_bribe_tx.set_chain_id(U64::from(1));
+                                typed_bribe_tx.set_nonce(typed_tx.nonce().unwrap() + U256::from(1));
                                 let tx_sig = signer.sign_transaction(&typed_bribe_tx).await.unwrap();
                                 let signed_tx = typed_bribe_tx.rlp_signed(&tx_sig);
                                 bundle.push(signed_tx);
@@ -425,7 +427,6 @@ pub async fn transactor(
                                         if let Some(res) = res {
                                             if res.transactions.iter().all(|tx| tx.error.is_none()) {
                                                 for step in &op.result.steps {
-                                                    info!("{} -> {}\n Type: {}\nAsset: {} => {}\n Debt: {} => {} ", step.step.get_pool().await, step.step.get_output(), step.step_id, step.asset_token, step.asset, step.debt_token, step.debt);
                                                 }
                                 info!("\n\n\n");
                                                 FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
