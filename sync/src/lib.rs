@@ -16,6 +16,7 @@ pub mod sushiswap;
 pub mod types;
 pub mod uniswap_v2;
 pub mod uniswap_v3;
+pub mod curve;
 use crate::balancer_weighted::BalancerWeigtedMetadata;
 use crate::events::EventEmitter;
 use crate::uniswap_v2::UniswapV2Metadata;
@@ -56,6 +57,7 @@ use num_bigfloat::{BigFloat, RoundingMode};
 use rmps::{Deserializer, Serializer};
 use tokio::runtime::Runtime;
 use tracing::info;
+use crate::curve::CurvePlainMetadata;
 
 #[async_trait]
 pub trait LiquidityProvider:
@@ -84,6 +86,7 @@ pub enum LiquidityProviders {
     ShibaSwap(UniswapV2Metadata),
     SaitaSwap(UniswapV2Metadata),
     ConvergenceSwap(UniswapV2Metadata),
+    CurvePlain(CurvePlainMetadata),
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
@@ -98,6 +101,7 @@ pub enum LiquidityProviderId {
     ShibaSwap,
     SaitaSwap,
     ConvergenceSwap,
+    CurvePlain,
 }
 
 impl<T: Into<String>> From<T> for LiquidityProviders {
@@ -116,6 +120,7 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
             "8" => LiquidityProviders::ShibaSwap(Default::default()),
             "9" => LiquidityProviders::SaitaSwap(Default::default()),
             "10" => LiquidityProviders::ConvergenceSwap(Default::default()),
+            "11" => LiquidityProviders::CurvePlain(Default::default()),
             val => match val.find_substring("UniswapV2") {
                 Some(v) => serde_json::from_str(val).unwrap(),
                 None => match val.find_substring("UniswapV3") {
@@ -136,9 +141,12 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
                                                 Some(v) => serde_json::from_str(val).unwrap(),
                                                 None => match val.find_substring("Convergence") {
                                                     Some(v) => serde_json::from_str(val).unwrap(),
-                                                    None => {
-                                                        panic!("Invalid Liquidity Provider {}", val)
-                                                    }
+                                                    None => match val.find_substring("Curve") {
+                                                        Some(v) => serde_json::from_str(val).unwrap(),
+                                                        None => {
+                                                            panic!("Invalid Liquidity Provider {}", val)
+                                                        }
+                                                    },
                                                 },
                                             },
                                         },
@@ -166,6 +174,7 @@ impl From<LiquidityProviders> for u8 {
             LiquidityProviders::ShibaSwap(_) => 8,
             LiquidityProviders::SaitaSwap(_) => 9,
             LiquidityProviders::ConvergenceSwap(_) => 10,
+            LiquidityProviders::CurvePlain(_) => 11,
         }
     }
 }
@@ -241,6 +250,7 @@ impl LiquidityProviders {
     }
     pub fn build_calculator(&self) -> Box<dyn Calculator> {
         match self {
+            LiquidityProviders::CurvePlain(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::CroSwap(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::ShibaSwap(meta) => Box::new(CpmmCalculator::new()),
@@ -259,6 +269,16 @@ impl LiquidityProviders {
     }
     pub fn build(&self, node_providers: NodeDispatcher) -> BoxedLiquidityProvider {
         match self {
+            LiquidityProviders::CurvePlain(meta) => {
+                let metadata = CurvePlainMetadata {
+                    factory_address: "0xF18056Bbd320E96A48e3Fbf8bC061322531aac99".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(curve::CurvePlain::new(
+                    metadata,
+                    node_providers,
+                ))
+            }
             LiquidityProviders::UniswapV2(meta) => {
                 let metadata = UniswapV2Metadata {
                     factory_address: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f".to_string(),
@@ -379,6 +399,7 @@ impl LiquidityProviders {
             LiquidityProviders::ShibaSwap(_) => LiquidityProviderId::ShibaSwap,
             LiquidityProviders::SaitaSwap(_) => LiquidityProviderId::SaitaSwap,
             LiquidityProviders::ConvergenceSwap(_) => LiquidityProviderId::ConvergenceSwap,
+            LiquidityProviders::CurvePlain(_) => LiquidityProviderId::CurvePlain,
         }
     }
 
@@ -394,6 +415,7 @@ impl LiquidityProviders {
             LiquidityProviders::ShibaSwap(meta) => meta.factory_address.clone(),
             LiquidityProviders::SaitaSwap(meta) => meta.factory_address.clone(),
             LiquidityProviders::ConvergenceSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::CurvePlain(meta) => meta.factory_address.clone(),
         }
     }
 }

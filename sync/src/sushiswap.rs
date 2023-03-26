@@ -36,7 +36,7 @@ use crate::node_dispatcher::NodeDispatcher;
 use crate::uniswap_v2::UniswapV2Metadata;
 use crate::IPC_PATH;
 const SUSHISWAP_ROUTER: &str = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F";
-const TVL_FILTER_LEVEL: i32 = 0;
+const TVL_FILTER_LEVEL: i32 = -1;
 
 #[derive(Serialize, Deserialize,Decode, Encode, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct SushiSwapMetadata {

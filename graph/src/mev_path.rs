@@ -505,12 +505,12 @@ impl MevPath {
 
             #[cfg(not(feature = "optimized"))]
             steps.push(StepMeta {
-                step_id: "scspsp_2".to_string(),
-                asset: I256::from_raw(second_debt),
+                step_id: "scsp_2".to_string(),
+                asset: I256::from_raw(first_debt),
                 debt: I256::from_raw(final_debt),
                 asset_token: asset_token.clone(),
                 debt_token: debt_token.clone(),
-                step: third.clone(),
+                step: second.clone(),
             });
             let mut ix = PAY_NEXT.to_string()
                 + &debt_token[2..]
@@ -521,7 +521,7 @@ impl MevPath {
 
             #[cfg(not(feature = "optimized"))]
             steps.push(StepMeta {
-                step_id: "scsp_2".to_string(),
+                step_id: "scsp_3".to_string(),
                 asset: I256::from_raw(first_debt),
                 debt: I256::from_raw(final_debt),
                 asset_token: asset_token,
@@ -530,7 +530,7 @@ impl MevPath {
             });
             let mut ix = second.provider.pay_sender_signature(true) + &second.address[2..];
             // second is guaranteed to be v2 variants
-            let packed_asset = Self::encode_packed_uint(asset);
+            let packed_asset = Self::encode_packed_uint(first_debt);
             ix += &(if second.x_to_y { "01".to_string() } else { "00".to_string() }
                     + &(packed_asset.len() as u8).encode_hex()[64..]
                     + &packed_asset);
@@ -684,7 +684,7 @@ impl MevPath {
             let mut ix = third.provider.pay_next_signature(true) + &third.address[2..];
             // third is guaranteed to be v2 variants
             let packed_asset = Self::encode_packed_uint(second_debt);
-            ix += &(if first.x_to_y { "01".to_string() } else { "00".to_string() }
+            ix += &(if third.x_to_y { "01".to_string() } else { "00".to_string() }
                     + &(packed_asset.len() as u8).encode_hex()[64..]
                     + &packed_asset);
             instruction.push(ix);
@@ -708,7 +708,7 @@ impl MevPath {
             let mut ix = second.provider.pay_address_signature(true) + &second.address[2..];
             // second is guaranteed to be v2 variants
             let packed_asset = Self::encode_packed_uint(first_debt);
-            ix += &(if first.x_to_y { "01".to_string() } else { "00".to_string() }
+            ix += &(if second.x_to_y { "01".to_string() } else { "00".to_string() }
                     + &first.address[2..]
                     + &(packed_asset.len() as u8).encode_hex()[64..]
                     + &packed_asset);
@@ -976,10 +976,10 @@ impl MevPath {
                 mid = (left + right) / 2.0;
                 continue
             }
-            let (asset_token, debt_token) = if third.x_to_y {
-                (third.y_address.clone(), third.x_address.clone())
+            let (asset_token, debt_token) = if first.x_to_y {
+                (first.y_address.clone(), first.x_address.clone())
             } else {
-                (third.x_address.clone(), third.y_address.clone())
+                (first.x_address.clone(), first.y_address.clone())
             };
 
 
@@ -1683,10 +1683,10 @@ impl MevPath {
                 mid = (left + right) / 2.0;
                 continue
             }
-            let (asset_token, debt_token) = if third.x_to_y {
-                (third.y_address.clone(), third.x_address.clone())
+            let (asset_token, debt_token) = if first.x_to_y {
+                (first.y_address.clone(), first.x_address.clone())
             } else {
-                (third.x_address.clone(), third.y_address.clone())
+                (first.x_address.clone(), first.y_address.clone())
             };
 
 
@@ -1879,10 +1879,10 @@ impl MevPath {
                 mid = (left + right) / 2.0;
                 continue
             }
-            let (asset_token, debt_token) = if third.x_to_y {
-                (third.y_address.clone(), third.x_address.clone())
+            let (asset_token, debt_token) = if first.x_to_y {
+                (first.y_address.clone(), first.x_address.clone())
             } else {
-                (third.x_address.clone(), third.y_address.clone())
+                (first.x_address.clone(), first.y_address.clone())
             };
 
 
@@ -1968,7 +1968,7 @@ impl MevPath {
             match &second.provider {
                 LiquidityProviders::BalancerWeighted(meta) => {
                     ix += &(meta.id[2..].to_string()
-                            + &first.address
+                            + &first.address[2..]
                             + &debt_token[2..]
                             + &asset_token[2..]
                             + &(packed_asset.len() as u8).encode_hex()[64..]
@@ -2069,10 +2069,10 @@ impl MevPath {
                 mid = (left + right) / 2.0;
                 continue
             }
-            let (asset_token, debt_token) = if third.x_to_y {
-                (third.y_address.clone(), third.x_address.clone())
+            let (asset_token, debt_token) = if first.x_to_y {
+                (first.y_address.clone(), first.x_address.clone())
             } else {
-                (third.x_address.clone(), third.y_address.clone())
+                (first.x_address.clone(), first.y_address.clone())
             };
 
 
@@ -2108,7 +2108,7 @@ impl MevPath {
                 debt_token: debt_token.clone(),
                 step: third.clone(),
             });
-            let mut ix = third.provider.pay_sender_signature(false);
+            let mut ix = third.provider.pay_self_signature(false);
             // third is guaranteed to be balancer
             let packed_asset = Self::encode_packed_uint(second_debt);
             let packed_debt = Self::encode_packed_uint(final_debt);
@@ -2146,13 +2146,14 @@ impl MevPath {
                 debt_token: debt_token.clone(),
                 step: second.clone(),
             });
-            let mut ix = third.provider.pay_sender_signature(false);
+            let mut ix = third.provider.pay_address_signature(false);
             // second is guaranteed to be v2 variants
             let packed_asset = Self::encode_packed_uint(first_debt);
             let packed_debt = Self::encode_packed_uint(second_debt);
             match &second.provider {
                 LiquidityProviders::BalancerWeighted(meta) => {
                     ix += &(meta.id[2..].to_string()
+                            + &first.address[2..]
                             + &debt_token[2..]
                             + &asset_token[2..]
                             + &(packed_asset.len() as u8).encode_hex()[64..]

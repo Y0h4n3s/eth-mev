@@ -708,6 +708,7 @@ DETACH DELETE n",
                 | LiquidityProviderId::ShibaSwap
                 | LiquidityProviderId::SaitaSwap
                 | LiquidityProviderId::ConvergenceSwap
+                | LiquidityProviderId::CurvePlain
                 | LiquidityProviderId::Pancakeswap => {
                     ix_data = "0e000000".to_string()
                         + if pool.x_to_y { "01" } else { "00" }

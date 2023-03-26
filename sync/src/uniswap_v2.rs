@@ -42,7 +42,7 @@ use crate::IPC_PATH;
 use itertools::Itertools;
 const UNISWAP_V2_ROUTER: &str = "0x7a250d5630b4cf539739df2c5dacb4c659f2488d";
 pub(crate) const UNISWAP_UNIVERSAL_ROUTER: &str = "0xEf1c6E67703c7BD7107eed8303Fbe6EC2554BF6B";
-const TVL_FILTER_LEVEL: i32 = 0;
+const TVL_FILTER_LEVEL: i32 = -1;
 
 #[derive(Serialize, Deserialize,Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV2Metadata {

@@ -95,7 +95,7 @@ contract AggregatorTest is Test {
 //    }
     function test_SushiSwapExactOutPayToSelf_SushiSwapExactOutPayToSender_SushiSwapExactOutPayToSender_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_PaybackPayToSender() public {
 
-        bytes memory data = hex"00000600e42318ea3b998e8355a3da364eb9d48ec725eb45001002d89577d7d4020000000700a4e0faa58465a2d369aa21b3e42d43374c6f9613001002a8e8613d3b4e8a00000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc21002d893eedb86c233000400009f9d900462492d4c21e9523ca95a7cd86142f2980002000000000000000004620xe42318ea3b998e8355a3da364eb9d48ec725eb45ae78736cd615f374d3085123a210448e74fc6393d33526068d116ce69f19a9ee46f0bd304f21a51f107d64ed83209278a21002a8e8613d3b4e8a";
+        bytes memory data = hex"00003000a914a9b9e03b6af84f9c6bd2e0e8d27d405695db0010015af1d78b58c4000002000099a14324cfd525a34bbc93ac7e348929909d57fd00020000000000000000030ec02aaa39b223fe8d0a0e5c4f27ead9083c756cc2d084944d3c05cd115c09d072b9f44ba3e0e45921106d6e54e326f9fce410015a17b8312ce171";
         (bool success, bytes memory res) = address(agg).call(data);
         require(success);
     }

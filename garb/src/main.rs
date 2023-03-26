@@ -69,7 +69,7 @@ static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
         .unwrap_or_else(|_| {
             std::env::args()
                 .nth(5)
-                .unwrap_or("2,3,4,5,6,8".to_string())
+                .unwrap_or("11".to_string())
         })
         .split(",")
         .map(|i| LiquidityProviders::from(i))
@@ -429,7 +429,7 @@ pub async fn transactor(
                                                 for step in &op.result.steps {
                                                 }
                                 info!("\n\n\n");
-                                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
+                                                // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
 
                                             }
                                         }

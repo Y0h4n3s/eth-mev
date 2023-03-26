@@ -51,7 +51,7 @@ use crate::IPC_PATH;
 use tracing::{debug, error, info, trace};
 use uniswap_v3_math::sqrt_price_math::FIXED_POINT_96_RESOLUTION;
 use uniswap_v3_math::tick_math::{MAX_SQRT_RATIO, MAX_TICK, MIN_SQRT_RATIO, MIN_TICK};
-const TVL_FILTER_LEVEL: i32 = 0;
+const TVL_FILTER_LEVEL: i32 = -1;
 // Todo: add word in here to update and remove middleware use in simulate_swap
 #[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
 pub struct UniswapV3Metadata {
