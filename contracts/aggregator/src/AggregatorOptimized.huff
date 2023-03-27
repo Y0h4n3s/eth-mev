@@ -43,7 +43,7 @@
     ONLY_OWNER()
     0x04 calldataload                                                   // [tokenAddress]
     0x24 calldataload                                                   // [amount, tokenAddress]
-    __FUNC_SIG(transfer)                                                // [sig, amount, tokenAddress]
+    0xa9059cbb                                                // [sig, amount, tokenAddress]
 
     0x00 mstore                                                         // [amount, tokenAddress]
 
@@ -104,6 +104,32 @@
 
     // Resume execution in invoking macro
     approve_success:
+}
+
+
+#define macro PAY_BRIBE() = takes (0) returns (0) {
+    // make call. return size is zero because we can fetch it after the call
+    0x00                        // [ret_size]
+    dup1                        // [ret_offset, ret_size]
+    dup1                        // [args_size, ret_offset, ret_size]
+    dup1                        // [args_offset, args_size, ret_offset, ret_size]
+    callvalue                   // [value, args_offset, args_size, ret_offset, ret_size]
+    coinbase                    // [to, value, args_offset, args_size, ret_offset, ret_size]
+    gas                         // [gas, to, value, args_offset, args_size, ret_offset, ret_size]
+    call                        // [successs, stepOffset]
+
+    iszero iszero
+    pb_transfer_success jumpi
+    err jump
+
+    // Resume execution in invoking macro
+    pb_transfer_success:
+
+    // [stepOffset]
+    dup1 calldataload
+    0xE0 shr
+    dup1 0x0 eq end jumpi
+    nxt jump
 }
 
 
@@ -168,11 +194,11 @@
     call                        // [successs, amountSize, tokenAddress, stepOffset]
 
     iszero iszero
-    ps_transfer_success jumpi
+    pn_transfer_success jumpi
     err jump
 
     // Resume execution in invoking macro
-    ps_transfer_success:
+    pn_transfer_success:
 
     // [amountSize, tokenAddress, stepOffset]
     0x2 dup2 div dup4 add 0x15 add          // [nextStepOffset, amountSize, tokenAddress, stepOffset]
@@ -210,11 +236,11 @@
     call                        // [successs, amountSize, tokenAddress, stepOffset]
 
     iszero iszero
-    ps_transfer_success jumpi
+    pa_transfer_success jumpi
     err jump
 
     // Resume execution in invoking macro
-    ps_transfer_success:
+    pa_transfer_success:
 
     // [amountSize, tokenAddress, stepOffset]
     0x2 dup2 div dup4 add 0x29 add          // [nextStepOffset, amountSize, tokenAddress, stepOffset]
@@ -408,22 +434,21 @@
 
     dup1 calldataload                                                   // [poolId, stepOffset]
 
-    dup3 0x20 add calldataload 0x60 shr                                 // [payToAddress, poolId, stepOffse]
-    0x64 mstore                                                         // [poolId, stepOffse]
+    dup2 0x20 add calldataload 0x60 shr                                 // [payToAddress, poolId, stepOffset]
+    0x64 mstore                                                         // [poolId, stepOffset]
 
     dup2 0x34 add calldataload 0x60 shr                                 // [assetIn, poolId, stepOffset]
     dup3 0x48 add calldataload 0x60 shr                                 // [assetOut, assetIn, poolId, stepOffset]
-    dup4 0x62 add calldataload 0xF8 shr                                 // [amountSize, assetOut, assetIn, poolId, stepOffset]
-    dup5 0x63 add calldataload dup2 0x4 mul 0x100 sub shr               // [amount, amountSize, assetOut, assetIn, poolId, stepOffset]
-    dup6 0x63 add 0x2 dup4 div add calldataload 0xF8 shr                        // [limitSize, amount, amountSize, assetOut, assetIn, poolId, stepOffset]
-    dup7 0x64 add 0x2 dup5 div add calldataload dup2 0x4 mul 0x100 sub shr      // [limit, limitSize, amount, amountSize, assetOut, assetIn, poolId, stepOffset]
+    dup4 0x5C add calldataload 0xF8 shr                                 // [amountSize, assetOut, assetIn, poolId, stepOffset]
+    dup5 0x5D add calldataload dup2 0x4 mul 0x100 sub shr               // [amount, amountSize, assetOut, assetIn, poolId, stepOffset]
+    dup6 0x5D add 0x2 dup4 div add calldataload 0xF8 shr                        // [limitSize, amount, amountSize, assetOut, assetIn, poolId, stepOffset]
+    dup7 0x5E add 0x2 dup5 div add calldataload dup2 0x4 mul 0x100 sub shr      // [limit, limitSize, amount, amountSize, assetOut, assetIn, poolId, stepOffset]
 
     0xe0 0x04 mstore                                                    // SingleSwap start
 
     // fund management
     address 0x24 mstore
     0x00 0x44 mstore
-
     0x00 0x84 mstore
 
     // limit
@@ -453,7 +478,7 @@
 
     // [limit, limitSize, amount, amountSize, assetOut, assetIn, poolId, stepOffset]
     beopa_success:
-    dup8 0x64 add 0x2 dup6 div add 0x2 dup3 div add         // [nextStepOffset, limit, limitSize, amount, amountSize, assetOut, assetIn, poolId, stepOffset]
+    dup8 0x5E add 0x2 dup6 div add 0x2 dup3 div add         // [nextStepOffset, limit, limitSize, amount, amountSize, assetOut, assetIn, poolId, stepOffset]
     swap8                                                   // [limit, limitSize, amount, amountSize, assetOut, assetIn, poolId, stepOffset, nextStepOffset]
     pop pop pop pop pop pop pop pop                         // [nextStepOffset]
     dup1 calldataload
@@ -1136,10 +1161,6 @@
         dup1 0x00030000 eq beopn jumpi
         dup1 0x00040000 eq beopa jumpi
 
-        dup1 0x50000000 eq ceops jumpi
-        dup1 0x60000000 eq ceopse jumpi
-        dup1 0x70000000 eq ceopn jumpi
-        dup1 0x80000000 eq ceopa jumpi
 
         dup1 0x00000080 eq ps jumpi
         dup1 0x00000090 eq pa jumpi
@@ -1222,24 +1243,6 @@
             0x00 0x00 return
 
 
-        ceopse:
-            dup2 0x04 add
-            BALANCER_EXACT_OUT_PAY_TO_SENDER()
-            0x00 0x00 return
-        ceops:
-            dup2 0x04 add
-            BALANCER_EXACT_OUT_PAY_TO_SELF()
-            0x00 0x00 return
-        ceopa:
-            dup2 0x04 add
-            BALANCER_EXACT_OUT_PAY_TO_SENDER()
-            0x00 0x00 return
-        ceopn:
-            dup2 0x04 add
-            BALANCER_EXACT_OUT_PAY_TO_SELF()
-            0x00 0x00 return
-
-
         ps:
             dup2 0x04 add
             PAY_SENDER()
@@ -1254,13 +1257,13 @@
             0x00 0x00 return
 
         br:
-            WITHDRAW()
+            dup2 0x04 add
+            PAY_BRIBE()
             0x00 0x00 return
 
         wd:
             WITHDRAW()
             0x00 0x00 return
-
         ap:
             APPROVE()
             0x00 0x00 return

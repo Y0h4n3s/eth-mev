@@ -6,11 +6,7 @@
 #![allow(unused)]
 #![allow(deprecated)]
 
-/*
-0x775c559d9a48ce5a8444c1035c3a8921ab477b8e
-0x00000000003b3cc22af3ae1eac0440bcee416b40
- */
-// TODO: node url dispacher
+
 mod abi;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn, Instrument};
@@ -69,7 +65,7 @@ static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
         .unwrap_or_else(|_| {
             std::env::args()
                 .nth(5)
-                .unwrap_or("3,11".to_string())
+                .unwrap_or("3,7,8,9,10".to_string())
         })
         .split(",")
         .map(|i| LiquidityProviders::from(i))

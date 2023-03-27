@@ -28,86 +28,52 @@ contract AggregatorTest is Test {
         vm.stopPrank();
     }
 //
-//    function test_withdraw() public {
-//        weth.deposit{value: 1000000000000000000000000}();
-//        weth.transfer(address(agg), uint(1000000000000000000000000));
-//        bytes memory data = hex"00000001000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc20000000000000000000000000000000000000000000000001000000000000000";
-//        uint before = weth.balanceOf(address(agg));
-//        vm.startPrank(address(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f));
+//    function test_scscsc() public {
+//        // block 16918621
+//        bytes memory data = hex"00000600a3f558aebaecaf0e11ca4b2199cc5ed341edfd74011002d89577d7d40200000007008adfed0b833bf4bd2c4159e93a910f4a06417102011208f13adccf8b30ac34000007009437ad40056ca3ec2fc1efe41885ad4b6ac460610014115d2c2c9e53bb0886cb00000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc21002d80462955320f2";
+//        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
 //
-//        address(agg).call(data);
-//        require(before > weth.balanceOf(address(agg)));
-//
+//        require(success);
 //    }
+//    function test_scspsp() public {
+//        // block 16919015
+//        bytes memory data = hex"000006002f62f2b4c5fcd7570a709dec05d68ea19c82a9ec0110049b9ca9a694340000000010c02aaa39b223fe8d0a0e5c4f27ead9083c756cc210049b16ee78810f940000800006da0fd433c1a5d7a4faa01111c044910a184553010822a7ce1c0000600098c2b0681d8bf07767826ea8bd3b11b0ca421631002f62f2b4c5fcd7570a709dec05d68ea19c82a9ec162c39705644d768ccb6f05a";
+//        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
 //
-//    function test_withdraw_and_fail() public {
-//        weth.deposit{value: 1000000000000000000000000}();
-//        weth.transfer(address(agg), uint(1000000000000000000000000));
-//        bytes memory data = hex"00000001000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc20000000000000000000000000000000000000000000000001000000000000000";
-//        vm.startPrank(address(agg));
-//        vm.expectRevert();
-//        address(agg).call(data);
+//        require(success);
+//    }
+//    function test_scsp() public {
+//        // block 16919012
+//        bytes memory data = hex"0000060088e6a0c2ddd26feeb64f039a2c41296fcb3f5640011002d89577d7d4020000000010c02aaa39b223fe8d0a0e5c4f27ead9083c756cc21002d86271bdb455fe00002000cd452c162da7761f08f656b8e5ede3a3859813780008157e2a18";
+//        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
 //
+//        require(success);
 //    }
 
-//    function test_approve() public {
-//        weth.deposit{value: 1000000000000000000000000}();
-//        weth.transfer(address(agg), uint(1000000000000000000000000));
-//        bytes memory data = hex"00000002000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc20000000000000000000000000000000000000000000000001000000000000000";
-//        uint before = weth.balanceOf(address(agg));
-//        vm.startPrank(address(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f));
+//    function test_scscsp() public {
+//        // block 16919012
 //
-//        address(agg).call(data);
-//        require(before > weth.balanceOf(address(agg)));
+//        bytes memory data = hex"000006004585fe77225b41b697c938b018e2ac67ac5a20c0011005b12aefafa80400000007009a772018fbd77fcd2d25657e5c547baff3fd7d16000627865700000010c02aaa39b223fe8d0a0e5c4f27ead9083c756cc21005afd2a6f402c24100002000cd452c162da7761f08f656b8e5ede3a38598137800082aeb98f2";
+//        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
 //
-//    }
-//    function test_UniswapV3ExactOutPayToSelf_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_PaybackPayToSender() public {
-//
-//        bytes memory data = hex"0000060001dbe1bc2b5dbd1022793d5ac3d52d1c8624b33e5b100d02ab486cedc000000020000020e5c16d0b16490142d8026f4b0394f2cc9f2705100ce5af43d4d4a47100002000003306c01f98f848092ad5ae57e5c7dc432f761d81100cf16618915b745700000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2100d015988ad0cde24";
-//        (bool success, bytes memory res) = address(agg).call(data);
 //        require(success);
 //    }
-//
-//    function test_UniswapV3ExactOutPayToSelf_UniswapV2ExactOutPayToSender_UniswapV3ExactOutPayToSender_PaybackPayToSender() public {
-//
-//        bytes memory data = hex"00000600005ebd677545bc10fa0acbd9b8b462391c87f576e4101a055690d9db80000000000e019ec96dcb54331626b79d8450a3daa9bcfa02e0b0101642a21ac308588600002000017fbeb8f8296093b191b50dd3ea6fed12146c9edd12494b15794e02be94e700000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc210192c8f890b7877f9";
-//        (bool success, bytes memory res) = address(agg).call(data);
-//        require(success);
-//    }
-//    function test_UniswapV3ExactOutPayToSelf_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_PaybackPayToSender() public {
-//
-//        bytes memory data = hex"00000600013887e82dbdbe8ec6db44e6298a2d48af572a3b781001a055690d9db8000000200001c0d19f4fae83eb51b2adb59eb649c7bc2b19b2f6120ac2e9f914543a9a4c0000200000f5db999a11146a25611f5d61b5d8379dde6e7455080bd518bc0000200001b1a19fafa68df18e63c73a1d14283887db051c711602d6f821680112ac6f712f00000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc210019f19e598e2e271";
-//        (bool success, bytes memory res) = address(agg).call(data);
-//        require(success);
-//    }
-//
-//    function test_SushiSwapExactOutPayToSelf_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_PaybackPayToSender() public {
-//
-//        bytes memory data = hex"0e00000000a914a9b9e03b6af84f9c6bd2e0e8d27d405695db1001a055690d9db8000000200001e081eeab0adde30588ba8d5b3f6ae5284790f54a107551850bb55731ba00002000019bf2f49ef2b555777af9ae9d7dea31932c60f2b4080c14db8000002000002d6fcfde9709343c4c7a78d91077473d6b60465314018257a1ffb4aafb126300000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc210019ec9e9d4ebb440";
-//        (bool success, bytes memory res) = address(agg).call(data);
-//        require(success);
-//    }
-//    function test_UniswapV3ExactOutPayToSelf_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_SushiSwapExactOutPayToSender_PaybackPayToSender() public {
-//
-//        bytes memory data = hex"0000060001824a30f2984f9013f2c8d0a29c0a3cc5fd5c06731001a055690d9db8000000200000af852a6eed8287c6589f6b63ac4091264290f0531210319cbfd45a15322b00002000017fccbd86d90f8809b41d863b4a1bb68757e7c26d080bcb6ce4000020000019ff5aea95f3f6c82b323989c64abd9ae8b9cdfd124711c6b6050b3aaf7f0000000e00397ff1542f962076d0bfe58ea045ffa2d347aca0080b86036e00000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc210019f87ac0a58eebc";
-//        (bool success, bytes memory res) = address(agg).call(data);
+
+//    function test_scsc() public {
+//        // block 16919287
+//        bytes memory data = hex"00003000397ff1542f962076d0bfe58ea045ffa2d347aca001100959eb1c0e4ae200000007007bea39867e4169dbe237d55c8242a8f2fcdcc38700084641b77e00000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2100959e13ba42c4d32";
+//        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
 //        require(success);
 //    }
     function test_SushiSwapExactOutPayToSelf_SushiSwapExactOutPayToSender_SushiSwapExactOutPayToSender_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_PaybackPayToSender() public {
 
-        bytes memory data = hex"00003000a914a9b9e03b6af84f9c6bd2e0e8d27d405695db0010015af1d78b58c4000002000099a14324cfd525a34bbc93ac7e348929909d57fd00020000000000000000030ec02aaa39b223fe8d0a0e5c4f27ead9083c756cc2d084944d3c05cd115c09d072b9f44ba3e0e45921106d6e54e326f9fce410015a17b8312ce171";
-        (bool success, bytes memory res) = address(agg).call(data);
+        bytes memory data = hex"00003000397ff1542f962076d0bfe58ea045ffa2d347aca00110049b9ca9a694340000000700893f503fac2ee1e5b78665db23f9c94017aae97d010821c62b2d00000010c02aaa39b223fe8d0a0e5c4f27ead9083c756cc210049acf1ec48e37e500000800c2e9f25be6257c210d7adf0d4cd6e3e881ba25f800121f2a85cc2c3a583b1900006000055475920a8c93cffb64d039a8205f7acc7722d300893f503fac2ee1e5b78665db23f9c94017aae97d0a0ce5c564d7";
+        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
+
         require(success);
     }
 
 
-//    function test_UniswapV2ExactOutPayToSelf_UniswapV2ExactOutPayToSender_BalancerWeightedExactOut() public {
-//
-  //      bytes memory data = hex"000006000188e6a0c2ddd26feeb64f039a2c41296fcb3f56400ea688906bd8b0000000200000e1fc415f87465b024ee62f55ef33d8f822705b5b0804e54d9a0000000e01d9016a907dc0ecfa3ca425ab20b6b785b42f2373f68d0d896cc3b6ea1872f80c143b9a4026caa77a122e2b0c8c29ac79151200000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20e15316a1d8301c3";
-    //    (bool success, bytes memory res) = address(agg).call(data);
-     //   require(success);
-//
-  //  }
 
 
 }

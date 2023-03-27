@@ -251,7 +251,7 @@ impl LiquidityProviders {
     }
     pub fn build_calculator(&self) -> Box<dyn Calculator> {
         match self {
-            LiquidityProviders::CurvePlain(meta) => Box::new(CpmmCalculator::new()),
+            LiquidityProviders::CurvePlain(meta) => Box::new(CurvePlainCalculator::new(meta.clone())),
             LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::CroSwap(meta) => Box::new(CpmmCalculator::new()),
             LiquidityProviders::ShibaSwap(meta) => Box::new(CpmmCalculator::new()),
@@ -462,6 +462,7 @@ impl PoolInfo for Pool {
 
             LiquidityProviderId::UniswapV3 => true,
             LiquidityProviderId::BalancerWeighted => false,
+            LiquidityProviderId::CurvePlain => false,
             _ => true
         }
     }
@@ -470,6 +471,7 @@ impl PoolInfo for Pool {
         match self.provider.id() {
             LiquidityProviderId::UniswapV3 => false,
             LiquidityProviderId::BalancerWeighted => false,
+            LiquidityProviderId::CurvePlain => false,
             _ => true
         }
     }
@@ -630,6 +632,44 @@ pub struct BalancerWeightedCalculator {
 pub struct CurvePlainCalculator {
     meta: CurvePlainMetadata,
 }
+
+
+impl BalancerWeightedCalculator {
+    pub fn new(meta: BalancerWeigtedMetadata) -> Self {
+        Self { meta }
+    }
+
+    // TODO
+    pub fn mul_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
+        (x * y).round(18, RoundingMode::Up)
+    }
+
+    pub fn mul_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
+        (x * y).round(18, RoundingMode::Down)
+    }
+
+    pub fn div_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
+        (x / y).round(18, RoundingMode::Up)
+    }
+    pub fn div_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
+        (x / y).round(18, RoundingMode::Down)
+    }
+
+    pub fn pow_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
+        if y == BigFloat::from(1) {
+            x
+        } else if y == BigFloat::from(2) {
+            self.mul_up(x, x)
+        } else if y == BigFloat::from(4) {
+            let square = self.mul_up(x, x);
+            self.mul_up(square, square)
+        } else {
+            x.pow(&y)
+        }
+    }
+}
+
+
 impl CurvePlainCalculator {
     pub fn new(meta: CurvePlainMetadata) -> Self {
         Self {
@@ -725,7 +765,7 @@ impl CurvePlainCalculator {
             .checked_mul(d)?
             .checked_div(ann.checked_mul(self.meta.tokens.len().into())?.into())?;
         // b = sum' - (A*n**n - 1) * D / (A * n**n)
-        let b = d.checked_div(ann.into())?.checked_add(x.into())?; // d is subtracted on line 147
+        let b = d.checked_div(ann.into())?.checked_add(x.into())?;
 
         // Solve for y by approximating: y**2 + b*y = c
         let mut y_prev: U256;
@@ -747,41 +787,6 @@ impl CurvePlainCalculator {
         Some(y)
     }
 
-}
-
-impl BalancerWeightedCalculator {
-    pub fn new(meta: BalancerWeigtedMetadata) -> Self {
-        Self { meta }
-    }
-
-    // TODO
-    pub fn mul_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x * y).round(18, RoundingMode::Up)
-    }
-
-    pub fn mul_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x * y).round(18, RoundingMode::Down)
-    }
-
-    pub fn div_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x / y).round(18, RoundingMode::Up)
-    }
-    pub fn div_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x / y).round(18, RoundingMode::Down)
-    }
-
-    pub fn pow_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        if y == BigFloat::from(1) {
-            x
-        } else if y == BigFloat::from(2) {
-            self.mul_up(x, x)
-        } else if y == BigFloat::from(4) {
-            let square = self.mul_up(x, x);
-            self.mul_up(square, square)
-        } else {
-            x.pow(&y)
-        }
-    }
 }
 
 impl Calculator for CurvePlainCalculator {
@@ -815,7 +820,7 @@ impl Calculator for CurvePlainCalculator {
             return Err(Error::msg("Insufficient Liquidity"));
         }
 
-        if let Some(amount_in) = self.swap_to(out_, swap_source_amount, swap_destination_amount) {
+        if let Some(amount_in) = self.swap_to(out_, swap_destination_amount, swap_destination_amount) {
             Ok(amount_in)
         } else {
             Err(Error::msg("Unexpected Error"))
@@ -1193,7 +1198,6 @@ mod tests {
         meta.tick_bitmap_x_y = x_y;
         meta.tick_bitmap_y_x = y_x;
         let complete_meta = abi::uniswap_v3::get_complete_pool_data_batch_request(vec![H160::from_str(&meta.address).unwrap()], &eth_client).await.unwrap().first().unwrap().clone();
-        println!("{:?}", complete_meta);
         let pool = Pool {
             address: "".to_string(),
             x_address: "0x33349b282065b0284d756f0577fb39c158f935e6 ".to_string(),
@@ -1210,6 +1214,36 @@ mod tests {
         let calculator = pool.provider.build_calculator();
 
         let in_ = calculator.calculate_in(U256::from(3490852256887603537 as u128), &pool).unwrap();
+        println!("{} ", in_);
+    }
+
+    #[tokio::test]
+    async fn test_curve_plain_calculator() {
+
+        let eth_client = Arc::new(
+            Provider::<Ws>::connect("ws://89.58.31.215:8546")
+                .await
+                .unwrap(),
+        );
+
+        let address = "0x9409280DC1e6D33AB7A8C6EC03e5763FB61772B5";
+        let complete_meta = abi::curve::get_complete_pool_data_batch_request(vec![H160::from_str(address).unwrap()], &eth_client).await.unwrap().first().unwrap().clone();
+        let pool = Pool {
+            address: "".to_string(),
+            x_address: complete_meta.tokens.get(0).unwrap().clone(),
+            y_address: complete_meta.tokens.get(1).unwrap().clone(),
+            curve: None,
+            curve_type: Curve::Stable,
+            fee_bps: 0,
+            x_amount: complete_meta.balances.get(0).unwrap().clone(),
+            y_amount: complete_meta.balances.get(1).unwrap().clone(),
+            x_to_y: true,
+            provider: LiquidityProviders::CurvePlain(complete_meta.clone()),
+        };
+
+        let calculator = pool.provider.build_calculator();
+
+        let in_ = calculator.calculate_out(U256::from(1000000 as u128), &pool).unwrap();
         println!("{} ", in_);
     }
 }

@@ -339,7 +339,7 @@ DETACH DELETE n",
             HashMap::<Pool, HashSet<(String, Vec<Pool>)>>::new(),
         )); //140 311 10869 12059
 
-        let max_intermidiate_nodes = 4;
+        let max_intermidiate_nodes = 5;
         for i in 2..max_intermidiate_nodes {
             info!("Preparing {} step routes ", i);
             let path_lookup = path_lookup.clone();

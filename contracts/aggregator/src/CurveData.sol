@@ -103,7 +103,7 @@ contract CurvePlainDataAggregator {
         // Return from the start of the data (discarding the original data address)
         // up to the end of the memory used
             let dataStart := add(_abiEncodedData, 0x20)
-        return (dataStart, sub(msize(), dataStart))
+//        return (dataStart, sub(msize(), dataStart))
         }
     }
 
@@ -133,7 +133,7 @@ contract CurvePlainPairsBatch {
         // Return from the start of the data (discarding the original data address)
         // up to the end of the memory used
             let dataStart := add(_abiEncodedData, 0x20)
-        return (dataStart, sub(msize(), dataStart))
+//        return (dataStart, sub(msize(), dataStart))
         }
     }
 }
