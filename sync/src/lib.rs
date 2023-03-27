@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::hash::*;
+use std::ops::Div;
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -626,6 +627,128 @@ pub struct BalancerWeightedCalculator {
     meta: BalancerWeigtedMetadata,
 }
 
+pub struct CurvePlainCalculator {
+    meta: CurvePlainMetadata,
+}
+impl CurvePlainCalculator {
+    pub fn new(meta: CurvePlainMetadata) -> Self {
+        Self {
+            meta
+        }
+    }
+
+    pub fn swap_to(
+        &self,
+        source_amount: U256,
+        swap_source_amount: U256,
+        swap_destination_amount: U256,
+    ) -> Option<U256> {
+        let y = self.compute_y(
+            swap_source_amount.checked_add(source_amount)?,
+            self.compute_d(swap_source_amount, swap_destination_amount)?,
+        )?;
+        let dy = swap_destination_amount.checked_sub(y)?.checked_sub(1.into())?;
+        let dy_fee = self.meta.fee.checked_mul(dy)?.checked_div(U256::from(10).pow(U256::from(10)))?;
+
+        let amount_swapped = dy.checked_sub(dy_fee)?;
+
+        Some(amount_swapped)
+    }
+
+
+    fn compute_next_d(
+        &self,
+        amp_factor: U256,
+        d_init: U256,
+        d_prod: U256,
+        sum_x: U256,
+    ) -> Option<U256> {
+        let ann = amp_factor.checked_mul(self.meta.tokens.len().into())?;
+        let leverage = sum_x.checked_mul(ann.into())?;
+        // d = (ann * sum_x + d_prod * n_coins) * d / ((ann - 1) * d + (n_coins + 1) * d_prod)
+        let numerator = d_init.checked_mul(
+            d_prod
+                .checked_mul(self.meta.tokens.len().into())?
+                .checked_add(leverage.into())?,
+        )?;
+        let denominator = d_init
+            .checked_mul(ann.checked_sub(U256::from(1))?.into())?
+            .checked_add(d_prod.checked_mul((self.meta.tokens.len() + 1).into())?)?;
+        numerator.checked_div(denominator)
+    }
+
+
+    pub fn compute_d(&self, amount_a: U256, amount_b: U256) -> Option<U256> {
+        let sum_x = amount_a.checked_add(amount_b)?; // sum(x_i), a.k.a S
+        if sum_x == 0.into() {
+            Some(0.into())
+        } else {
+            let amp_factor = self.meta.amp;
+            let amount_a_times_coins = amount_a.checked_mul(self.meta.tokens.len().into())?;
+            let amount_b_times_coins = amount_b.checked_mul(self.meta.tokens.len().into())?;
+
+            let mut d_prev: U256;
+            let mut d: U256 = sum_x.into();
+            for _ in 0..256 {
+                let mut d_prod = d;
+                d_prod = d_prod
+                    .checked_mul(d)?
+                    .checked_div(amount_a_times_coins.into())?;
+                d_prod = d_prod
+                    .checked_mul(d)?
+                    .checked_div(amount_b_times_coins.into())?;
+                d_prev = d;
+                d = self.compute_next_d(amp_factor, d, d_prod, sum_x)?;
+                if d > d_prev {
+                    if d.checked_sub(d_prev)? <= 1.into() {
+                        break;
+                    }
+                } else if d_prev.checked_sub(d)? <= 1.into() {
+                    break;
+                }
+            }
+
+            Some(d)
+        }
+    }
+
+    pub fn compute_y(&self, x: U256, d: U256) -> Option<U256> {
+        let amp_factor = self.meta.amp;
+        let ann = amp_factor.checked_mul(self.meta.tokens.len().into())?; // A * n ** n
+
+        // sum' = prod' = x
+        // c =  D ** (n + 1) / (n ** (2 * n) * prod' * A)
+        let mut c = d
+            .checked_mul(d)?
+            .checked_div(x.checked_mul(self.meta.tokens.len().into())?.into())?;
+        c = c
+            .checked_mul(d)?
+            .checked_div(ann.checked_mul(self.meta.tokens.len().into())?.into())?;
+        // b = sum' - (A*n**n - 1) * D / (A * n**n)
+        let b = d.checked_div(ann.into())?.checked_add(x.into())?; // d is subtracted on line 147
+
+        // Solve for y by approximating: y**2 + b*y = c
+        let mut y_prev: U256;
+        let mut y = d;
+        for _ in 0..256 {
+            y_prev = y;
+            // y = (y * y + c) / (2 * y + b - d);
+            let y_numerator = y.checked_pow(2.into())?.checked_add(c)?;
+            let y_denominator = y.checked_mul(2.into())?.checked_add(b)?.checked_sub(d)?;
+            y = y_numerator.checked_div(y_denominator)?;
+            if y > y_prev {
+                if y.checked_sub(y_prev)? <= 1.into() {
+                    break;
+                }
+            } else if y_prev.checked_sub(y)? <= 1.into() {
+                break;
+            }
+        }
+        Some(y)
+    }
+
+}
+
 impl BalancerWeightedCalculator {
     pub fn new(meta: BalancerWeigtedMetadata) -> Self {
         Self { meta }
@@ -657,6 +780,45 @@ impl BalancerWeightedCalculator {
             self.mul_up(square, square)
         } else {
             x.pow(&y)
+        }
+    }
+}
+
+impl Calculator for CurvePlainCalculator {
+    fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
+        } else {
+            (pool.y_amount, pool.x_amount)
+        };
+
+        if swap_source_amount.is_zero() || swap_destination_amount.is_zero() {
+            return Err(Error::msg("Insufficient Liquidity"));
+        }
+        if let Some(amount_out) = self.swap_to(in_, swap_source_amount, swap_destination_amount) {
+            Ok(amount_out)
+        } else {
+            Err(Error::msg("Unexpected Error"))
+        }
+    }
+    fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
+        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
+            (pool.x_amount, pool.y_amount)
+        } else {
+            (pool.y_amount, pool.x_amount)
+        };
+
+        if swap_source_amount.is_zero()
+            || swap_destination_amount.is_zero()
+            || out_ >= swap_destination_amount
+        {
+            return Err(Error::msg("Insufficient Liquidity"));
+        }
+
+        if let Some(amount_in) = self.swap_to(out_, swap_source_amount, swap_destination_amount) {
+            Ok(amount_in)
+        } else {
+            Err(Error::msg("Unexpected Error"))
         }
     }
 }
