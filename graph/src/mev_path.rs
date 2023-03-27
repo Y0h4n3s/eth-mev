@@ -2667,7 +2667,7 @@ impl MevPath {
             };
             #[cfg(not(feature = "optimized"))]
             steps.push(StepMeta {
-                step_id: "scscspsp_1".to_string(),
+                step_id: "scscspsc_1".to_string(),
                 asset: I256::from_raw(asset),
                 debt: I256::from_raw(first_debt),
                 asset_token: asset_token,
@@ -2693,7 +2693,7 @@ impl MevPath {
             };
             #[cfg(not(feature = "optimized"))]
             steps.push(StepMeta {
-                step_id: "scscspsp_2".to_string(),
+                step_id: "scscspsc_2".to_string(),
                 asset: I256::from_raw(first_debt),
                 debt: I256::from_raw(second_debt),
                 asset_token: asset_token,
@@ -2716,28 +2716,10 @@ impl MevPath {
                 (fourth.x_address.clone(), fourth.y_address.clone())
             };
 
-            let packed_debt = Self::encode_packed_uint(final_debt);
-
-            #[cfg(not(feature = "optimized"))]
-            steps.push(StepMeta {
-                step_id: "scscspsp_3".to_string(),
-                asset: I256::from_raw(third_debt),
-                debt: I256::from_raw(final_debt),
-                asset_token: asset_token.clone(),
-                debt_token: debt_token.clone(),
-                step: fourth.clone(),
-            });
-            let mut ix = PAY_NEXT.to_string()
-                + &debt_token[2..]
-                + &(packed_debt.len() as u8).encode_hex()[64..]
-                + &packed_debt;
-
-            instruction.push(ix);
-
             // 4.pay third with fourth
             #[cfg(not(feature = "optimized"))]
             steps.push(StepMeta {
-                step_id: "scspspsp_4".to_string(),
+                step_id: "scscspsc_3".to_string(),
                 asset: I256::from_raw(third_debt),
                 debt: I256::from_raw(final_debt),
                 asset_token: asset_token,
@@ -2764,7 +2746,7 @@ impl MevPath {
 
             #[cfg(not(feature = "optimized"))]
             steps.push(StepMeta {
-                step_id: "scspspsp_4".to_string(),
+                step_id: "scscspsc_4".to_string(),
                 asset: I256::from_raw(second_debt),
                 debt: I256::from_raw(third_debt),
                 asset_token: asset_token,
@@ -2780,6 +2762,28 @@ impl MevPath {
 
             instruction.push(ix);
 
+            let (asset_token, debt_token) = if first.x_to_y {
+                (first.y_address.clone(), first.x_address.clone())
+            } else {
+                (first.x_address.clone(), first.y_address.clone())
+            };
+            let packed_debt = Self::encode_packed_uint(final_debt);
+
+            #[cfg(not(feature = "optimized"))]
+            steps.push(StepMeta {
+                step_id: "scscspsc_5".to_string(),
+                asset: I256::from_raw(asset),
+                debt: I256::from_raw(final_debt),
+                asset_token: asset_token.clone(),
+                debt_token: debt_token.clone(),
+                step: third.clone(),
+            });
+            let mut ix = PAY_SENDER.to_string()
+                + &debt_token[2..]
+                + &(packed_debt.len() as u8).encode_hex()[64..]
+                + &packed_debt;
+
+            instruction.push(ix);
             steps_meta.push(steps);
             instructions.push(instruction);
             if i == 0 {
@@ -3468,8 +3472,8 @@ pub enum PathKind {
     SCSNSN,
     SCSNSP,
     SCSNSC,
-    SCSPSPSP,
-    SCSCSPSP,
+    SCSPSPSP, //
+    SCSCSPSP, //
     SCSCSPSC,
-    SCSCSCSC
+    SCSCSCSC //
 }

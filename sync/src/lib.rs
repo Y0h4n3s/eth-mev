@@ -641,18 +641,18 @@ impl BalancerWeightedCalculator {
 
     // TODO
     pub fn mul_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x * y).round(18, RoundingMode::Up)
+        (x * y).round(9, RoundingMode::Up)
     }
 
     pub fn mul_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x * y).round(18, RoundingMode::Down)
+        (x * y).round(9, RoundingMode::Down)
     }
 
     pub fn div_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x / y).round(18, RoundingMode::Up)
+        (x / y).round(9, RoundingMode::Up)
     }
     pub fn div_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x / y).round(18, RoundingMode::Down)
+        (x / y).round(9, RoundingMode::Down)
     }
 
     pub fn pow_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {

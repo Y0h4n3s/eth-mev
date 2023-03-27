@@ -58,16 +58,49 @@ contract AggregatorTest is Test {
 //
 //        require(success);
 //    }
+//    function test_scspsc() public {
+//        // block 16920115
+//        bytes memory data = hex"0000300020e95253e54490d8d30ea41574b24f741ee70201011002d89577d7d40200000008009e0905249ceefffb9605e034b534544684a58be6000a6706ba966100006000f6dcdce0ac3001b2f67f750bc64ea5beb37b58240120e95253e54490d8d30ea41574b24f741ee7020108152ea90000000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc21002d8107dccb30c7b";
+//        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
+//
+//        require(success);
+//    }
 
-//    function test_scsc() public {
+
+
+    //    function test_scsc() public {
 //        // block 16919287
 //        bytes memory data = hex"00003000397ff1542f962076d0bfe58ea045ffa2d347aca001100959eb1c0e4ae200000007007bea39867e4169dbe237d55c8242a8f2fcdcc38700084641b77e00000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2100959e13ba42c4d32";
 //        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
 //        require(success);
 //    }
-    function test_SushiSwapExactOutPayToSelf_SushiSwapExactOutPayToSender_SushiSwapExactOutPayToSender_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_PaybackPayToSender() public {
+//    function test_scscspsp() public {
+//        // block 16920111
+//        bytes memory data = hex"00000600a3f558aebaecaf0e11ca4b2199cc5ed341edfd74011005b12aefafa804000000070078235d08b2ae7a3e00184329212a4d7acd2f9985001211ef5ea5d78d3706ef00000010c02aaa39b223fe8d0a0e5c4f27ead9083c756cc21005ac4206e64fa673000080008d9b9e25b208cac58415d915898c2ffa3a530aa1000a5c8250059a000020005b8fb733f1a427e68533db48b7210d1548ee1dcd00082a72b6a8";
+//        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
+//
+//        require(success);
+//    }
 
-        bytes memory data = hex"0000300057654ae132413e81459ad2ae70c2570a9b89fb5301100270801d946c940000000010c02aaa39b223fe8d0a0e5c4f27ead9083c756cc21002702b3dd359f0220000800006da0fd433c1a5d7a4faa01111c044910a184553010811de95940000800098c2b0681d8bf07767826ea8bd3b11b0ca421631001617bc2718cfa1fdafdc357300006000351c3702414c0f1d8acb0156fdc20aeda8d07a8f0057654ae132413e81459ad2ae70c2570a9b89fb53100ad1ad410b32bf20";
+
+//
+//    function test_scscscsc() public {
+//        // block 16920115
+//        bytes memory data = hex"0000060011b815efb8f581194ae79006d24e0d814b7697f600102e36d06942ec8200000007007858e59e0c01ea06df3af3d20ac7b0003275d4bf010a0154c54e40000007006279653c28f138c8b31b8a0f6f8cd2c58e8c1705010a01551d193000000700fca9090d2c91e11cc546b0d7e4918c79e0088194000a01c57eb11a00000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2102e3386621e179c52";
+//        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
+//
+//        require(success);
+//    }
+//    function test_scspspsp() public {
+//        // block 16920115
+//        bytes memory data = hex"0000060011b815efb8f581194ae79006d24e0d814b7697f6001005b12aefafa8040000000010c02aaa39b223fe8d0a0e5c4f27ead9083c756cc21005ac3caf5326f2bb00008000b4e16d0168e52d35cacd2c6185b44281ec28c9dc000829d0791800008000eb4b2b5e0eae7a0eadd0673ef8c3c830f8762f2800140193ee38b877317eed58000060002b9f8fe8ffc437a9008bb3097066f02b0a1c52ec0111b815efb8f581194ae79006d24e0d814b7697f60829f87b38";
+//        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
+//
+//        require(success);
+//    }
+    function test_SushiSwapExactOutPayToSelf_SushiSwapExactOutPayToSender_SushiSwapExactOutPayToSender_UniswapV3ExactOutPayToSender_UniswapV3ExactOutPayToSender_PaybackPayToSender() public {
+        // block 16920111
+        bytes memory data = hex"0000060088e6a0c2ddd26feeb64f039a2c41296fcb3f5640010e4563918244f40000000700e3496358c6e16c0bd015c0d2f817029e7bfdd55e010801fff65e0002000048607651416a943bf5ac71c41be1420538e78f87000200000000000000000327c02aaa39b223fe8d0a0e5c4f27ead9083c756cc26f80310ca7f2c654691d1383149fa1a57d8ab1f81223f2b860cb6c721b710e433dca0ef393db";
         (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
 
         require(success);

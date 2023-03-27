@@ -272,7 +272,7 @@
     0x00 0x84 mstore
 
     // limit
-    dup1 0xA4 mstore
+0xFFFFFFFFFFFFFF 0xA4 mstore
 
     // deadline
     0xFFFFFFFFFFFFFF 0xC4 mstore
