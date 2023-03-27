@@ -9,12 +9,14 @@ use ethers::{
 };
 use ethers_providers::ProviderError::JsonRpcClientError;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 use crate::balancer_weighted::BalancerWeigtedMetadata;
 use hex::FromHex;
+use itertools::Itertools;
 use nom::HexDisplay;
 use crate::uniswap_v2::UniswapV2Metadata;
 use crate::abi::uniswap_v2::UniswapV2DataAggregator;
+use crate::curve::CurvePlainMetadata;
 abigen!(
     CurvePlainDataAggregator,
     "src/abi/curve/CurvePlainDataAggregator.json"
@@ -64,7 +66,7 @@ pub async fn get_pairs_batch_request<M: Middleware>(
 pub async fn get_complete_pool_data_batch_request<M: Middleware>(
     pairs: Vec<H160>,
     middleware: &Arc<M>,
-) -> Result<Vec<UniswapV2Metadata>> {
+) -> Result<Vec<CurvePlainMetadata>> {
     let mut target_addresses = vec![];
     for pair in pairs.iter() {
         target_addresses.push(Token::Address(pair.clone()));
@@ -75,7 +77,7 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
     let constructor_args = Token::Tuple(vec![Token::Array(target_addresses)]);
 
     let deployer =
-        UniswapV2DataAggregator::deploy(middleware.clone(), constructor_args).unwrap();
+        CurvePlainDataAggregator::deploy(middleware.clone(), constructor_args).unwrap();
 
     loop {
         let call = deployer.call_raw().await;
@@ -83,15 +85,12 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
             let return_data_tokens = ethers::abi::decode(
                 &[ParamType::Array(Box::new(ParamType::Tuple(vec![
                     ParamType::Address,   // address
-                    ParamType::Uint(256),  // token a amount
-                    ParamType::Uint(256),  // token b amount
-                    ParamType::Uint(256),  // token a balance
-                    ParamType::Uint(256),  // token b balance
+                    ParamType::Array(Box::new(ParamType::Address)),  // tokens
+                    ParamType::Array(Box::new(ParamType::Uint(256))),  // balances
+                    ParamType::Array(Box::new(ParamType::Uint(256))),  // decimals
+                    ParamType::Uint(256),  // amp
+                    ParamType::Uint(256),  // fee
                     ParamType::Uint(256),  // block number
-                    ParamType::Address,   // token a
-                    ParamType::Uint(8),   // token a decimals
-                    ParamType::Address,   // token b
-                    ParamType::Uint(8),   // token b decimals
 
                 ])))],
                 &return_data,
@@ -104,7 +103,7 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                         if let Some(pool_data) = tup.into_tuple() {
                             if !pool_data[0].to_owned().into_address().unwrap().is_zero() {
                                 //Update the pool data
-                                let u_pair = UniswapV2Metadata {
+                                let u_pair = CurvePlainMetadata {
                                     address: hex_to_address_string(
                                         pool_data[0]
                                             .to_owned()
@@ -112,57 +111,47 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
                                             .unwrap()
                                             .encode_hex(),
                                     ),
-                                    reserve0: pool_data[1]
+                                    tokens:
+                                        pool_data[1]
+                                            .to_owned()
+                                            .into_array()
+                                            .unwrap()
+                                            .into_iter()
+                                            .filter(|t| !t.clone().into_address().unwrap().is_zero())
+                                            .map(|addr|  hex_to_address_string(addr.into_address().unwrap().encode_hex()))
+                                            .collect_vec(),
+                                    balances:
+                                        pool_data[2]
+                                            .to_owned()
+                                            .into_array()
+                                            .unwrap()
+                                            .into_iter()
+                                            .filter(|t| !t.clone().into_uint().unwrap().is_zero())
+                                            .map(|addr|  addr.into_uint().unwrap().into())
+                                            .collect::<Vec<U256>>(),
+                                    decimals:
+                                        pool_data[3]
+                                            .to_owned()
+                                            .into_array()
+                                            .unwrap()
+                                            .into_iter()
+                                            .filter(|t| !t.clone().into_uint().unwrap().is_zero())
+                                            .map(|addr|  addr.into_uint().unwrap().as_u32() as u8).collect_vec(),
+                                    fee: pool_data[4]
                                         .to_owned()
                                         .into_uint()
                                         .unwrap()
                                         .into(),
-                                    reserve1: pool_data[2]
+                                    amp: pool_data[5]
                                         .to_owned()
                                         .into_uint()
                                         .unwrap()
                                         .into(),
-                                    balance0: pool_data[3]
-                                        .to_owned()
-                                        .into_uint()
-                                        .unwrap()
-                                        .into(),
-                                    balance1: pool_data[4]
-                                        .to_owned()
-                                        .into_uint()
-                                        .unwrap()
-                                        .into(),
-                                    block_number: pool_data[5]
+                                    block_number: pool_data[6]
                                         .to_owned()
                                         .into_uint()
                                         .unwrap()
                                         .as_u64(),
-                                    token0: hex_to_address_string(
-                                        pool_data[6]
-                                            .to_owned()
-                                            .into_address()
-                                            .unwrap()
-                                            .encode_hex(),
-                                    ),
-                                    token0_decimals: pool_data[7]
-                                        .to_owned()
-                                        .into_uint()
-                                        .unwrap()
-                                        .as_u32()
-                                        as u8,
-                                    token1: hex_to_address_string(
-                                        pool_data[8]
-                                            .to_owned()
-                                            .into_address()
-                                            .unwrap()
-                                            .encode_hex(),
-                                    ),
-                                    token1_decimals: pool_data[9]
-                                        .to_owned()
-                                        .into_uint()
-                                        .unwrap()
-                                        .as_u32()
-                                        as u8,
                                     ..Default::default()
                                 };
                                 final_pairs.push(u_pair);
@@ -175,7 +164,7 @@ pub async fn get_complete_pool_data_batch_request<M: Middleware>(
         } else {
             match call.unwrap_err() {
                 JsonRpcClientError(err) => {
-                    // eprintln!("{:?}", err);
+                    error!("{:?}", err);
                     continue;
                 }
                 _ => break,

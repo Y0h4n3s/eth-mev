@@ -55,19 +55,40 @@ contract CurvePlainDataAggregator {
                     tokens[i] = token;
                     decimals[i] = IERC20(token).decimals();
                     balances[i] = CurvePlainPool(poolAddress).balances(i);
+                    (bool balanceCallSuccess, bytes memory balanceCallData) = poolAddress.call(abi.encodeWithSignature("balances(uint256)",i));
+                    if (balanceCallSuccess) {
+                        balances[i] = abi.decode(balanceCallData, (uint256));
+
+                    } else {
+                        continue;
+                    }
 
                 } else {
                     continue;
                 }
             }
+            if (tokens[0] == address(0)) continue;
 
             PoolData memory poolData;
 
             poolData.tokens = tokens;
             poolData.balances = balances;
             poolData.decimals = decimals;
-            poolData.fee = CurvePlainPool(poolAddress).fee();
-            poolData.amp = CurvePlainPool(poolAddress).A();
+            (bool feeCallSuccess, bytes memory feeCallData) = poolAddress.call(abi.encodeWithSignature("fee()"));
+            if (feeCallSuccess) {
+                poolData.fee = abi.decode(feeCallData, (uint256));
+
+            } else {
+                continue;
+            }
+
+            (bool ampCallSuccess, bytes memory ampCallData) = poolAddress.call(abi.encodeWithSignature("A()"));
+            if (ampCallSuccess) {
+                poolData.amp = abi.decode(ampCallData, (uint256));
+
+            } else {
+                continue;
+            }
 
             poolData.addr = poolAddress;
 
@@ -97,14 +118,14 @@ contract CurvePlainDataAggregator {
 
 contract CurvePlainPairsBatch {
     constructor(address factory, uint256 start) {
-        address[] memory pools = new address[](30);
+        address[] memory pools = new address[](700);
 
-        for (uint i = start; i < start + 30; i++) {
-//            address pool = CurvePlainFactory(factory).pool_list(i);
-//            if (pool == address (0)) {
-//                continue;
-//            }
-            pools[i] = address(0);
+        for (uint i = start; i < start + 700; i++) {
+            address pool = CurvePlainFactory(factory).pool_list(i);
+            if (pool == address(0)) {
+                continue;
+            }
+            pools[i] = pool;
         }
         bytes memory _abiEncodedData = abi.encode(pools);
 
