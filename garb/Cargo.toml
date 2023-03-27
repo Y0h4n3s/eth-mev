@@ -7,11 +7,9 @@ edition = "2021"
 
 [dependencies]
 garb_sync_eth = { path = "../sync" }
-#[cfg(features = "ipc")]
 garb_graph_eth = { path = "../graph" }
 tokio = { version = "1.17.0", features = ["full"] }
 anyhow = "1.0.66"
-async-std = "1.12.0"
 url = "2.3.1"
 num_cpus = "1.14.0"
 kanal = "0.1.0-pre7"
@@ -22,11 +20,7 @@ ethers-flashbots = { git = "https://github.com/onbjerg/ethers-flashbots" }
 rand = "0.8.5"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
-reqwest = "0.11.14"
 futures = "0.3.26"
-async-trait = "0.1.66"
-serde = "1.0.152"
-serde_json = "1.0.94"
 
 [features]
 ipc = ["garb_graph_eth/ipc", "garb_sync_eth/ipc"]

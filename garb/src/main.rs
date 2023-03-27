@@ -1,64 +1,42 @@
-#![allow(unused_imports)]
-#![allow(dead_code)]
-#![allow(unused_must_use)]
-#![allow(non_snake_case)]
-#![allow(unreachable_patterns)]
-#![allow(unused)]
-#![allow(deprecated)]
-
-
-mod abi;
-use serde::{Deserialize, Serialize};
-use tracing::{debug, error, info, warn, Instrument};
-//Deployer: 0xef344B9eFcc133EB4e7FEfbd73a613E3b2D05e86
-// Deployed to: 0x5F416E55fdBbA8CC0D385907C534B57a08710c35
-// Transaction hash: 0x2f03f71cc6915fcc17afd71730f1fb6809cef88b102fcb3aa3e3dc60095d1aee
-//V2
-//	Deployer: 0xef344B9eFcc133EB4e7FEfbd73a613E3b2D05e86
-// Deployed to: 0x3fDaA7c06379981c879F7a9617470215f808368F
-// Transaction hash: 0x1772c078cc5749dd0dcbebf316280ac06eb41735d501abd8a2a13521db6e16bd
-use once_cell::sync::Lazy;
-
-use async_std::sync::Arc;
-use ethers::prelude::StreamExt;
-use ethers::prelude::{Address, LocalWallet, SignerMiddleware, H160, H256};
 use std::collections::HashMap;
-use tokio::runtime::Runtime;
-use tokio::sync::RwLock;
-
-use async_trait::async_trait;
-use ethers::abi::{AbiEncode, ParamType, StateMutability, Token};
-use ethers::core::k256::elliptic_curve::consts::U25;
-use ethers::prelude::k256::elliptic_curve::consts::U2;
-use ethers::signers::Signer;
-use ethers::types::transaction::eip2718::TypedTransaction;
-use ethers::types::{
-    transaction::eip2930::AccessList, Block, BlockId, BlockNumber, Eip1559TransactionRequest,
-    NameOrAddress, Transaction, TxHash, U256, U64,
-};
-use ethers::types::{Bytes, I256};
-use ethers::utils::keccak256;
-use ethers_flashbots::{
-    BundleRequest, BundleTransaction, FlashbotsMiddleware, FlashbotsMiddlewareError, RelayError,
-    SimulatedBundle,
-};
-use ethers_providers::{Http, Middleware, Provider, ProviderExt, Ws};
-use futures::future::err;
-use garb_graph_eth::backrun::Backrun;
-use garb_graph_eth::mev_path::MevPath;
-use garb_graph_eth::single_arb::ArbPath;
-use garb_graph_eth::{GraphConfig, Order};
-use garb_sync_eth::node_dispatcher::NodeDispatcher;
-use garb_sync_eth::{
-    EventSource, LiquidityProviderId, LiquidityProviders, PendingPoolUpdateEvent, Pool,
-    PoolUpdateEvent, SyncConfig,
-};
-use rand::Rng;
 use std::str::FromStr;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use std::sync::Arc;
+use ethers::prelude::{Address, H160, H256, LocalWallet, SignerMiddleware};
+use ethers::prelude::StreamExt;
+use ethers::signers::Signer;
+use ethers::types::{
+    Block, BlockId, BlockNumber, NameOrAddress,
+   TxHash, U256, U64,
+};
+use ethers::types::{Bytes};
+use ethers::types::transaction::eip2718::TypedTransaction;
+use ethers_flashbots::{
+    BundleRequest, FlashbotsMiddleware, FlashbotsMiddlewareError, RelayError,
+    SimulatedBundle,
+};
+use ethers_providers::{Middleware, Provider, Ws};
+#[cfg(feature = "ipc")]
+use ethers_providers::Ipc;
+use once_cell::sync::Lazy;
+use rand::Rng;
+use tokio::runtime::Runtime;
+use tokio::sync::RwLock;
 use tokio::time::Duration;
+use tracing::{debug, error, info, warn};
 use url::Url;
+
+use garb_graph_eth::{GraphConfig};
+use garb_graph_eth::single_arb::ArbPath;
+use garb_sync_eth::{
+    EventSource, LiquidityProviders, PendingPoolUpdateEvent, Pool,
+    PoolUpdateEvent, SyncConfig,
+};
+use garb_sync_eth::node_dispatcher::NodeDispatcher;
+
+mod abi;
 
 static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
     std::env::var("ETH_PROVIDERS")
@@ -78,23 +56,16 @@ static CONTRACT_ADDRESS: Lazy<Address> = Lazy::new(|| {
             .nth(6)
             .unwrap_or("0xA46356ba716631d87Ab3081635F06136662ae3C0".to_string())
     }))
-    .unwrap()
+        .unwrap()
 });
 
+#[cfg(feature = "ipc")]
 static IPC_PATH: Lazy<String> = Lazy::new(|| {
     std::env::var("ETH_IPC_PATH").unwrap_or_else(|_| {
         std::env::args()
             .nth(6)
             .unwrap_or("/root/.ethereum/geth.ipc".to_string())
     })
-});
-static NODE_URL: Lazy<Url> = Lazy::new(|| {
-    let url = std::env::var("ETH_NODE_URL").unwrap_or_else(|_| {
-        std::env::args()
-            .nth(7)
-            .unwrap_or("http://65.21.198.115:8545".to_string())
-    });
-    Url::parse(&url).unwrap()
 });
 
 static PRIVATE_KEY: Lazy<String> = Lazy::new(|| std::env::var("ETH_PRIVATE_KEY").unwrap());
@@ -118,14 +89,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pub async fn async_main() -> anyhow::Result<()> {
     let pools = Arc::new(RwLock::new(HashMap::<String, Pool>::new()));
     let (update_q_sender, update_q_receiver) =
-        kanal::bounded_async::<Box<dyn EventSource<Event = PoolUpdateEvent>>>(10000);
+        kanal::bounded_async::<Box<dyn EventSource<Event=PoolUpdateEvent>>>(10000);
     let (pending_update_q_sender, pending_update_q_receiver) =
-        kanal::bounded_async::<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>(10000);
+        kanal::bounded_async::<Box<dyn EventSource<Event=PendingPoolUpdateEvent>>>(10000);
     // routes holds the routes that pass through an updated pool
     // this will be populated by the graph module when there is an updated pool
-    let (routes_sender, mut routes_receiver) = kanal::bounded_async::<Backrun>(1000);
     let (single_routes_sender, mut single_routes_receiver) = kanal::bounded::<Vec<ArbPath>>(1000);
-    let (pool_sender, mut pool_receiver) = kanal::bounded_async::<Pool>(10000);
     let (used_pools_shot_tx, used_pools_shot_rx) =
         tokio::sync::oneshot::channel::<Vec<[Arc<RwLock<Pool>>; 2]>>();
 
@@ -134,7 +103,7 @@ pub async fn async_main() -> anyhow::Result<()> {
         .unwrap_or("true".to_string()).parse::<bool>().unwrap_or(true);
     let sync_config = SyncConfig {
         providers: PROVIDERS.clone(),
-        from_file
+        from_file,
     };
 
     let nodes = NodeDispatcher::from_file("nodes").await?;
@@ -146,16 +115,15 @@ pub async fn async_main() -> anyhow::Result<()> {
         nodes.clone(),
         sync_config,
     )
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     let mut joins = vec![];
 
-    let graph_conifg = GraphConfig {
+    let graph_config = GraphConfig {
         from_file,
         save_only: true,
     };
-    let graph_routes = routes_sender.clone();
     joins.push(std::thread::spawn(move || {
         let rt = Runtime::new().unwrap();
 
@@ -164,13 +132,12 @@ pub async fn async_main() -> anyhow::Result<()> {
                 pools.clone(),
                 update_q_receiver,
                 pending_update_q_receiver,
-                Arc::new(RwLock::new(graph_routes)),
-                Arc::new(std::sync::Mutex::new(single_routes_sender)),
+                Arc::new(Mutex::new(single_routes_sender)),
                 used_pools_shot_tx,
-                graph_conifg,
+                graph_config,
             )
-            .await
-            .unwrap();
+                .await
+                .unwrap();
         });
     }));
     joins.push(std::thread::spawn(move || {
@@ -178,12 +145,11 @@ pub async fn async_main() -> anyhow::Result<()> {
 
         rt.block_on(async move {
             transactor(
-                &mut routes_receiver,
                 &mut single_routes_receiver,
                 nodes.clone(),
             )
-            .await
-            .unwrap();
+                .await
+                .unwrap();
         });
     }));
 
@@ -225,13 +191,12 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
 }
 
 pub async fn transactor(
-    rts: &mut kanal::AsyncReceiver<Backrun>,
     rt: &mut kanal::Receiver<Vec<ArbPath>>,
     nodes: NodeDispatcher,
 ) -> anyhow::Result<()> {
     let mut workers = vec![];
     let cores = num_cpus::get();
-    let bundle_recievers = vec![
+    let bundle_receivers = vec![
         "https://relay.flashbots.net".to_string(),
         "https://builder0x69.io/".to_string(),
         "https://rpc.beaverbuild.org/".to_string(),
@@ -255,17 +220,17 @@ pub async fn transactor(
         .await
         .unwrap();
     #[cfg(feature = "ipc")]
-    let provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
+        let provider = ethers_providers::Provider::<Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
 
     let briber = Arc::new(abi::FlashbotsCheckAndSend::new(
         H160::from_str("0xc4595e3966e0ce6e3c46854647611940a09448d3").unwrap(),
         Arc::new(provider.clone()),
     ));
 
-    for bundle_reciever in &bundle_recievers {
-        let mut client = Arc::new(FlashbotsMiddleware::new(
+    for bundle_receiver in &bundle_receivers {
+        let client = Arc::new(FlashbotsMiddleware::new(
             provider.clone(),
-            Url::parse(bundle_reciever).unwrap(),
+            Url::parse(bundle_receiver).unwrap(),
             BUNDLE_SIGNER_PRIVATE_KEY
                 .clone()
                 .parse::<LocalWallet>()
@@ -274,14 +239,13 @@ pub async fn transactor(
         bundle_handlers.push(client)
     }
     for i in 0..cores {
-        // backruns
         let node_url = nodes.next_free();
 
         let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
 
-        let provider = ethers_providers::Provider::<ethers_providers::Ws>::connect(&node_url).await.unwrap();
+        let provider = ethers_providers::Provider::<Ws>::connect(&node_url).await.unwrap();
         #[cfg(feature = "ipc")]
-        let provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
+            let provider = ethers_providers::Provider::<Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
 
         // single transaction
         let routes = rt.clone();
@@ -293,10 +257,10 @@ pub async fn transactor(
         let ap = client.clone();
 
         let bundle_handlers = bundle_handlers.clone();
-        let nonce = Arc::new(tokio::sync::RwLock::new(U256::from(0)));
+        let nonce = Arc::new(RwLock::new(U256::from(0)));
 
-        let block: Arc<tokio::sync::RwLock<Block<H256>>> =
-            Arc::new(tokio::sync::RwLock::new(Block::default()));
+        let block: Arc<RwLock<Block<H256>>> =
+            Arc::new(RwLock::new(Block::default()));
 
         let nonce_update = nonce.clone();
         let signer_wallet_address = signer.address();
@@ -330,55 +294,49 @@ pub async fn transactor(
         let signer_wallet_address = signer.address();
 
         let briber = briber.clone();
-        workers.push(tokio::spawn(async move  {
-
-                let bundle_signer = BUNDLE_SIGNER_PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
-
-
-
-                while let Ok(orders) = routes.recv() {
-
-                    let mut futs = futures::stream::FuturesUnordered::new();
-                    for opportunity in orders {
-                        let nonce = nonce.clone();
-                        let block = block.read().await.clone();
+        workers.push(tokio::spawn(async move {
+            while let Ok(orders) = routes.recv() {
+                let futs = futures::stream::FuturesUnordered::new();
+                for opportunity in orders {
+                    let nonce = nonce.clone();
+                    let block = block.read().await.clone();
+                    let signer = signer.clone();
+                    let order = opportunity.tx.clone();
+                    let gas_cost = opportunity.gas_cost;
+                    for handler in &bundle_handlers {
+                        let mut tx_request = order.clone();
+                        let op = opportunity.clone();
+                        let nonce_num = nonce.clone();
+                        let block = block.clone();
                         let signer = signer.clone();
-                        let order = opportunity.tx.clone();
-                        let gas_cost = opportunity.gas_cost;
-                        for handler in &bundle_handlers {
-                            let mut tx_request = order.clone();
-                            let op = opportunity.clone();
-                            let nonce_num = nonce.clone();
-                            let block = block.clone();
-                            let signer = signer.clone();
-                            let mut handler = handler.clone();
-                            let briber = briber.clone();
+                        let handler = handler.clone();
+                        let briber = briber.clone();
 
-                            futs.push(async move {
-                                tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
-                                tx_request.from = Some(signer_wallet_address);
-                                let n = * nonce_num.read().await ;
-                                if block.base_fee_per_gas.is_none() {
-                                    warn!("Skipping block not loaded {}. ->  {} {} ",i+1,gas_cost,opportunity.block_number);
-                                    return
-                                }
-                                let gas_cost = gas_cost + U256::from(40000);
-                                let bribe = (op.profit * U256::from(10) ) / U256::from(100);
-                                let profit = op.profit - bribe;
-                                let max_fee = profit / gas_cost;
-                                let balance = U256::from(50000000000000000 as u128);
-                                let max_possible_fee = balance / gas_cost;
-                                let base_fee = calculate_next_block_base_fee(block.clone()).unwrap();
-                                tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
-                                tx_request.gas = Some(gas_cost);
-                                tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
-                                let blk = block.number.unwrap().as_u64();
-                                drop(n);
-                                drop(blk);
+                        futs.push(async move {
+                            tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
+                            tx_request.from = Some(signer_wallet_address);
+                            let n = *nonce_num.read().await;
+                            if block.base_fee_per_gas.is_none() {
+                                warn!("Skipping block not loaded {}. ->  {} {} ",i+1,gas_cost,opportunity.block_number);
+                                return;
+                            }
+                            let gas_cost = gas_cost + U256::from(40000);
+                            let bribe = (op.profit * U256::from(10)) / U256::from(100);
+                            let profit = op.profit - bribe;
+                            let max_fee = profit / gas_cost;
+                            let balance = U256::from(50000000000000000 as u128);
+                            let max_possible_fee = balance / gas_cost;
+                            let base_fee = calculate_next_block_base_fee(block.clone()).unwrap();
+                            tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
+                            tx_request.gas = Some(gas_cost);
+                            tx_request.nonce = Some(n.clone().checked_add(U256::from(0)).unwrap());
+                            let blk = block.number.unwrap().as_u64();
+                            drop(n);
+                            drop(blk);
 
-                                // profit doesn't cover tx_fees
-                                if tx_request.max_fee_per_gas.unwrap() <= base_fee {
-                                     warn!(
+                            // profit doesn't cover tx_fees
+                            if tx_request.max_fee_per_gas.unwrap() <= base_fee {
+                                warn!(
                                              "Skipping Unprofitable {}. ->  {} {} {:?} {:?}",
                                             i+1,
                                             tx_request.gas.unwrap(),
@@ -386,30 +344,30 @@ pub async fn transactor(
                                             blk,
                                             tx_request.max_fee_per_gas.unwrap().checked_div(U256::from(10).pow(U256::from(9))).unwrap()
                                      );
-                                    return
-                                }
+                                return;
+                            }
 
-                                tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
+                            tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
 
-                                tx_request.value = None;
+                            tx_request.value = None;
 
 
-                                let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
-                                let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
-                                let signed_tx = typed_tx.rlp_signed(&tx_sig);
-                                let mut bundle = vec![];
-                                bundle.push(signed_tx);
-                                let mut typed_bribe_tx = briber.check_32_bytes_and_send(
-                                        H160::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(),
+                            let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
+                            let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
+                            let signed_tx = typed_tx.rlp_signed(&tx_sig);
+                            let mut bundle = vec![];
+                            bundle.push(signed_tx);
+                            let mut typed_bribe_tx = briber.check_32_bytes_and_send(
+                                H160::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(),
                                 Bytes::from_str("0x313ce567").unwrap(),
                                 H256::from_str("0x0000000000000000000000000000000000000000000000000000000000000012").unwrap().0)
                                 .gas(U256::from(50000)).gas_price(base_fee).value(bribe).from(signer_wallet_address).tx;
-                                typed_bribe_tx.set_chain_id(U64::from(1));
-                                typed_bribe_tx.set_nonce(typed_tx.nonce().unwrap() + U256::from(1));
-                                let tx_sig = signer.sign_transaction(&typed_bribe_tx).await.unwrap();
-                                let signed_tx = typed_bribe_tx.rlp_signed(&tx_sig);
-                                bundle.push(signed_tx);
-                                warn!(
+                            typed_bribe_tx.set_chain_id(U64::from(1));
+                            typed_bribe_tx.set_nonce(typed_tx.nonce().unwrap() + U256::from(1));
+                            let tx_sig = signer.sign_transaction(&typed_bribe_tx).await.unwrap();
+                            let signed_tx = typed_bribe_tx.rlp_signed(&tx_sig);
+                            bundle.push(signed_tx);
+                            warn!(
                                         "Trying {}. ->  {} {} {:?} {:?} {:?}",
                                         i+1,
                                         gas_cost,
@@ -419,25 +377,20 @@ pub async fn transactor(
                                         tx_request.max_fee_per_gas.unwrap().checked_div(U256::from(10).pow(U256::from(9))).unwrap()
                                 );
 
-                                let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, true).await;
-                                        if let Some(res) = res {
-                                            if res.transactions.iter().all(|tx| tx.error.is_none()) {
-                                                for step in &op.result.steps {
-                                                }
-                                info!("\n\n\n");
-                                                // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
-
-                                            }
-                                        }
+                            let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, true).await;
+                            if let Some(res) = res {
+                                if res.transactions.iter().all(|tx| tx.error.is_none()) {
+                                    for _step in &op.result.steps {}
+                                    info!("\n\n\n");
+                                    // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
+                                }
+                            }
 //                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
-
-                            });
-                        }
-
+                        });
                     }
-                    futs.collect::<Vec<()>>().await;
                 }
-
+                futs.collect::<Vec<()>>().await;
+            }
         }));
     }
     for worker in workers {
@@ -447,67 +400,11 @@ pub async fn transactor(
     Ok(())
 }
 
-fn hex_to_address_string(hex: String) -> String {
-    ("0x".to_string() + hex.split_at(26).1).to_string()
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct JsonRpcRequest<'a, T> {
-    id: u64,
-    jsonrpc: &'a str,
-    method: &'a str,
-    params: T,
-}
-
-impl<'a, T> JsonRpcRequest<'a, T> {
-    pub fn new(method: &'a str, params: T) -> Self {
-        Self {
-            id: 1,
-            jsonrpc: "2.0",
-            method,
-            params,
-        }
-    }
-}
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsonRpcError {
-    /// The error code
-    pub code: i64,
-    /// The error message
-    pub message: String,
-    /// Additional data
-    pub data: Option<serde_json::Value>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsonRpcResponse<T> {
-    pub(crate) id: u64,
-    jsonrpc: String,
-    #[serde(flatten)]
-    pub data: JsonRpcResponseData<T>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(untagged)]
-pub enum JsonRpcResponseData<R> {
-    Error { error: JsonRpcError },
-    Success { result: R },
-}
-
-impl<R> JsonRpcResponseData<R> {
-    /// Consume response and return value
-    pub fn into_result(self) -> Result<R, JsonRpcError> {
-        match self {
-            JsonRpcResponseData::Success { result } => Ok(result),
-            JsonRpcResponseData::Error { error } => Err(error),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct FlashBotsBundleHandler {}
 
 impl FlashBotsBundleHandler {
+    #![allow(dead_code)]
     async fn submit(
         txs: Vec<Bytes>,
         #[cfg(not(feature = "ipc"))]
@@ -545,7 +442,6 @@ impl FlashBotsBundleHandler {
             }
         }
     }
-
     async fn simulate(
         txs: Vec<Bytes>,
         #[cfg(not(feature = "ipc"))]
@@ -598,70 +494,5 @@ impl FlashBotsBundleHandler {
         }
         None
     }
-
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-enum BundleHandlers {
-    FlashBots(String, FlashBotsRequestParams),
-    BlockVision(String, FlashBotsRequestParams),
-    EthBuilder(String, FlashBotsRequestParams),
-}
-
-impl BundleHandlers {
-    pub fn endpoint(&self) -> String {
-        match self {
-            Self::EthBuilder(url, _) | Self::FlashBots(url, _) | Self::BlockVision(url, _) => {
-                url.clone()
-            }
-        }
-    }
-
-    pub fn set_txs(&mut self, txs: Vec<Bytes>) -> Self {
-        match self {
-            Self::EthBuilder(_, params)
-            | Self::FlashBots(_, params)
-            | Self::BlockVision(_, params) => params.txs = txs,
-        }
-        self.clone()
-    }
-
-    pub fn set_block(&mut self, block: u64) -> Self {
-        match self {
-            Self::EthBuilder(_, params)
-            | Self::FlashBots(_, params)
-            | Self::BlockVision(_, params) => params.block_number = U64::from(block),
-        }
-        self.clone()
-    }
-}
-#[derive(Serialize, Deserialize, Clone, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct FlashBotsRequestParams {
-    txs: Vec<Bytes>,
-    block_number: U64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    min_timestamp: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_timestamp: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reverting_tx_hashes: Option<Vec<Bytes>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    replacement_uuid: Option<u128>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct FlashBotsSimulateRequestParams {
-    txs: Vec<Bytes>,
-    block_number: U64,
-    state_block_number: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    min_timestamp: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_timestamp: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reverting_tx_hashes: Option<Vec<Bytes>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    replacement_uuid: Option<u128>,
-}

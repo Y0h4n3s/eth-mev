@@ -2337,7 +2337,7 @@ impl MevPath {
                 debt_token: debt_token,
                 step: second.clone(),
             });
-            let mut ix = second.provider.pay_next_signature(true) + &second.address[2..];
+            let mut ix = second.provider.pay_address_signature(true) + &second.address[2..];
             // second is guaranteed to be v2 variants
             let packed_asset = Self::encode_packed_uint(first_debt);
             ix += &(if second.x_to_y { "01".to_string() } else { "00".to_string() }

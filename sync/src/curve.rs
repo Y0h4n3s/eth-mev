@@ -49,8 +49,8 @@ use crate::node_dispatcher::NodeDispatcher;
 use crate::POLL_INTERVAL;
 use crate::IPC_PATH;
 
-#[serde(rename_all = "camelCase")]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct CurvePlainMetadata {
     pub address: String,
     pub factory_address: String,

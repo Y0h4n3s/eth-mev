@@ -72,8 +72,8 @@ pub struct FileBalancerWeightedPoolToken {
     pub balance: U256,
 }
 
-#[serde(rename_all = "camelCase")]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct FileBalancerWeigtedMetadata {
     pub id: String,
     #[serde(deserialize_with = "from_float_str")]
@@ -100,8 +100,8 @@ impl From<FileBalancerWeightedPoolToken> for BalancerWeightedPoolToken {
         }
     }
 }
-#[serde(rename_all = "camelCase")]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct BalancerWeigtedMetadata {
     pub id: String,
     pub factory_address: String,

@@ -139,7 +139,6 @@ pub async fn start(
     pools: Arc<RwLock<HashMap<String, Pool>>>,
     updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event = PoolUpdateEvent>>>,
     pending_updated_q: kanal::AsyncReceiver<Box<dyn EventSource<Event = PendingPoolUpdateEvent>>>,
-    routes: Arc<RwLock<kanal::AsyncSender<Backrun>>>,
     single_routes: Arc<Mutex<kanal::Sender<Vec<ArbPath>>>>,
     used_oneshot: tokio::sync::oneshot::Sender<Vec<[Arc<RwLock<Pool>>; 2]>>,
     config: GraphConfig,
