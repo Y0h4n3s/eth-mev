@@ -590,15 +590,17 @@ DETACH DELETE n",
         serde_json::from_str(&std::fs::read_to_string("blacklisted_tokens.json").unwrap()).unwrap();
         let filter_pools: Vec<String> =
         serde_json::from_str(&std::fs::read_to_string("blacklisted_pools.json").unwrap()).unwrap();
-        'main: for (pool, paths) in saved {
-            for r in paths {
+        let mut lookup: std::sync::Mutex<HashMap<Pool, Vec<MevPath>>> = std::sync::Mutex::new(HashMap::new());
+
+        saved.into_par_iter().for_each(|(pool, paths)|{
+            paths.into_par_iter().for_each(|r| {
                 let mut locked = vec![];
                 for pool in &r {
                     if filter_tokens.contains(&pool.x_address) || filter_tokens.contains(&pool.y_address) {
-                        continue 'main;
+                        return
                     }
                     if filter_pools.contains(&pool.address) {
-                        continue 'main;
+                        return
                     }
                     let l_pools = locked_pools.get(pool).unwrap();
                     if pool.x_to_y {
@@ -610,7 +612,7 @@ DETACH DELETE n",
                 let mut path = MevPath::new(r, &locked, &CHECKED_COIN.clone());
                     if let Ok(kind) = path.process_path(path.pools.clone(), &path.input_token) {
                         path.optimal_path = kind;
-                        let mut w = path_lookup1.write().await;
+                        let mut w = lookup.lock().unwrap();
                         if let Some(mut existing) = w.get_mut(&pool) {
                             existing.push(path);
                         } else {
@@ -619,12 +621,14 @@ DETACH DELETE n",
                             w.insert(pool.clone(), set);
                         }
                     } else {
-                        continue
+                        return
                     }
 
                 
-            }
-        }
+            })
+        });
+        let mut w = path_lookup1.write().await;
+        *w = lookup.lock().unwrap().clone();
     }
 
     let mut total_paths = 0;
