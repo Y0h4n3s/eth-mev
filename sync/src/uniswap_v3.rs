@@ -609,6 +609,7 @@ impl LiquidityProvider for UniSwapV3 {
         let node_url = self.nodes.next_free();
         tokio::spawn(async move {
             let client = reqwest::Client::new();
+            #[cfg(not(feature = "ipc"))]
             let eth_client = Arc::new(Provider::<Ws>::connect(&node_url).await.unwrap());
             #[cfg(feature = "ipc")]
             let eth_client = Arc::new(ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap());
@@ -757,6 +758,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
             rt.block_on(async move {
                 let mut joins = vec![];
 
+                #[cfg(not(feature = "ipc"))]
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();

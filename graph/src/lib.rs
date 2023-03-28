@@ -802,7 +802,7 @@ DETACH DELETE n",
     while updated_q.len() != 0 {
         drop(updated_q.recv().await);
     }
-    for i in 0..1 {
+    for i in 0..10 {
         let gas_lookup = gas_lookup.clone();
         let path_lookup = path_lookup1.clone();
         let single_routes = single_routes.clone();

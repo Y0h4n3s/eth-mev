@@ -103,6 +103,7 @@ impl LiquidityProvider for SushiSwap {
 
         tokio::spawn(async move {
             let client = reqwest::Client::new();
+            #[cfg(not(feature = "ipc"))]
             let eth_client = Arc::new(
                 Provider::<Ws>::connect(&node_url)
                     .await
@@ -226,7 +227,7 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for SushiSwap {
             let pools = pools.clone();
             rt.block_on(async move {
                 let mut joins = vec![];
-
+                #[cfg(not(feature = "ipc"))]
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();

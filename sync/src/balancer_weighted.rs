@@ -162,11 +162,15 @@ impl LiquidityProvider for BalancerWeighted {
         let node_url = self.nodes.next_free();
         tokio::spawn(async move {
             let file_pools = std::fs::read_to_string("balancer_weighted.json").unwrap();
+            #[cfg(not(feature = "ipc"))]
             let eth_client = Arc::new(
                 Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap(),
             );
+            #[cfg(feature = "ipc")]
+            let eth_client = Arc::new(ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap());
+
             let pairs_data: Vec<FileBalancerWeigtedMetadata> = serde_json::from_str(&file_pools).unwrap();
             let meta_data = pairs_data.iter().cloned().map(|data| {
                 BalancerWeigtedMetadata {
@@ -255,7 +259,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for BalancerWeigh
             let pools = pools.clone();
             rt.block_on(async move {
                 let mut joins = vec![];
-
+                #[cfg(not(feature = "ipc"))]
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();

@@ -1135,8 +1135,6 @@ pub async fn start(
     std::mem::drop(pools);
 
     Ok(tokio::spawn(async move {
-        let rt = Runtime::new().unwrap();
-
         let used_pools = used_pools.await.unwrap();
         let mut emitters = vec![];
 

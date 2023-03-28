@@ -110,6 +110,7 @@ impl LiquidityProvider for CurvePlain {
         let factory_address = self.metadata.factory_address.clone();
         let node_url = self.nodes.next_free();
         tokio::spawn(async move {
+            #[cfg(not(feature = "ipc"))]
             let eth_client = Arc::new(
                 Provider::<Ws>::connect(&node_url)
                     .await
@@ -202,7 +203,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for CurvePlain {
             let pools = pools.clone();
             rt.block_on(async move {
                 let mut joins = vec![];
-
+                #[cfg(not(feature = "ipc"))]
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();

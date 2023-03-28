@@ -1744,7 +1744,7 @@ impl MevPath {
             match &second.provider {
                 LiquidityProviders::BalancerWeighted(meta) => {
                     ix += &(meta.id[2..].to_string()
-                            + &first.address
+                            + &first.address[2..]
                             + &debt_token[2..]
                             + &asset_token[2..]
                             + &(packed_asset.len() as u8).encode_hex()[64..]
@@ -3042,6 +3042,11 @@ impl MevPath {
 
 
     fn chained_out_path_sync(&self, mut path: Vec<Pool>) -> anyhow::Result<PathResult> {
+        let skip = vec![];
+        if skip.contains(&self.optimal_path) {
+            return Err(anyhow::Error::msg("Skipped"))
+        }
+
         // binary search for optimal input
         match self.optimal_path {
             PathKind::SCSP => {
