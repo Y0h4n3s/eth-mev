@@ -1,6 +1,7 @@
 
 #define function transfer(address,uint256) nonpayable returns ()
 #define function approve(address,uint256) nonpayable returns ()
+#define function pancakeCall(address, uint, uint, bytes calldata) view returns ()
 #define constant OWNER = FREE_STORAGE_POINTER()
 
 
@@ -272,7 +273,7 @@
     0x00 0x84 mstore
 
     // limit
-0xFFFFFFFFFFFFFF 0xA4 mstore
+    dup1 0xA4 mstore
 
     // deadline
     0xFFFFFFFFFFFFFF 0xC4 mstore
@@ -1130,7 +1131,19 @@
     dup1 0xfe1b3a66 eq v2Callback jumpi
     // cro
     dup1 0xffe1ac97 eq v2Callback jumpi
+    // elk
+    dup1 0x07d3513a eq v2Callback jumpi
+    // dxswap
+    dup1 0x78b94ae6 eq v2Callback jumpi
+    // apeswap
+    dup1 0xbecda363 eq v2Callback jumpi
+    // unicswap
+    dup1 0x8998d6ae eq v2Callback jumpi
+    // wiseswap
+    dup1 0x84645f79 eq v2Callback jumpi
 
+    __FUNC_SIG(pancakeCall)
+    0x00 0x00 0x00 log2
     nxt jump
     stop
     v3Callback:

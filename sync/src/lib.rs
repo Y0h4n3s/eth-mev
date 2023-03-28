@@ -59,6 +59,8 @@ use rmps::{Deserializer, Serializer};
 use tokio::runtime::Runtime;
 use tracing::info;
 use crate::curve::CurvePlainMetadata;
+use crate::LiquidityProviderId::LuaSwap;
+use crate::LiquidityProviders::ElcSwap;
 
 #[async_trait]
 pub trait LiquidityProvider:
@@ -88,6 +90,15 @@ pub enum LiquidityProviders {
     SaitaSwap(UniswapV2Metadata),
     ConvergenceSwap(UniswapV2Metadata),
     CurvePlain(CurvePlainMetadata),
+    FraxSwap(UniswapV2Metadata),
+    WiseSwap(UniswapV2Metadata),
+    UnicSwap(UniswapV2Metadata),
+    ApeSwap(UniswapV2Metadata),
+    DXSwap(UniswapV2Metadata),
+    LuaSwap(UniswapV2Metadata),
+    ElcSwap(UniswapV2Metadata),
+    CapitalSwap(UniswapV2Metadata),
+
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
@@ -103,6 +114,14 @@ pub enum LiquidityProviderId {
     SaitaSwap,
     ConvergenceSwap,
     CurvePlain,
+    FraxSwap,
+    WiseSwap,
+    UnicSwap,
+    ApeSwap,
+    DXSwap,
+    LuaSwap,
+    ElcSwap,
+    CapitalSwap,
 }
 
 impl<T: Into<String>> From<T> for LiquidityProviders {
@@ -122,42 +141,16 @@ impl<T: Into<String>> From<T> for LiquidityProviders {
             "9" => LiquidityProviders::SaitaSwap(Default::default()),
             "10" => LiquidityProviders::ConvergenceSwap(Default::default()),
             "11" => LiquidityProviders::CurvePlain(Default::default()),
-            val => match val.find_substring("UniswapV2") {
-                Some(v) => serde_json::from_str(val).unwrap(),
-                None => match val.find_substring("UniswapV3") {
-                    Some(v) => serde_json::from_str(val).unwrap(),
-                    None => match val.find_substring("SushiSwap") {
-                        Some(v) => serde_json::from_str(val).unwrap(),
-                        None => match val.find_substring("BalancerWeighted") {
-                            Some(v) => serde_json::from_str(val).unwrap(),
-                            None => match val.find_substring("Solidly") {
-                                Some(v) => serde_json::from_str(val).unwrap(),
-                                None => match val.find_substring("Pancake") {
-                                    Some(v) => serde_json::from_str(val).unwrap(),
-                                    None => match val.find_substring("Cro") {
-                                        Some(v) => serde_json::from_str(val).unwrap(),
-                                        None => match val.find_substring("Shiba") {
-                                            Some(v) => serde_json::from_str(val).unwrap(),
-                                            None => match val.find_substring("Saita") {
-                                                Some(v) => serde_json::from_str(val).unwrap(),
-                                                None => match val.find_substring("Convergence") {
-                                                    Some(v) => serde_json::from_str(val).unwrap(),
-                                                    None => match val.find_substring("Curve") {
-                                                        Some(v) => serde_json::from_str(val).unwrap(),
-                                                        None => {
-                                                            panic!("Invalid Liquidity Provider {}", val)
-                                                        }
-                                                    },
-                                                },
-                                            },
-                                        },
-                                    },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
+            "12" => LiquidityProviders::FraxSwap(Default::default()),
+            "13" => LiquidityProviders::WiseSwap(Default::default()),
+            "14" => LiquidityProviders::UnicSwap(Default::default()),
+            "15" => LiquidityProviders::ApeSwap(Default::default()),
+            "16" => LiquidityProviders::DXSwap(Default::default()),
+            "17" => LiquidityProviders::LuaSwap(Default::default()),
+            "18" => LiquidityProviders::ElcSwap(Default::default()),
+            "19" => LiquidityProviders::CapitalSwap(Default::default()),
+            val => serde_json::from_str(val).unwrap(),
+
         }
     }
 }
@@ -176,6 +169,14 @@ impl From<LiquidityProviders> for u8 {
             LiquidityProviders::SaitaSwap(_) => 9,
             LiquidityProviders::ConvergenceSwap(_) => 10,
             LiquidityProviders::CurvePlain(_) => 11,
+            LiquidityProviders::FraxSwap(_) => 12,
+            LiquidityProviders::WiseSwap(_) => 13,
+            LiquidityProviders::UnicSwap(_) => 14,
+            LiquidityProviders::ApeSwap(_) => 15,
+            LiquidityProviders::DXSwap(_) => 16,
+            LiquidityProviders::LuaSwap(_) => 17,
+            LiquidityProviders::ElcSwap(_) => 18,
+            LiquidityProviders::CapitalSwap(_) => 19,
         }
     }
 }
@@ -252,15 +253,23 @@ impl LiquidityProviders {
     pub fn build_calculator(&self) -> Box<dyn Calculator> {
         match self {
             LiquidityProviders::CurvePlain(meta) => Box::new(CurvePlainCalculator::new(meta.clone())),
-            LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new()),
-            LiquidityProviders::CroSwap(meta) => Box::new(CpmmCalculator::new()),
-            LiquidityProviders::ShibaSwap(meta) => Box::new(CpmmCalculator::new()),
-            LiquidityProviders::ConvergenceSwap(meta) => Box::new(CpmmCalculator::new()),
-            LiquidityProviders::SaitaSwap(meta) => Box::new(SolidlyCalculator::new()),
-            LiquidityProviders::Solidly(meta) => Box::new(SolidlyCalculator::new()),
-            LiquidityProviders::Pancakeswap(meta) => Box::new(PancakeCalculator::new()),
+            LiquidityProviders::UniswapV2(meta) => Box::new(CpmmCalculator::new(30)),
+            LiquidityProviders::CroSwap(meta) => Box::new(CpmmCalculator::new(30)),
+            LiquidityProviders::ShibaSwap(meta) => Box::new(CpmmCalculator::new(30)),
+            LiquidityProviders::ConvergenceSwap(meta) => Box::new(CpmmCalculator::new(30)),
+            LiquidityProviders::SaitaSwap(meta) => Box::new(CpmmCalculator::new(20)),
+            LiquidityProviders::Solidly(meta) => Box::new(CpmmCalculator::new(20)),
+            LiquidityProviders::Pancakeswap(meta) => Box::new(CpmmCalculator::new(25)),
             LiquidityProviders::UniswapV3(meta) => Box::new(UniswapV3Calculator::new(meta.clone())),
-            LiquidityProviders::SushiSwap(meta) => Box::new(CpmmCalculator::new()),
+            LiquidityProviders::SushiSwap(meta) => Box::new(CpmmCalculator::new(30)),
+            LiquidityProviders::FraxSwap(meta) => Box::new(CpmmCalculator::new(30)),
+            LiquidityProviders::WiseSwap(meta) => Box::new(CpmmCalculator::new(30)),
+            LiquidityProviders::UnicSwap(meta) => Box::new(CpmmCalculator::new(30)),
+            LiquidityProviders::ApeSwap(meta) => Box::new(CpmmCalculator::new(20)),
+            LiquidityProviders::DXSwap(meta) => Box::new(CpmmCalculator::new(50)),
+            LiquidityProviders::LuaSwap(meta) => Box::new(CpmmCalculator::new(40)),
+            LiquidityProviders::ElcSwap(meta) => Box::new(CpmmCalculator::new(30)),
+            LiquidityProviders::CapitalSwap(meta) => Box::new(CpmmCalculator::new(30)),
             LiquidityProviders::BalancerWeighted(meta) => {
                 Box::new(BalancerWeightedCalculator::new(meta.clone()))
             }
@@ -270,6 +279,102 @@ impl LiquidityProviders {
     }
     pub fn build(&self, node_providers: NodeDispatcher) -> BoxedLiquidityProvider {
         match self {
+            LiquidityProviders::CapitalSwap(meta) => {
+                // function uniswapV2Call(address sender, uint amount0, uint amount1, bytes calldata data) external;
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0x03407772F5EBFB9B10Df007A2DD6FFf4EdE47B53".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::CapitalSwap,
+                ))
+            }
+            LiquidityProviders::ElcSwap(meta) => {
+                // function elkCall(address sender, uint amount0, uint amount1, bytes calldata data) external;
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0x6511eBA915fC1b94b2364289CCa2b27AE5898d80".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::ElcSwap,
+                ))
+            }
+            LiquidityProviders::LuaSwap(meta) => {
+                // function uniswapV2Call(address sender, uint amount0, uint amount1, bytes calldata data) external;
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0x0388C1E0f210AbAe597B7DE712B9510C6C36C857".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::LuaSwap,
+                ))
+            }
+            LiquidityProviders::DXSwap(meta) => {
+                // function DXswapCall(address sender, uint amount0, uint amount1, bytes calldata data) external;
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0xd34971BaB6E5E356fd250715F5dE0492BB070452".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::DXSwap,
+                ))
+            }
+            LiquidityProviders::ApeSwap(meta) => {
+                // function apeCall(address sender, uint amount0, uint amount1, bytes calldata data) external;
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0xBAe5dc9B19004883d0377419FeF3c2C8832d7d7B".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::ApeSwap,
+                ))
+            }
+            LiquidityProviders::UnicSwap(meta) => {
+                //  function unicSwapV2Call(address sender, uint amount0, uint amount1, bytes calldata data) external;
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0xbAcC776b231c571a7e6ab7Bc2C8a099e07153377".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::UnicSwap,
+                ))
+            }
+            LiquidityProviders::WiseSwap(meta) => {
+                //  function swapsCall(address _sender, uint256 _amount0, uint256 _amount1, bytes calldata _data) external;
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0xee3E9E46E34a27dC755a63e2849C9913Ee1A06E2".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::WiseSwap,
+                ))
+            }
+            LiquidityProviders::FraxSwap(meta) => {
+                //  function uniswapV2Call(address sender, uint amount0, uint amount1, bytes calldata data) external;
+                let metadata = UniswapV2Metadata {
+                    factory_address: "0x43eC799eAdd63848443E2347C49f5f52e8Fe0F6f".to_string(),
+                    ..meta.clone()
+                };
+                Box::new(uniswap_v2::UniSwapV2::new(
+                    metadata,
+                    node_providers,
+                    LiquidityProviderId::FraxSwap,
+                ))
+            }
             LiquidityProviders::CurvePlain(meta) => {
                 let metadata = CurvePlainMetadata {
                     factory_address: "0xF18056Bbd320E96A48e3Fbf8bC061322531aac99".to_string(),
@@ -401,6 +506,14 @@ impl LiquidityProviders {
             LiquidityProviders::SaitaSwap(_) => LiquidityProviderId::SaitaSwap,
             LiquidityProviders::ConvergenceSwap(_) => LiquidityProviderId::ConvergenceSwap,
             LiquidityProviders::CurvePlain(_) => LiquidityProviderId::CurvePlain,
+            LiquidityProviders::FraxSwap(_) => LiquidityProviderId::FraxSwap,
+            LiquidityProviders::WiseSwap(_) => LiquidityProviderId::WiseSwap,
+            LiquidityProviders::UnicSwap(_) => LiquidityProviderId::UnicSwap,
+            LiquidityProviders::ApeSwap(_) => LiquidityProviderId::ApeSwap,
+            LiquidityProviders::DXSwap(_) => LiquidityProviderId::DXSwap,
+            LiquidityProviders::LuaSwap(_) => LiquidityProviderId::LuaSwap,
+            LiquidityProviders::ElcSwap(_) => LiquidityProviderId::ElcSwap,
+            LiquidityProviders::CapitalSwap(_) => LiquidityProviderId::CapitalSwap,
         }
     }
 
@@ -417,6 +530,14 @@ impl LiquidityProviders {
             LiquidityProviders::SaitaSwap(meta) => meta.factory_address.clone(),
             LiquidityProviders::ConvergenceSwap(meta) => meta.factory_address.clone(),
             LiquidityProviders::CurvePlain(meta) => meta.factory_address.clone(),
+            LiquidityProviders::FraxSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::WiseSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::UnicSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::ApeSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::DXSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::LuaSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::ElcSwap(meta) => meta.factory_address.clone(),
+            LiquidityProviders::CapitalSwap(meta) => meta.factory_address.clone(),
         }
     }
 }
@@ -550,8 +671,10 @@ impl Display for Pool {
 }
 
 impl CpmmCalculator {
-    fn new() -> Self {
-        Self {}
+    fn new(fee: u64) -> Self {
+        Self {
+            fee
+        }
     }
 }
 
@@ -566,7 +689,7 @@ impl Calculator for CpmmCalculator {
         if swap_source_amount.is_zero() || swap_destination_amount.is_zero() {
             return Err(Error::msg("Insufficient Liquidity"));
         }
-        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 30));
+        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - self.fee));
         let numerator = amount_in_with_fee
             .checked_mul(swap_destination_amount)
             .unwrap_or(U256::from(0));
@@ -594,7 +717,7 @@ impl Calculator for CpmmCalculator {
         }
 
         if let Some(numerator) = swap_source_amount.checked_mul(out_ * 10000) {
-            let denominator = (swap_destination_amount - out_) * U256::from((9970) as u128);
+            let denominator = (swap_destination_amount - out_) * U256::from((10000 - self.fee) as u128);
             Ok((numerator / denominator) + 1)
         } else {
             Err(Error::msg("Multiplication Overflow"))
@@ -606,21 +729,10 @@ pub trait Calculator {
     fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256>;
     fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256>;
 }
-pub struct CpmmCalculator {}
-pub struct SolidlyCalculator {}
-pub struct PancakeCalculator {}
-
-impl SolidlyCalculator {
-    pub fn new() -> Self {
-        Self {}
-    }
+pub struct CpmmCalculator {
+    fee: u64
 }
 
-impl PancakeCalculator {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
 pub struct UniswapV3Calculator {
     meta: UniswapV3Metadata,
 }
@@ -641,18 +753,18 @@ impl BalancerWeightedCalculator {
 
     // TODO
     pub fn mul_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x * y).round(9, RoundingMode::Up)
+        (x * y).round(18, RoundingMode::Up)
     }
 
     pub fn mul_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x * y).round(9, RoundingMode::Down)
+        (x * y).round(18, RoundingMode::Down)
     }
 
     pub fn div_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x / y).round(9, RoundingMode::Up)
+        (x / y).round(18, RoundingMode::Up)
     }
     pub fn div_down(&self, x: BigFloat, y: BigFloat) -> BigFloat {
-        (x / y).round(9, RoundingMode::Down)
+        (x / y).round(18, RoundingMode::Down)
     }
 
     pub fn pow_up(&self, x: BigFloat, y: BigFloat) -> BigFloat {
@@ -824,100 +936,6 @@ impl Calculator for CurvePlainCalculator {
             Ok(amount_in)
         } else {
             Err(Error::msg("Unexpected Error"))
-        }
-    }
-}
-
-impl Calculator for SolidlyCalculator {
-    fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
-            (pool.x_amount, pool.y_amount)
-        } else {
-            (pool.y_amount, pool.x_amount)
-        };
-
-        if swap_source_amount.is_zero() || swap_destination_amount.is_zero() {
-            return Err(Error::msg("Insufficient Liquidity"));
-        }
-        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 20));
-        let numerator = amount_in_with_fee
-            .checked_mul(swap_destination_amount)
-            .unwrap_or(U256::from(0));
-        let denominator = ((swap_source_amount) * 10000) + amount_in_with_fee;
-        let amount_out = numerator / denominator;
-        if amount_out > swap_destination_amount {
-            return Err(Error::msg("Insufficient Liquidity"));
-        }
-
-        Ok(amount_out)
-    }
-
-    fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
-            (pool.x_amount, pool.y_amount)
-        } else {
-            (pool.y_amount, pool.x_amount)
-        };
-
-        if swap_source_amount.is_zero()
-            || swap_destination_amount.is_zero()
-            || out_ >= swap_destination_amount
-        {
-            return Err(Error::msg("Insufficient Liquidity"));
-        }
-
-        if let Some(numerator) = swap_source_amount.checked_mul(out_ * 10000) {
-            let denominator = (swap_destination_amount - out_) * U256::from((9980) as u128);
-            Ok((numerator / denominator) + 1)
-        } else {
-            Err(Error::msg("Multiplication Overflow"))
-        }
-    }
-}
-
-impl Calculator for PancakeCalculator {
-    fn calculate_out(&self, in_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
-            (pool.x_amount, pool.y_amount)
-        } else {
-            (pool.y_amount, pool.x_amount)
-        };
-
-        if swap_source_amount.is_zero() || swap_destination_amount.is_zero() {
-            return Err(Error::msg("Insufficient Liquidity"));
-        }
-        let amount_in_with_fee = in_.saturating_mul(U256::from(10000 - 25));
-        let numerator = amount_in_with_fee
-            .checked_mul(swap_destination_amount)
-            .unwrap_or(U256::from(0));
-        let denominator = ((swap_source_amount) * 10000) + amount_in_with_fee;
-        let amount_out = numerator / denominator;
-        if amount_out > swap_destination_amount {
-            return Err(Error::msg("Insufficient Liquidity"));
-        }
-
-        Ok(amount_out)
-    }
-
-    fn calculate_in(&self, out_: U256, pool: &Pool) -> anyhow::Result<U256> {
-        let (swap_source_amount, swap_destination_amount) = if pool.x_to_y {
-            (pool.x_amount, pool.y_amount)
-        } else {
-            (pool.y_amount, pool.x_amount)
-        };
-
-        if swap_source_amount.is_zero()
-            || swap_destination_amount.is_zero()
-            || out_ >= swap_destination_amount
-        {
-            return Err(Error::msg("Insufficient Liquidity"));
-        }
-
-        if let Some(numerator) = swap_source_amount.checked_mul(out_ * 10000) {
-            let denominator = (swap_destination_amount - out_) * U256::from((9975) as u128);
-            Ok((numerator / denominator) + 1)
-        } else {
-            Err(Error::msg("Multiplication Overflow"))
         }
     }
 }

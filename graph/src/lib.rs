@@ -701,7 +701,7 @@ DETACH DELETE n",
         join_handles.push(tokio::runtime::Handle::current().spawn(async move {
             let client = client.clone();
             let mut ix_data = "".to_string();
-            let packed_asset = MevPath::encode_packed(I256::from(1));
+            let packed_asset = MevPath::encode_packed(I256::from(10000));
 
             let function = match pool.provider.id() {
                 LiquidityProviderId::UniswapV2
@@ -712,17 +712,19 @@ DETACH DELETE n",
                 | LiquidityProviderId::SaitaSwap
                 | LiquidityProviderId::ConvergenceSwap
                 | LiquidityProviderId::CurvePlain
-                | LiquidityProviderId::Pancakeswap => {
-                    ix_data = "0e000000".to_string()
-                        + if pool.x_to_y { "01" } else { "00" }
+                | LiquidityProviderId::FraxSwap
+                | LiquidityProviderId::WiseSwap
+                | LiquidityProviderId::UnicSwap
+                | LiquidityProviderId::ApeSwap
+                | LiquidityProviderId::DXSwap
+                | LiquidityProviderId::LuaSwap
+                | LiquidityProviderId::ElcSwap
+                | LiquidityProviderId::CapitalSwap
+                | LiquidityProviderId::Pancakeswap
+                | LiquidityProviderId::UniswapV3 => {
+                    ix_data = pool.provider.pay_self_signature(false)
                         + &pool.address[2..]
-                        + &(packed_asset.len() as u8).encode_hex()[64..]
-                        + &packed_asset;
-                }
-                LiquidityProviderId::UniswapV3 => {
-                    ix_data = "00000600".to_string()
                         + if pool.x_to_y { "01" } else { "00" }
-                        + &pool.address[2..]
                         + &(packed_asset.len() as u8).encode_hex()[64..]
                         + &packed_asset;
                 }

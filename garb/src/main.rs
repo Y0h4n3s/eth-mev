@@ -43,7 +43,7 @@ static PROVIDERS: Lazy<Vec<LiquidityProviders>> = Lazy::new(|| {
         .unwrap_or_else(|_| {
             std::env::args()
                 .nth(5)
-                .unwrap_or("3,7,8,9,10".to_string())
+                .unwrap_or("12,13,14,15,16,17,18,19".to_string())
         })
         .split(",")
         .map(|i| LiquidityProviders::from(i))
