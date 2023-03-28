@@ -63,7 +63,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::runtime::Runtime;
 use tokio::sync::{RwLock, Semaphore};
 use tokio::time::Duration;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use url::Url;
 static IPC_PATH: Lazy<String> = Lazy::new(|| {
     std::env::var("ETH_IPC_PATH").unwrap_or_else(|_| {
