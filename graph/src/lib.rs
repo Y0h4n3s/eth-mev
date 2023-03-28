@@ -775,7 +775,7 @@ DETACH DELETE n",
                 } else {
                     w.insert(pool.address.clone(), gas_used + U256::from(10000));
                 }
-                debug!("{} uses {:?}", pool.address, gas_used + U256::from(300))
+                info!("{} uses {:?}", pool.address, gas_used + U256::from(300))
             } else {
                 error!(
                     "Failed to estimate gas for {} {:?}",
@@ -885,6 +885,11 @@ DETACH DELETE n",
             }
         }));
     }
+
+    // print some metrics
+    workers.push(tokio::spawn(async move {
+        warn!("Queued updates: {}", updated_q.len())
+    }));
     for worker in workers {
         worker.await.unwrap();
     }

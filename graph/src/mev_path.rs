@@ -2779,7 +2779,7 @@ impl MevPath {
                 step: third.clone(),
             });
             let mut ix = PAY_SENDER.to_string()
-                + &debt_token[2..]
+                + &asset_token[2..]
                 + &(packed_debt.len() as u8).encode_hex()[64..]
                 + &packed_debt;
 
@@ -3205,7 +3205,6 @@ impl MevPath {
                 if !data.is_good {
                     return None;
                 } else {
-                    info!("{:?}: {}",self.optimal_path,  data.ix_data);
                     let tx_request = Eip1559TransactionRequest {
                         // update later
                         to: None,

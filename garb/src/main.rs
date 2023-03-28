@@ -317,7 +317,7 @@ pub async fn transactor(
                             tx_request.from = Some(signer_wallet_address);
                             let n = *nonce_num.read().await;
                             if block.base_fee_per_gas.is_none() {
-                                warn!("Skipping block not loaded {}. ->  {} {} ",i+1,gas_cost,opportunity.block_number);
+                                debug!("Skipping block not loaded {}. ->  {} {} ",i+1,gas_cost,opportunity.block_number);
                                 return;
                             }
                             let gas_cost = gas_cost + U256::from(40000);
@@ -336,7 +336,7 @@ pub async fn transactor(
 
                             // profit doesn't cover tx_fees
                             if tx_request.max_fee_per_gas.unwrap() <= base_fee {
-                                warn!(
+                                debug!(
                                              "Skipping Unprofitable {}. ->  {} {} {:?} {:?}",
                                             i+1,
                                             tx_request.gas.unwrap(),
@@ -367,7 +367,7 @@ pub async fn transactor(
                             let tx_sig = signer.sign_transaction(&typed_bribe_tx).await.unwrap();
                             let signed_tx = typed_bribe_tx.rlp_signed(&tx_sig);
                             bundle.push(signed_tx);
-                            warn!(
+                            debug!(
                                         "Trying {}. ->  {} {} {:?} {:?} {:?}",
                                         i+1,
                                         gas_cost,
@@ -380,8 +380,6 @@ pub async fn transactor(
                             let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, true).await;
                             if let Some(res) = res {
                                 if res.transactions.iter().all(|tx| tx.error.is_none()) {
-                                    for _step in &op.result.steps {}
-                                    info!("\n\n\n");
                                     // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
                                 }
                             }

@@ -1,6 +1,5 @@
 
 #define function transfer(address,uint256) nonpayable returns ()
-#define function approve(address,uint256) nonpayable returns ()
 #define constant OWNER = FREE_STORAGE_POINTER()
 
 
@@ -74,18 +73,16 @@
 
 #define macro APPROVE() = takes (0) returns (0) {
     ONLY_OWNER()
-    0x04 calldataload                                                   // [tokenAddress]
-    0x24 calldataload                                                   // [to, tokenAddress]
-    0x44 calldataload                                                   // [amount, to, tokenAddress]
-    __FUNC_SIG(approve)                                                // [sig, amount, to, tokenAddress]
+    dup1 calldataload 0x60 shr                                  // [tokenAddress, stepOffset]
+    dup2 0x14 add calldataload 0x60 shr                         // [to, tokenAddress, stepOffset]
+    dup3 0x28 add calldataload 0xF8 shr                         // [amountSize, to, tokenAddress, stepOffset]
+    dup4 0x29 add calldataload dup2 0x4 mul 0x100 sub shr       // [amount, amountSize, to, tokenAddress, stepOffset]
+    0x095ea7b3                                                  // [sig, amount, amountSize, to, tokenAddress, stepOffset]
+    0x00 mstore                                                 // [amount, amountSize, to, tokenAddress, stepOffset]
 
-    0x00 mstore                                                         // [amount, to, tokenAddress]
 
-
-    // store args in memory
-    // address, uint256
-    dup2 0x20 mstore                                                  // [amount, to, tokenAddress]
-    0x40 mstore                                                         // [tokenAddress]
+    dup3 0x20 mstore                                             // [amount, amountSize, to, tokenAddress, stepOffset]
+    0x40 mstore                                                  // [amountSize, to, tokenAddress, stepOffset]
 
 
     // make call. return size is zero because we can fetch it after the call
@@ -94,7 +91,7 @@
     0x44                        // [args_size, ret_offset, ret_size, stepOffset]
     0x1c                        // [args_offset, args_size, ret_offset, ret_size, stepOffset]
     dup3                        // [value, args_offset, args_size, ret_offset, ret_size, stepOffset]
-    dup6                        // [to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    dup8                        // [to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
     gas                         // [gas, to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
     call                        // [successs, stepOffset]
 
@@ -104,6 +101,14 @@
 
     // Resume execution in invoking macro
     approve_success:
+    // [amountSize, to, tokenAddress, stepOffset]
+    0x2 dup2 div dup5 add 0x29 add          // [nextStepOffset, amountSize, to, tokenAddress, stepOffset]
+    swap4                                   // [stepOffset, amountSize, to, tokenAddress, nextStepOffset]
+    pop pop pop pop                         // [nextStepOffset]
+    dup1 calldataload
+    0xE0 shr
+    dup1 0x0 eq end jumpi
+    nxt jump
 }
 
 
@@ -126,6 +131,44 @@
     pb_transfer_success:
 
     // [stepOffset]
+    dup1 calldataload
+    0xE0 shr
+    dup1 0x0 eq end jumpi
+    nxt jump
+}
+
+#define macro APPROVE_BALANCER_VAULT() = takes (0) returns (0) {
+    ONLY_OWNER()
+    dup1 calldataload 0x60 shr                                  // [tokenAddress, stepOffset]
+    0xBA12222222228d8Ba445958a75a0704d566BF2C8                  // [to, tokenAddress, stepOffset]
+    0xffffffffffffffffffffffffffffffffffffffff                  // [amount, to, tokenAddress, stepOffset]
+    0x095ea7b3                                                  // [sig, amount, to, tokenAddress, stepOffset]
+    0x00 mstore                                                 // [amount, to, tokenAddress, stepOffset]
+
+
+    dup2 0x20 mstore                                             // [amount, to, tokenAddress, stepOffset]
+    0x40 mstore                                                  // [to, tokenAddress, stepOffset]
+
+
+    // make call. return size is zero because we can fetch it after the call
+    0x00                        // [ret_size, stepOffset]
+    dup1                        // [ret_offset, ret_size, stepOffset]
+    0x44                        // [args_size, ret_offset, ret_size, stepOffset]
+    0x1c                        // [args_offset, args_size, ret_offset, ret_size, stepOffset]
+    dup3                        // [value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    dup7                        // [to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    gas                         // [gas, to, value, args_offset, args_size, ret_offset, ret_size, stepOffset]
+    call                        // [successs, stepOffset]
+
+    iszero iszero               // [success, acct_addr, amount, getter_addr]
+    approve_success jumpi      // [acct_addr, amount, getter_addr]
+    err jump
+
+    approve_success:
+    // [to, tokenAddress, stepOffset]
+    dup3 0x14 add          // [nextStepOffset, to, tokenAddress, stepOffset]
+    swap3                                  // [stepOffset, to, tokenAddress, nextStepOffset]
+    pop pop pop                         // [nextStepOffset]
     dup1 calldataload
     0xE0 shr
     dup1 0x0 eq end jumpi
@@ -1115,7 +1158,6 @@
 
     0x00                    // signifies first place
     0x00 calldataload        // [calldata @ 0x00, 0x48]
-
     0xE0 shr                 // [func_sig (calldata @ 0x00 >> 0xE0), 0x48]
 
     dup1 0xfa461e33 eq v3Callback jumpi
@@ -1179,6 +1221,7 @@
         dup1 0x00000666 eq br jumpi
         dup1 0x00000001 eq wd jumpi
         dup1 0x00000002 eq ap jumpi
+        dup1 0x00000003 eq apb jumpi
 
         err jump
         uv3eops:
@@ -1275,7 +1318,12 @@
             WITHDRAW()
             0x00 0x00 return
         ap:
+            dup2 0x04 add
             APPROVE()
+            0x00 0x00 return
+        apb:
+            dup2 0x04 add
+            APPROVE_BALANCER_VAULT()
             0x00 0x00 return
     err jump
 
