@@ -888,8 +888,11 @@ DETACH DELETE n",
 
     // print some metrics
     workers.push(tokio::spawn(async move {
-        warn!("Queued updates: {}", updated_q.len());
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        loop {
+            warn!("Queued updates: {}", updated_q.len());
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+
     }));
     for worker in workers {
         worker.await.unwrap();
