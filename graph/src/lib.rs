@@ -775,7 +775,7 @@ DETACH DELETE n",
                 } else {
                     w.insert(pool.address.clone(), gas_used + U256::from(10000));
                 }
-                info!("{} uses {:?}", pool.address, gas_used + U256::from(300))
+                debug!("{} uses {:?}", pool.address, gas_used + U256::from(300))
             } else {
                 error!(
                     "Failed to estimate gas for {} {:?}",
