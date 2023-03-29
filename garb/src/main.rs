@@ -54,7 +54,7 @@ static CONTRACT_ADDRESS: Lazy<Address> = Lazy::new(|| {
     Address::from_str(&std::env::var("ETH_CONTRACT_ADDRESS").unwrap_or_else(|_| {
         std::env::args()
             .nth(6)
-            .unwrap_or("0xA46356ba716631d87Ab3081635F06136662ae3C0".to_string())
+            .unwrap_or("0x856cd40Ce7ee834041A6Ea96587eA76200624517".to_string())
     }))
         .unwrap()
 });
@@ -214,18 +214,15 @@ pub async fn transactor(
         "https://rpc.nfactorial.xyz/".to_string(),
     ];
     let mut bundle_handlers = vec![];
-    let node_url = nodes.next_free();
-
+    #[cfg(not(feature = "ipc"))]
+        let node_url = nodes.next_free();
+    #[cfg(not(feature = "ipc"))]
     let provider = ethers_providers::Provider::<Ws>::connect(&node_url)
         .await
         .unwrap();
     #[cfg(feature = "ipc")]
         let provider = ethers_providers::Provider::<Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
 
-    let briber = Arc::new(abi::FlashbotsCheckAndSend::new(
-        H160::from_str("0xc4595e3966e0ce6e3c46854647611940a09448d3").unwrap(),
-        Arc::new(provider.clone()),
-    ));
 
     for bundle_receiver in &bundle_receivers {
         let client = Arc::new(FlashbotsMiddleware::new(
@@ -238,12 +235,16 @@ pub async fn transactor(
         ));
         bundle_handlers.push(client)
     }
+    let rt = rt.clone();
     for i in 0..cores {
-        let node_url = nodes.next_free();
 
         let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
-
-        let provider = ethers_providers::Provider::<Ws>::connect(&node_url).await.unwrap();
+        #[cfg(not(feature = "ipc"))]
+            let node_url = nodes.next_free();
+        #[cfg(not(feature = "ipc"))]
+        let provider = ethers_providers::Provider::<Ws>::connect(&node_url)
+            .await
+            .unwrap();
         #[cfg(feature = "ipc")]
             let provider = ethers_providers::Provider::<Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
 
@@ -293,7 +294,6 @@ pub async fn transactor(
         let signer = Arc::new(signer);
         let signer_wallet_address = signer.address();
 
-        let briber = briber.clone();
         workers.push(tokio::spawn(async move {
             while let Ok(orders) = routes.recv() {
                 let futs = futures::stream::FuturesUnordered::new();
@@ -310,7 +310,6 @@ pub async fn transactor(
                         let block = block.clone();
                         let signer = signer.clone();
                         let handler = handler.clone();
-                        let briber = briber.clone();
 
                         futs.push(async move {
                             tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
@@ -320,10 +319,7 @@ pub async fn transactor(
                                 debug!("Skipping block not loaded {}. ->  {} {} ",i+1,gas_cost,opportunity.block_number);
                                 return;
                             }
-                            let gas_cost = gas_cost + U256::from(40000);
-                            let bribe = (op.profit * U256::from(10)) / U256::from(100);
-                            let profit = op.profit - bribe;
-                            let max_fee = profit / gas_cost;
+                            let max_fee = op.profit / gas_cost;
                             let balance = U256::from(50000000000000000 as u128);
                             let max_possible_fee = balance / gas_cost;
                             let base_fee = calculate_next_block_base_fee(block.clone()).unwrap();
@@ -357,16 +353,6 @@ pub async fn transactor(
                             let signed_tx = typed_tx.rlp_signed(&tx_sig);
                             let mut bundle = vec![];
                             bundle.push(signed_tx);
-                            let mut typed_bribe_tx = briber.check_32_bytes_and_send(
-                                H160::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2").unwrap(),
-                                Bytes::from_str("0x313ce567").unwrap(),
-                                H256::from_str("0x0000000000000000000000000000000000000000000000000000000000000012").unwrap().0)
-                                .gas(U256::from(50000)).gas_price(base_fee).value(bribe).from(signer_wallet_address).tx;
-                            typed_bribe_tx.set_chain_id(U64::from(1));
-                            typed_bribe_tx.set_nonce(typed_tx.nonce().unwrap() + U256::from(1));
-                            let tx_sig = signer.sign_transaction(&typed_bribe_tx).await.unwrap();
-                            let signed_tx = typed_bribe_tx.rlp_signed(&tx_sig);
-                            bundle.push(signed_tx);
                             debug!(
                                         "Trying {}. ->  {} {} {:?} {:?} {:?}",
                                         i+1,
@@ -380,6 +366,7 @@ pub async fn transactor(
                             let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, true).await;
                             if let Some(res) = res {
                                 if res.transactions.iter().all(|tx| tx.error.is_none()) {
+                                    info!("{} -> {:?}: {}", op.block_number, op.path.optimal_path, op.result.ix_data)
                                     // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
                                 }
                             }
@@ -391,6 +378,13 @@ pub async fn transactor(
             }
         }));
     }
+    workers.push(tokio::spawn(async move {
+        loop {
+            warn!("Queued paths: {}", rt.len());
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        }
+
+    }));
     for worker in workers {
         worker.await.unwrap();
     }

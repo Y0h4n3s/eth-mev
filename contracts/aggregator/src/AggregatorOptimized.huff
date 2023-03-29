@@ -1218,7 +1218,7 @@
         dup1 0x00000090 eq pa jumpi
         dup1 0x00000010 eq pn jumpi
 
-        dup1 0x00000666 eq br jumpi
+        dup1 0x00000000 eq br jumpi
         dup1 0x00000001 eq wd jumpi
         dup1 0x00000002 eq ap jumpi
         dup1 0x00000003 eq apb jumpi

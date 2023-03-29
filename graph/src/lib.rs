@@ -80,7 +80,7 @@ static CONTRACT_ADDRESS: Lazy<Address> = Lazy::new(|| {
     Address::from_str(&std::env::var("ETH_CONTRACT_ADDRESS").unwrap_or_else(|_| {
         std::env::args()
             .nth(6)
-            .unwrap_or("0xA46356ba716631d87Ab3081635F06136662ae3C0".to_string())
+            .unwrap_or("0x856cd40Ce7ee834041A6Ea96587eA76200624517".to_string())
     }))
     .unwrap()
 });
@@ -726,7 +726,10 @@ DETACH DELETE n",
                         + &pool.address[2..]
                         + if pool.x_to_y { "01" } else { "00" }
                         + &(packed_asset.len() as u8).encode_hex()[64..]
-                        + &packed_asset;
+                        + &packed_asset
+                    +"00000080"
+                    + if pool.x_to_y {&pool.y_address[2..]} else {&pool.x_address[2..]}
+                    + "0201";
                 }
                 LiquidityProviderId::BalancerWeighted => {
                     let mut w = gas_lookup.write().unwrap();
@@ -770,12 +773,8 @@ DETACH DELETE n",
                 let tx = res.transactions.get(0).unwrap();
                 let gas_used = tx.gas_used;
                 let mut w = gas_lookup.write().unwrap();
-                if tx.error.is_none() && tx.revert.is_none() {
-                    w.insert(pool.address.clone(), gas_used + U256::from(5000));
-                } else {
-                    w.insert(pool.address.clone(), gas_used + U256::from(10000));
-                }
-                debug!("{} uses {:?}", pool.address, gas_used + U256::from(300))
+                w.insert(pool.address.clone(), gas_used + U256::from(5000));
+                debug!("{} uses {:?} {} {:?}", pool.address, gas_used + U256::from(5000),ix_data, tx)
             } else {
                 error!(
                     "Failed to estimate gas for {} {:?}",
