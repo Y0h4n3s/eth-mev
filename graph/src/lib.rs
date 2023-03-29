@@ -773,7 +773,7 @@ DETACH DELETE n",
                 let tx = res.transactions.get(0).unwrap();
                 let gas_used = tx.gas_used;
                 let mut w = gas_lookup.write().unwrap();
-                w.insert(pool.address.clone(), gas_used);
+                w.insert(pool.address.clone(), gas_used + U256::from(15000));
                 debug!("{} uses {:?} {} {:?}", pool.address, gas_used + U256::from(5000),ix_data, tx)
             } else {
                 error!(

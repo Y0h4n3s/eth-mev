@@ -198,20 +198,20 @@ pub async fn transactor(
     let cores = num_cpus::get();
     let bundle_receivers = vec![
         "https://relay.flashbots.net".to_string(),
-        // "https://builder0x69.io/".to_string(),
-        // "https://rpc.beaverbuild.org/".to_string(),
-        // "https://rsync-builder.xyz/".to_string(),
-        // "https://relay.ultrasound.money/".to_string(),
-        // "https://agnostic-relay.net/".to_string(),
-        // "https://relayooor.wtf/".to_string(),
-        // "https://api.blocknative.com/v1/auction".to_string(),
-        // "https://api.edennetwork.io/v1/bundle".to_string(),
-        // "https://eth-builder.com".to_string(),
-        // "https://rpc.lightspeedbuilder.info/".to_string(),
-        // "https://api.securerpc.com/v1".to_string(),
-        // "https://BuildAI.net".to_string(),
-        // "https://rpc.payload.de".to_string(),
-        // "https://rpc.nfactorial.xyz/".to_string(),
+        "https://builder0x69.io/".to_string(),
+        "https://rpc.beaverbuild.org/".to_string(),
+        "https://rsync-builder.xyz/".to_string(),
+        "https://relay.ultrasound.money/".to_string(),
+        "https://agnostic-relay.net/".to_string(),
+        "https://relayooor.wtf/".to_string(),
+        "https://api.blocknative.com/v1/auction".to_string(),
+        "https://api.edennetwork.io/v1/bundle".to_string(),
+        "https://eth-builder.com".to_string(),
+        "https://rpc.lightspeedbuilder.info/".to_string(),
+        "https://api.securerpc.com/v1".to_string(),
+        "https://BuildAI.net".to_string(),
+        "https://rpc.payload.de".to_string(),
+        "https://rpc.nfactorial.xyz/".to_string(),
     ];
     let mut bundle_handlers = vec![];
     #[cfg(not(feature = "ipc"))]
@@ -331,7 +331,7 @@ pub async fn transactor(
                             drop(blk);
 
                             // profit doesn't cover tx_fees
-                            if tx_request.max_fee_per_gas.unwrap() <= base_fee {
+                            if max_fee <= base_fee.checked_div(U256::from(2)).unwrap() {
                                 debug!(
                                              "Skipping Unprofitable {}. ->  {} {} {:?} {:?}",
                                             i+1,
@@ -343,7 +343,7 @@ pub async fn transactor(
                                 return;
                             }
 
-                            tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap() - base_fee);
+                            tx_request.max_priority_fee_per_gas = Some(tx_request.max_fee_per_gas.unwrap());
 
                             tx_request.value = None;
 
@@ -365,14 +365,14 @@ pub async fn transactor(
                                 op.path.optimal_path.clone()
                                 );
 
-                            let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, false).await;
-                            if let Some(res) = res {
-                                if res.transactions.iter().all(|tx| tx.error.is_none()) {
-                                    info!("{} -> {:?}: {}", op.block_number, op.path.optimal_path, op.result.ix_data)
-                                    // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
-                                }
-                            }
-//                                FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
+                            // let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, false).await;
+                            // if let Some(res) = res {
+                            //     if res.transactions.iter().all(|tx| tx.error.is_none()) {
+                            //         info!("{} -> {:?}: {}", op.block_number, op.path.optimal_path, op.result.ix_data)
+                            //         // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
+                            //     }
+                            // }
+                               FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
                         });
                     }
                 }
