@@ -198,20 +198,20 @@ pub async fn transactor(
     let cores = num_cpus::get();
     let bundle_receivers = vec![
         "https://relay.flashbots.net".to_string(),
-        "https://builder0x69.io/".to_string(),
-        "https://rpc.beaverbuild.org/".to_string(),
-        "https://rsync-builder.xyz/".to_string(),
-        "https://relay.ultrasound.money/".to_string(),
-        "https://agnostic-relay.net/".to_string(),
-        "https://relayooor.wtf/".to_string(),
-        "https://api.blocknative.com/v1/auction".to_string(),
-        "https://api.edennetwork.io/v1/bundle".to_string(),
-        "https://eth-builder.com".to_string(),
-        "https://rpc.lightspeedbuilder.info/".to_string(),
-        "https://api.securerpc.com/v1".to_string(),
-        "https://BuildAI.net".to_string(),
-        "https://rpc.payload.de".to_string(),
-        "https://rpc.nfactorial.xyz/".to_string(),
+        // "https://builder0x69.io/".to_string(),
+        // "https://rpc.beaverbuild.org/".to_string(),
+        // "https://rsync-builder.xyz/".to_string(),
+        // "https://relay.ultrasound.money/".to_string(),
+        // "https://agnostic-relay.net/".to_string(),
+        // "https://relayooor.wtf/".to_string(),
+        // "https://api.blocknative.com/v1/auction".to_string(),
+        // "https://api.edennetwork.io/v1/bundle".to_string(),
+        // "https://eth-builder.com".to_string(),
+        // "https://rpc.lightspeedbuilder.info/".to_string(),
+        // "https://api.securerpc.com/v1".to_string(),
+        // "https://BuildAI.net".to_string(),
+        // "https://rpc.payload.de".to_string(),
+        // "https://rpc.nfactorial.xyz/".to_string(),
     ];
     let mut bundle_handlers = vec![];
     #[cfg(not(feature = "ipc"))]
@@ -236,7 +236,7 @@ pub async fn transactor(
         bundle_handlers.push(client)
     }
     let rt = rt.clone();
-    for i in 0..cores {
+    for i in 0..15 {
 
         let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
         #[cfg(not(feature = "ipc"))]
@@ -320,7 +320,7 @@ pub async fn transactor(
                                 return;
                             }
                             let max_fee = op.profit / gas_cost;
-                            let balance = U256::from(50000000000000000 as u128);
+                            let balance = U256::from(25000000000000000 as u128);
                             let max_possible_fee = balance / gas_cost;
                             let base_fee = calculate_next_block_base_fee(block.clone()).unwrap();
                             tx_request.max_fee_per_gas = Some(max_fee.max(base_fee).min(max_possible_fee));
@@ -353,17 +353,19 @@ pub async fn transactor(
                             let signed_tx = typed_tx.rlp_signed(&tx_sig);
                             let mut bundle = vec![];
                             bundle.push(signed_tx);
-                            debug!(
-                                        "Trying {}. ->  {} {} {:?} {:?} {:?}",
+                            info!(
+                                        "Trying {}. ->  {} {} {:?} {:?} {:?} {} {:?}",
                                         i+1,
                                         gas_cost,
                                         opportunity.block_number,
                                         blk,
                                         tx_request.max_priority_fee_per_gas.unwrap().checked_div(U256::from(10).pow(U256::from(9))).unwrap(),
-                                        tx_request.max_fee_per_gas.unwrap().checked_div(U256::from(10).pow(U256::from(9))).unwrap()
+                                        tx_request.max_fee_per_gas.unwrap().checked_div(U256::from(10).pow(U256::from(9))).unwrap(),
+                                op.result.ix_data.clone(),
+                                op.path.optimal_path.clone()
                                 );
 
-                            let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, true).await;
+                            let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, false).await;
                             if let Some(res) = res {
                                 if res.transactions.iter().all(|tx| tx.error.is_none()) {
                                     info!("{} -> {:?}: {}", op.block_number, op.path.optimal_path, op.result.ix_data)
@@ -482,7 +484,7 @@ impl FlashBotsBundleHandler {
                 },
                 _ => {}
             }
-            // error!("Failed to simulate transaction {:?}", err)
+            error!("Failed to simulate transaction {:?}", err)
         }
         None
     }
