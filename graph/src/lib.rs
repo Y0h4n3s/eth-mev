@@ -727,9 +727,9 @@ DETACH DELETE n",
                         + if pool.x_to_y { "01" } else { "00" }
                         + &(packed_asset.len() as u8).encode_hex()[64..]
                         + &packed_asset
-                    +"00000080"
-                    + if pool.x_to_y {&pool.y_address[2..]} else {&pool.x_address[2..]}
-                    + "0201";
+                    +"00000080";
+                    // + if pool.x_to_y {&pool.y_address[2..]} else {&pool.x_address[2..]}
+                    // + "0201";
                 }
                 LiquidityProviderId::BalancerWeighted => {
                     let mut w = gas_lookup.write().unwrap();

@@ -331,6 +331,7 @@ impl MevPath {
 
             // second is guaranteed to be v3 pools
             // since v2 pools will be matched by scsp
+
             ix += &(if second.x_to_y { "01".to_string() } else { "00".to_string() }
                 + &(packed_asset.len() as u8).encode_hex()[64..]
                 + &packed_asset);
@@ -3432,6 +3433,10 @@ impl MevPath {
                     if let Ok(result) = self.four_step_scscspsp_sync(first, second, third, fourth) {
                         return Ok(PathKind::SCSCSPSP)
                     }
+                }
+                // SCSPSPSC
+                else if second.supports_pre_payment() && third.supports_pre_payment() && fourth.supports_callback_payment() {
+                    return Err(anyhow::Error::msg("Unimplemented"))
                 }
                 // SCSCSPSC
                 else if second.supports_callback_payment() && third.supports_pre_payment() && fourth.supports_callback_payment() {
