@@ -21,6 +21,7 @@ use crate::backrun::Backrun;
 use ethers::abi::{AbiEncode, ParamType, StateMutability, Token};
 use ethers::types::transaction::eip2930::AccessList;
 use ethers::types::{I256, U256};
+use ethers::utils::parse_ether;
 use itertools::Itertools;
 use tracing::{debug, error, info, trace, warn};
 
@@ -3206,12 +3207,14 @@ impl MevPath {
                 if !data.is_good {
                     return None;
                 } else {
+                    let mut with_bribe = data.clone();
+                    with_bribe.ix_data = "00000000".to_string() + &with_bribe.ix_data;
                     let tx_request = Eip1559TransactionRequest {
                         // update later
                         to: None,
                         // update later
                         from: None,
-                        data: Some(ethers::types::Bytes::from_str(&data.ix_data).unwrap()),
+                        data: Some(ethers::types::Bytes::from_str(&with_bribe.ix_data).unwrap()),
                         chain_id: Some(U64::from(1)),
                         max_priority_fee_per_gas: None,
                         // update later
@@ -3219,10 +3222,10 @@ impl MevPath {
                         gas: None,
                         // update later
                         nonce: None,
-                        value: None,
+                        value: Some(parse_ether("0.0001").unwrap()),
                         access_list: AccessList::default(),
                     };
-                    return Some((tx_request, data.clone()));
+                    return Some((tx_request, with_bribe.clone()));
                 }
             }
             Err(e) => {
