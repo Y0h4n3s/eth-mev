@@ -318,7 +318,7 @@ pub async fn transactor(
                             debug!("Skipping block not loaded {}. ->  {} {} ",i+1,gas_cost,op.block_number);
                             return;
                         }
-                        let max_fee = op.profit / ((gas_cost * 2) / 3);
+                        let max_fee = op.profit / ((gas_cost * 1) / 2);
                         let balance = U256::from(250000000000000000 as u128);
                         let max_possible_fee = balance / gas_cost;
                         let base_fee = calculate_next_block_base_fee(block.clone()).unwrap();
@@ -376,8 +376,8 @@ pub async fn transactor(
                                 if let Some((tx, result)) = op.path.get_transaction_sync(pools) {
                                     if result.ix_data == op.result.ix_data {
                                         tx_request.gas = Some(res.gas_used + 10000);
-                                        if op.profit > res.gas_fees {
-                                            let extra = op.profit - res.gas_fees;
+                                        if op.profit > res.gas_used * tx_request.max_fee_per_gas.unwrap() {
+                                            let extra = op.profit - res.gas_used * tx_request.max_fee_per_gas.unwrap();
                                             let bribe = (extra * 90) / 100;
                                             tx_request.value = Some(tx_request.value.unwrap().max(bribe));
                                         }
