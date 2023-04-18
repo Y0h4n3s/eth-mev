@@ -667,7 +667,7 @@ impl Display for Pool {
         let mut out = format!("Pool {{ \n\tProvider: {:?}\n\taddress: {}\n\tx_address: {}\n\ty_address: {}\n\tis_x_to_y: {}\n\t", self.provider.id(), self.address,self.x_address, self.y_address,  self.x_to_y);
         match &self.provider {
             LiquidityProviders::UniswapV3(meta) => {
-                out += &("Sqrt Price: ".to_string() + &meta.sqrt_price.to_string() + "\n\t" + "Tick: " + &meta.sqrt_price.to_string() + "\n\t");
+                out += &("Sqrt Price: ".to_string() + &meta.sqrt_price.to_string() + "\n\t" + "Tick: " + &meta.tick.to_string() + "\n\t" + "Liquidity: " + &meta.liquidity.to_string() + "\n\t");
             }
             LiquidityProviders::BalancerWeighted(meta) => {
                 for (i, token) in meta.tokens.iter().enumerate() {
