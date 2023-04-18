@@ -1180,6 +1180,7 @@ pub async fn start(
                     my_update_pools.push(pools.clone());
                 }
             }
+            info!("{:?} tracking {} pools", amm.get_id(), my_update_pools.len());
 
             amm.set_update_pools(my_update_pools);
             amm.set_pools(my_pools).await;

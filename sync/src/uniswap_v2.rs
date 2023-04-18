@@ -224,7 +224,7 @@ impl LiquidityProvider for UniSwapV2 {
         })
     }
     fn get_id(&self) -> LiquidityProviderId {
-        self.id.clone()
+        LiquidityProviderId::UniswapV2
     }
 }
 

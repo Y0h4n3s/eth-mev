@@ -584,7 +584,6 @@ DETACH DELETE n",
                 ],
             );
 
-            let paths = saved.get(&pool).unwrap();
         }
         let filter_tokens: Vec<String> =
         serde_json::from_str(&std::fs::read_to_string("blacklisted_tokens.json").unwrap()).unwrap();
@@ -656,7 +655,6 @@ DETACH DELETE n",
         .map(|pl| locked_pools.get(pl).unwrap())
         .cloned()
         .collect::<Vec<[Arc<RwLock<Pool>>; 2]>>();
-    //	return Ok(());
     info!(
         "Registering Gas consumption for {} pool transactions",
         uniq.len()
