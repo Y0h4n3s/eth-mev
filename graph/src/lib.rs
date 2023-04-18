@@ -663,7 +663,7 @@ DETACH DELETE n",
     );
     let gas_map: Arc<std::sync::RwLock<HashMap<String, U256>>> =
         Arc::new(std::sync::RwLock::new(HashMap::new()));
-    let node_url = "http://65.21.198.115:8545".to_string();
+    let node_url = "http://89.58.31.215:8545".to_string();
     let gas_lookup = gas_map.clone();
 
     let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();

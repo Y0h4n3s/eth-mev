@@ -196,10 +196,8 @@ impl LiquidityProviders {
             _ => {
                 if inline {
                     "00006000".to_string()
-
                 } else {
                     "00005000".to_string()
-
                 }
             }
         }

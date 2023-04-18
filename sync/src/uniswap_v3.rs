@@ -9,6 +9,7 @@ use crate::abi::uniswap_v3::{
     get_complete_pool_data_batch_request, get_uniswap_v3_tick_data_batch_request, UniswapV3Pool,
     UniswapV3TickData,
 };
+use futures::stream::FuturesUnordered;
 use crate::abi::{uniswap_v3::SwapFilter, IERC20};
 use crate::node_dispatcher::NodeDispatcher;
 use crate::types::UniSwapV3Pool;
@@ -756,38 +757,35 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
             let mut rt = Runtime::new().unwrap();
             let pools = pools.clone();
             rt.block_on(async move {
-                let mut joins = vec![];
-
                 #[cfg(not(feature = "ipc"))]
                 let mut provider = Provider::<Ws>::connect(&node_url)
                     .await
                     .unwrap();
                 #[cfg(feature = "ipc")]
                 let mut provider = ethers_providers::Provider::<ethers_providers::Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
-                provider.set_interval(Duration::from_millis(POLL_INTERVAL));
+                provider.set_interval(Duration::from_millis(1));
                 let clnt = Arc::new(provider);
                 let latest_block = clnt.get_block_number().await.unwrap();
+                let client = clnt.clone();
+                let latest_block = clnt.get_block_number().await.unwrap();
+                let block_stream = client.watch_blocks().await.unwrap();
+                let mut s = block_stream.stream();
+                let mut first = true;
 
-                for p in pools.iter() {
-                    let pls = p.clone();
-                    let mut pl = Arc::new(RwLock::new(pls[0].read().await.clone()));
+                let subscribers = subscribers.read().unwrap();
+                let subs = subscribers.first().unwrap().clone();
+                while let Some(blk) = s.next().await {
+                    let mut futs = FuturesUnordered::new();
+                    for p in pools.iter() {
+                        let pls = p.clone();
+                        let pl = pls[0].clone();
 
-                    let subscribers = subscribers.clone();
-                    let subscribers = subscribers.read().unwrap();
-                    let subs = subscribers.first().unwrap().clone();
-                    drop(subscribers);
-                    let client = clnt.clone();
-                    let pool = pl.clone();
-                    let sub = subs.clone();
-                    joins.push(tokio::runtime::Handle::current().spawn(async move {
-                        let mut first = true;
-
-                        loop {
-                            let r = pool.read().await;
-                            let pl = r.clone();
+                        let client = clnt.clone();
+                        futs.push(async move {
+                            let r = pl.read().await;
+                            let mut p = r.clone();
                             drop(r);
-                            let mut block = 0;
-                            if let Some(mut pool_meta) = match pl.clone().provider {
+                            if let Some(mut pool_meta) = match p.clone().provider {
                                 LiquidityProviders::UniswapV3(pool_meta) => Some(pool_meta),
                                 _ => None,
                             } {
@@ -795,136 +793,58 @@ impl EventEmitter<Box<dyn EventSource<Event = PoolUpdateEvent>>> for UniSwapV3 {
                                     vec![H160::from_str(&pool_meta.address).unwrap()],
                                     &client,
                                 )
-                                .await
+                                    .await
                                 {
                                     let mut updated_meta = metas.first().unwrap().to_owned();
                                     if updated_meta.token_a_amount == pool_meta.token_a_amount
                                         && updated_meta.token_b_amount == pool_meta.token_b_amount
                                         && updated_meta.sqrt_price == pool_meta.sqrt_price
                                     {
-                                        continue;
+                                         return None
                                     }
                                     updated_meta.factory_address = pool_meta.factory_address;
-                                    block = updated_meta.block_number;
-                                    for p in pls.iter() {
-                                        let mut w = p.write().await;
+                                    for pool in pls.iter() {
+                                        let mut w = pool.write().await;
                                         w.x_amount = updated_meta.token_a_amount;
                                         w.y_amount = updated_meta.token_b_amount;
                                         w.provider =
                                             LiquidityProviders::UniswapV3(updated_meta.clone());
+                                        p = w.clone()
                                     }
-                                    let mut pl = pool.write().await;
-                                    pl.x_amount = updated_meta.token_a_amount;
-                                    pl.y_amount = updated_meta.token_b_amount;
-
-                                    pl.provider = LiquidityProviders::UniswapV3(updated_meta);
                                     if first {
-                                        first = false;
-                                        continue;
+                                        return None
                                     }
                                     let event = PoolUpdateEvent {
-                                        pool: pl.clone(),
-                                        block_number: block,
-                                        timestamp: SystemTime::now()
-                                    .duration_since(UNIX_EPOCH)
-                                    .unwrap()
-                                    .as_millis(),
-                                    };
-
-                                    let res = sub
-                                .send(Box::new(event.clone()))
-                                .await
-                                .map_err(|e| info!("sync_service> UniswapV3 Send Error {:?}", e));
-                                } else {
-                                    error!(
-                                        "Failed to get {:?} updates",
-                                        LiquidityProviderId::UniswapV3
-                                    );
-                                    continue;
-                                }
-                            }
-
-                            tokio::time::sleep(Duration::from_millis(5000)).await;
-                        }
-                    }));
-                    let pool = pl.clone();
-                    let client = clnt.clone();
-                    let pls = p.clone();
-                    let sub = subs.clone();
-
-                    joins.push(tokio::runtime::Handle::current().spawn(async move {
-                        let r = pool.read().await;
-                        let pl = r.clone();
-                        drop(r);
-                        let contract = crate::abi::uniswap_v3::UniswapV3Pool::new(
-                            H160::from_str(&pl.address).unwrap(),
-                            client.clone(),
-                        );
-                        let events = contract.events();
-
-                        let mut stream = events.stream().await.unwrap();
-                        while let Some(_) = stream.next().await {
-                            let r = pool.read().await;
-                            let pl = r.clone();
-                            drop(r);
-                            let mut block = 0;
-
-                            if let Some(mut pool_meta) = match pl.clone().provider {
-                                LiquidityProviders::UniswapV3(pool_meta) => Some(pool_meta),
-                                _ => None,
-                            } {
-                                if let Ok(metas) = get_complete_pool_data_batch_request(
-                                    vec![H160::from_str(&pool_meta.address).unwrap()],
-                                    &client,
-                                )
-                                .await
-                                {
-                                    let mut updated_meta = metas.first().unwrap().to_owned();
-                                    if updated_meta.token_a_amount == pool_meta.token_a_amount
-                                        && updated_meta.token_b_amount == pool_meta.token_b_amount
-                                        && updated_meta.sqrt_price == pool_meta.sqrt_price
-                                    {
-                                        continue;
-                                    }
-                                    updated_meta.factory_address = pool_meta.factory_address;
-                                    block = updated_meta.block_number;
-                                    for p in pls.iter() {
-                                        let mut w = p.write().await;
-                                        w.x_amount = updated_meta.token_a_amount;
-                                        w.y_amount = updated_meta.token_b_amount;
-                                        w.provider =
-                                            LiquidityProviders::UniswapV3(updated_meta.clone());
-                                    }
-                                    let mut pl = pool.write().await;
-                                    pl.x_amount = updated_meta.token_a_amount;
-                                    pl.y_amount = updated_meta.token_b_amount;
-
-                                    pl.provider = LiquidityProviders::UniswapV3(updated_meta);
-                                    let event = PoolUpdateEvent {
-                                        pool: pl.clone(),
-                                        block_number: block,
+                                        pool: p.clone(),
+                                        block_number: updated_meta.block_number,
                                         timestamp: SystemTime::now()
                                             .duration_since(UNIX_EPOCH)
                                             .unwrap()
                                             .as_millis(),
                                     };
+                                    return Some(event)
 
-                                    let res =
-                                        sub.send(Box::new(event.clone())).await.map_err(|e| {
-                                            info!("sync_service> UniswapV3 Send Error {:?}", e)
-                                        });
                                 } else {
                                     error!(
                                         "Failed to get {:?} updates",
                                         LiquidityProviderId::UniswapV3
                                     );
-                                    continue;
+                                    return None
                                 }
+                            } else {
+                                return None
                             }
-                        }
-                    }));
+                        });
+
+                    }
+                    first = false;
+                    let events = futs.collect::<Vec<Option<PoolUpdateEvent>>>().await;
+
+                    for event in events.into_iter().filter_map(|v| v) {
+                        let res = subs.send(Box::new(event)).await.map_err(|e| info!("sync_service> UniswapV3 Send Error {:?}", e));
+                    }
                 }
-                futures::future::join_all(joins).await;
+
             });
         })
     }
