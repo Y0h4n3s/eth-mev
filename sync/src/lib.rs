@@ -1123,6 +1123,7 @@ pub async fn start(
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
     let mut join_handles = vec![];
     let mut amms = vec![];
+    let mut v2_added = false;
     for provider in config.providers {
         let mut amm = provider.build(nodes.clone());
         if !config.from_file {
@@ -1130,7 +1131,18 @@ pub async fn start(
         }
         amm.subscribe(updated_q.clone());
         amm.subscribe(pending_updated_q.clone());
-        amms.push(amm);
+        match amm.get_id()  {
+            LiquidityProviderId::UniswapV3 | LiquidityProviderId::BalancerWeighted | LiquidityProviderId::CurvePlain | LiquidityProviderId::SushiSwap => {
+                amms.push(amm);
+            }
+            _ => {
+                if !v2_added {
+                    amms.push(amm);
+                    v2_added = true;
+                }
+            }
+        }
+
     }
 
     let filter_tokens: Vec<String> =
