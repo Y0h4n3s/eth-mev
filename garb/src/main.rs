@@ -369,7 +369,8 @@ pub async fn transactor(
                                 op.result.ix_data.clone(),
                                 op.path.optimal_path.clone()
                                 );
-                            for (i, pool) in op.path.pools.iter().enumerate() {
+                            for (i, locked_pool) in op.path.locked_pools.iter().enumerate() {
+                                let pool = locked_pool.read().await;
                                 info!("{}. {}", i, pool);
                             }
                             info!("\n\n");
