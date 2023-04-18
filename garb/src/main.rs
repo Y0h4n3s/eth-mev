@@ -369,6 +369,10 @@ pub async fn transactor(
                                 op.result.ix_data.clone(),
                                 op.path.optimal_path.clone()
                                 );
+                            for (i, pool) in op.path.pools.iter().enumerate() {
+                                info!("{}. {}", i, pool);
+                            }
+                            info!("\n\n");
 
                             let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, opportunity.block_number, true).await;
                             if let Some(res) = res {
@@ -395,10 +399,9 @@ pub async fn transactor(
                                         }
                                     }
 
-                                    // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+3).await;
                                 }
                             }
-                               FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
+                               // FlashBotsBundleHandler::submit(bundle, handler, opportunity.block_number, opportunity.block_number+1).await;
                         });
                     }
                 }
