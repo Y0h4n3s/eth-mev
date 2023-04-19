@@ -25,11 +25,11 @@ use ethers::utils::parse_ether;
 use itertools::Itertools;
 use tracing::{debug, error, info, trace, warn};
 
-const BINARY_SEARCH_ITERS: usize = 12;
+const BINARY_SEARCH_ITERS: usize = 15;
 
 const MINIMUM_PATH_LENGTH: usize = 2;
 
-const MAX_SIZE: f64 = 20.0;
+const MAX_SIZE: f64 = 80.0;
 
 const PAY_ADDRESS: &str = "00000090";
 const PAY_NEXT: &str = "00000010";

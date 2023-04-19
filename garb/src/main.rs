@@ -380,6 +380,9 @@ pub async fn transactor(
                                             let extra = op.profit - res.gas_used * tx_request.max_fee_per_gas.unwrap();
                                             let bribe = (extra * 90) / 100;
                                             tx_request.value = Some(tx_request.value.unwrap().max(bribe));
+                                        } else {
+                                            let max_fee = op.profit / res.gas_used;
+                                            tx_request.max_fee_per_gas = Some(max_fee);
                                         }
                                         let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
                                         let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();

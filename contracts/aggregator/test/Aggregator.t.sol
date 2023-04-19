@@ -23,6 +23,8 @@ contract AggregatorTest is Test {
     function setUp() public {
         agg = Aggregator(HuffDeployer.deploy("AggregatorOptimized"));
         weth = IWETH9(WETH9);
+        weth.deposit{value: 10000000000000000000000000000}();
+        weth.transfer(address(agg), 10000000000000000000000000000);
 
     }
 //
@@ -119,13 +121,13 @@ contract AggregatorTest is Test {
 //
 //        require(success);
 //    }
-    function test_t() public {
-        // block 16920111
-        bytes memory data = hex"0000000000003000d583d0824ed78767e0e35b9bf7a636c81c665aa80110170a0f5040e50400000007002418c488bc4b0c3cf1edfc7f6b572847f12ed24f00120cac3c7d03ae194f1300000080c02aaa39b223fe8d0a0e5c4f27ead9083c756cc21016b9b99954cf1465";
-        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
-
-        require(success);
-    }
+//    function test_t() public {
+//        // block 16920111
+//        bytes memory data = hex"000000000000060088e6a0c2ddd26feeb64f039a2c41296fcb3f564001105c6da0d285d90400000007009a834b70c07c81a9fcd6f22e842bf002fbffbe4d010a0339a6621600000010c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2105c0b714ece93b50c000080004a86c01d67965f8cb3d0aaa2c655705e64097c31001402f83ccef983719fc8cb00002000832c6f546bf34a552deb8773216a93bf6801028c011402ef4cb398ae2d23d0ab";
+//        (bool success, bytes memory res) = address(agg).call{value: 1000}(data);
+//
+//        require(success);
+//    }
 //    function test_approve() public {
 //        uint allowedBefore = IERC20(0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0).allowance(address(agg), address(0xBA12222222228d8Ba445958a75a0704d566BF2C8));
 //        vm.prank(address(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f));
@@ -159,5 +161,17 @@ contract AggregatorTest is Test {
 //    }
 //
 //
+    function test_withdraw() public {
+        uint balanceBefore = weth.balanceOf(address(agg));
+        vm.prank(address(0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f));
+
+        bytes memory data = hex"00000001000000000000000000000000C02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc20000000000000000000000000000000000000000000000000432E46E1EFCB443";
+        (bool success, bytes memory res) = address(agg).call(data);
+        require(success);
+        vm.stopPrank();
+        uint balanceAfter = weth.balanceOf(address(agg));
+        require(balanceBefore > balanceAfter);
+
+    }
 
 }
