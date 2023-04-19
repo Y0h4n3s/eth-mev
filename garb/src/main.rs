@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use ethers::prelude::{Address, H160, H256, LocalWallet, SignerMiddleware};
+use ethers::prelude::{Address, Eip1559TransactionRequest, H160, H256, LocalWallet, SignerMiddleware};
 use ethers::prelude::StreamExt;
 use ethers::signers::Signer;
 use ethers::types::{
@@ -13,6 +13,9 @@ use ethers::types::{
 };
 use ethers::types::Bytes;
 use ethers::types::transaction::eip2718::TypedTransaction;
+use ethers::types::transaction::eip2930::AccessList;
+use ethers::utils::__serde_json::to_string;
+use ethers::utils::parse_ether;
 use ethers_flashbots::{
     BundleRequest, FlashbotsMiddleware, FlashbotsMiddlewareError, RelayError,
     SimulatedBundle,
@@ -30,6 +33,7 @@ use tracing::{debug, error, info, warn};
 use url::Url;
 
 use garb_graph_eth::GraphConfig;
+use garb_graph_eth::mev_path::{MevPath, PathResult};
 use garb_graph_eth::single_arb::ArbPath;
 use garb_sync_eth::{
     EventSource, LiquidityProviders, PendingPoolUpdateEvent, Pool,
@@ -193,6 +197,63 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
     Ok(new_base_fee + seed)
 }
 
+pub fn merge_paths(paths: Vec<ArbPath>) -> Vec<ArbPath> {
+    let mut new_paths = vec![];
+    for i in 2..7 {
+        let mut mergeable = vec![];
+        for path in paths.clone() {
+            if mergeable.len() == 0 {
+                mergeable.push(path);
+                continue
+            }
+            if mergeable.len() == i {
+                break
+            }
+            if mergeable.iter().find(|p| p.path.pools.iter().any(|pl| path.path.pools.iter().find(|pls| pls.address == pl.address).is_some())).is_some() {
+                continue
+            }
+            mergeable.push(path);
+        }
+
+        if mergeable.len() == i {
+            let ix_data = "00000000".to_string() + &mergeable.iter().map(|m| m.result.ix_data[8..].to_string()).reduce(|a, b| a + &b).unwrap();
+            let tx_request = Eip1559TransactionRequest {
+                // update later
+                to: None,
+                // update later
+                from: None,
+                data: Some(ethers::types::Bytes::from_str(&ix_data).unwrap()),
+                chain_id: Some(U64::from(1)),
+                max_priority_fee_per_gas: None,
+                // update later
+                max_fee_per_gas: None,
+                gas: None,
+                // update later
+                nonce: None,
+                value: Some(parse_ether("0.0001").unwrap()),
+                access_list: AccessList::default(),
+            };
+            new_paths.push(ArbPath {
+                tx: tx_request,
+                path: MevPath::new(
+                    mergeable.iter().map(|m| m.path.pools.clone()).flatten().collect::<Vec<Pool>>(),
+                    &mergeable.iter().map(|m| m.path.locked_pools.clone()).flatten().collect::<Vec<Arc<RwLock<Pool>>>>(),
+                    &"".to_string()
+                ),
+                profit: mergeable.iter().map(|m| m.profit).reduce(|a,b| a + b).unwrap(),
+                gas_cost: Default::default(),
+                block_number: mergeable.first().unwrap().block_number,
+                result: PathResult {
+                    ix_data: ix_data,
+                    profit: mergeable.iter().map(|m| m.profit).reduce(|a,b| a + b).unwrap().as_u128(),
+                    is_good: true,
+                    steps: vec![],
+                },
+            })
+        }
+    }
+    new_paths
+}
 pub async fn transactor(
     rt: &mut kanal::Receiver<Vec<ArbPath>>,
     rts: Arc<tokio::sync::Mutex<kanal::Sender<Vec<ArbPath>>>>,
@@ -295,9 +356,38 @@ pub async fn transactor(
 
         let signer = Arc::new(signer);
         let signer_wallet_address = signer.address();
+        let rt = rts.clone();
+        let block_paths: Arc<RwLock<Vec<ArbPath>>> = Arc::new(RwLock::new(vec![]));
+        let block_paths_update = block_paths.clone();
+        let block_update = block.clone();
+        workers.push(tokio::runtime::Handle::current().spawn(async move {
+            let mut block_check = 0_u64;
+            loop {
+                let block = block_update.read().await.clone();
+                if block.number.is_none() {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+                if block_check != block.number.unwrap().as_u64() {
+                    block_check = block.number.unwrap().as_u64();
+                    let mut w = block_paths_update.write().await;
+                    *w = vec![];
+                    continue;
+                }
+                let r = block_paths_update.read().await;
+                let merged = merge_paths(r.clone());
+                let mut w = rt.lock().await;
+                w.send(merged).unwrap();
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }));
         let rts = rts.clone();
+
         workers.push(tokio::spawn(async move {
             while let Ok(orders) = routes.recv() {
+                let mut w = block_paths.write().await;
+                w.extend(orders.clone());
+                drop(w);
                 let futs = futures::stream::FuturesUnordered::new();
                 for op in orders {
                     let nonce_num = nonce.clone();
