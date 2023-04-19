@@ -241,7 +241,7 @@ pub fn merge_paths(paths: Vec<ArbPath>) -> Vec<ArbPath> {
                     &"".to_string()
                 ),
                 profit: mergeable.iter().map(|m| m.profit).reduce(|a,b| a + b).unwrap(),
-                gas_cost: Default::default(),
+                gas_cost: mergeable.iter().enumerate().map(|(i, m)| m.gas_cost / i).reduce(|a,b| a + b).unwrap(),
                 block_number: mergeable.first().unwrap().block_number,
                 result: PathResult {
                     ix_data: ix_data,
