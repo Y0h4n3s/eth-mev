@@ -261,6 +261,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                 let subs = subscribers.first().unwrap().clone();
                 while let Some(blk) = s.next().await {
                     let mut futs = FuturesUnordered::new();
+                    let now = SystemTime::now();
                     for p in pools.iter() {
                         let pls = p.clone();
                         let pl = pls[0].clone();
@@ -314,6 +315,7 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                     }
                     first = false;
                     let events = futs.collect::<Vec<Option<PoolUpdateEvent>>>().await;
+                    info!("{:?}", SystemTime::now().duration_since(now).unwrap().as_millis());
 
                     for event in events.into_iter().filter_map(|v| v) {
                         let res = subs.send(Box::new(event)).await.map_err(|e| info!("sync_service> UniswapV2 Send Error {:?}", e));

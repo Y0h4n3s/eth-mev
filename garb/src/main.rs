@@ -327,65 +327,70 @@ pub async fn transactor(
         }
     }));
 
+    let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
+
     let rt = rt.clone();
-    for i in 0..15 {
-        let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
-        #[cfg(not(feature = "ipc"))]
-            let node_url = nodes.next_free();
-        #[cfg(not(feature = "ipc"))]
-            let provider = ethers_providers::Provider::<Ws>::connect(&node_url)
+
+    #[cfg(not(feature = "ipc"))]
+        let node_url = nodes.next_free();
+    #[cfg(not(feature = "ipc"))]
+        let provider = ethers_providers::Provider::<Ws>::connect(&node_url)
+        .await
+        .unwrap();
+    #[cfg(feature = "ipc")]
+        let provider = ethers_providers::Provider::<Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
+    let client = Arc::new(
+        SignerMiddleware::new_with_provider_chain(provider.clone(), signer.clone())
             .await
-            .unwrap();
-        #[cfg(feature = "ipc")]
-            let provider = ethers_providers::Provider::<Ipc>::connect_ipc(&IPC_PATH.clone()).await.unwrap();
+            .unwrap(),
+    );
+
+    let nonce = Arc::new(RwLock::new(U256::from(0)));
+
+    let block: Arc<RwLock<Block<H256>>> =
+        Arc::new(RwLock::new(Block::default()));
+    let nonce_update = nonce.clone();
+    let signer_wallet_address = signer.address();
+
+    let ap = client.clone();
+    workers.push(tokio::runtime::Handle::current().spawn(async move {
+        // keep updating nonce
+        loop {
+            if let Ok(n) = ap.get_transaction_count(signer_wallet_address, None).await {
+                let mut w = nonce_update.write().await;
+                *w = n;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }));
+    let block_update = block.clone();
+    let ap = client.clone();
+
+    workers.push(tokio::runtime::Handle::current().spawn(async move {
+        loop {
+            if let Ok(Some(b)) = ap.get_block(BlockId::Number(BlockNumber::Latest)).await {
+                let mut w = block_update.write().await;
+                *w = b;
+            } else {
+                error!("transactor > Error getting block number",);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }));
+
+    let signer = Arc::new(signer);
+
+    for i in 0..25 {
 
         // single transaction
         let routes = rt.clone();
-        let client = Arc::new(
-            SignerMiddleware::new_with_provider_chain(provider.clone(), signer.clone())
-                .await
-                .unwrap(),
-        );
-        let ap = client.clone();
+
 
         let bundle_handlers = bundle_handlers.clone();
-        let nonce = Arc::new(RwLock::new(U256::from(0)));
-
-        let block: Arc<RwLock<Block<H256>>> =
-            Arc::new(RwLock::new(Block::default()));
-
-        let nonce_update = nonce.clone();
-        let signer_wallet_address = signer.address();
-
-        workers.push(tokio::runtime::Handle::current().spawn(async move {
-            // keep updating nonce
-            loop {
-                if let Ok(n) = ap.get_transaction_count(signer_wallet_address, None).await {
-                    let mut w = nonce_update.write().await;
-                    *w = n;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        }));
-        let block_update = block.clone();
-        let ap = client.clone();
-
-        workers.push(tokio::runtime::Handle::current().spawn(async move {
-            loop {
-                if let Ok(Some(b)) = ap.get_block(BlockId::Number(BlockNumber::Latest)).await {
-                    let mut w = block_update.write().await;
-                    *w = b;
-                } else {
-                    error!("transactor > Error getting block number",);
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        }));
-
-        let signer = Arc::new(signer);
-        let signer_wallet_address = signer.address();
         let block_paths = block_paths.clone();
-
+        let block = block.clone();
+        let signer = signer.clone();
+        let nonce = nonce.clone();
         let rts = rts.clone();
 
         workers.push(tokio::spawn(async move {
@@ -403,19 +408,17 @@ pub async fn transactor(
                         *w = orders.clone()
                     }
                 }
-
+                drop(w);
                 let futs = futures::stream::FuturesUnordered::new();
                 for op in orders {
                     let nonce_num = nonce.clone();
                     let mut tx_request = op.tx.clone();
                     let block = block.read().await.clone();
-                    let signer = signer.clone();
                     let gas_cost = op.gas_cost;
                     let bundle_handlers = bundle_handlers.clone();
                     let signer = signer.clone();
                     let handler = bundle_handlers.first().unwrap().clone();
 
-                    let rts = rts.clone();
                     futs.push(async move {
                         tx_request.to = Some(NameOrAddress::Address(CONTRACT_ADDRESS.clone()));
                         tx_request.from = Some(signer_wallet_address);
@@ -438,8 +441,9 @@ pub async fn transactor(
                         // profit doesn't cover tx_fees
                         if max_fee <= base_fee {
                             debug!(
-                                             "Skipping Unprofitable {}. ->  {} {} {:?} {:?}",
+                                             "Skipping Unprofitable {}. -> {} {} {} {:?} {:?}",
                                             i+1,
+                                            op.profit.checked_div(U256::from(10).pow(U256::from(9))).unwrap().as_u128() as f64 / 10_f64.powf(9.0),
                                             tx_request.gas.unwrap(),
                                             op.block_number,
                                             blk,

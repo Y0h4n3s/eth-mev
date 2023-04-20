@@ -848,37 +848,42 @@ DETACH DELETE n",
                     .map(|pool| (pool.address.clone(), pool))
                     .collect::<HashMap<String, Pool>>();
                 let r = gas_lookup.read().unwrap().clone();
-                let mut updated = market_routes
+                market_routes.chunks(20)
+                    .collect_vec()
                     .into_par_iter()
-                    .filter_map(|route| {
-                        let r = r.clone();
-                        let mut pools = vec![];
-                        for pool in &route.pools {
-                            let mut p = needed_reads.get(&pool.address).unwrap().clone();
-                            p.x_to_y = pool.x_to_y;
-                            pools.push(p)
-                        }
-                        if let Some((tx, result)) = route.get_transaction_sync(pools) {
-                            let mut gas_cost = U256::zero();
-                            for pool in &route.pools {
-                                gas_cost += *r.get(&pool.address).unwrap_or(&U256::from(100000));
-                            }
-                            drop(r);
-                            Some(ArbPath {
-                                path: route,
-                                tx,
-                                profit: U256::from(result.profit),
-                                gas_cost,
-                                block_number: event.block_number,
-                                result,
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<ArbPath>>();
-                let mut w = single_routes.lock().unwrap();
-                w.send(updated).unwrap();
+                    .for_each(|routes| {
+                        let paths = routes.to_vec().into_par_iter()
+                            .filter_map(|route| {
+                                let r = r.clone();
+                                let mut pools = vec![];
+                                for pool in &route.pools {
+                                    let mut p = needed_reads.get(&pool.address).unwrap().clone();
+                                    p.x_to_y = pool.x_to_y;
+                                    pools.push(p)
+                                }
+                                if let Some((tx, result)) = route.get_transaction_sync(pools) {
+                                    let mut gas_cost = U256::zero();
+                                    for pool in &route.pools {
+                                        gas_cost += *r.get(&pool.address).unwrap_or(&U256::from(100000));
+                                    }
+                                    drop(r);
+                                    Some(
+                                        ArbPath {
+                                            path: route,
+                                            tx,
+                                            profit: U256::from(result.profit),
+                                            gas_cost,
+                                            block_number: event.block_number,
+                                            result,
+                                        })
+                                } else {
+                                    None
+                                }
+
+                            }).collect::<Vec<ArbPath>>();
+                        let mut w = single_routes.lock().unwrap();
+                        w.send(paths).unwrap()
+                    });
             }
         }));
     }
