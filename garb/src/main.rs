@@ -365,6 +365,7 @@ pub async fn transactor(
         let block_update = block.clone();
         workers.push(tokio::runtime::Handle::current().spawn(async move {
             let mut block_check = 0_u64;
+            let mut last_size = 0;
             loop {
                 let block = block_update.read().await.clone();
                 if block.number.is_none() {
@@ -379,10 +380,12 @@ pub async fn transactor(
                 }
 
                 let r = block_paths_update.read().await;
-                if r.len() == 0 {
+                if r.len() == 0 || r.len() == last_size {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 }
+                last_size = r.len();
+
                 let merged = merge_paths(r.clone());
                 if merged.len() == 0 {
                     tokio::time::sleep(Duration::from_millis(100)).await;
