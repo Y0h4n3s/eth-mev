@@ -200,60 +200,63 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
 pub fn merge_paths(paths: Vec<ArbPath>) -> Vec<ArbPath> {
     let mut new_paths = vec![];
     for i in 2..7 {
-        let mut mergeable = vec![];
-        for path in paths.clone() {
-            if mergeable.len() == 0 {
+        for j in 0..paths.len() {
+            let mut mergeable = vec![];
+            for path in paths[j..].to_vec() {
+                if mergeable.len() == 0 {
+                    mergeable.push(path);
+                    continue;
+                }
+                if mergeable.len() == i {
+                    break;
+                }
+                if mergeable.iter().map(|p| p.path.pools.clone()).flatten().any(|pl| path.path.pools.iter().any(|pls| pls.address == pl.address)) {
+                    continue;
+                }
                 mergeable.push(path);
-                continue
             }
-            if mergeable.len() == i {
-                break
-            }
-            if mergeable.iter().find(|p| p.path.pools.iter().any(|pl| path.path.pools.iter().find(|pls| pls.address == pl.address).is_some())).is_some() {
-                continue
-            }
-            mergeable.push(path);
-        }
 
-        if mergeable.len() == i {
-            let ix_data = "00000000".to_string() + &mergeable.iter().map(|m| m.result.ix_data[8..].to_string()).reduce(|a, b| a + &b).unwrap();
-            let tx_request = Eip1559TransactionRequest {
-                // update later
-                to: None,
-                // update later
-                from: None,
-                data: Some(ethers::types::Bytes::from_str(&ix_data).unwrap()),
-                chain_id: Some(U64::from(1)),
-                max_priority_fee_per_gas: None,
-                // update later
-                max_fee_per_gas: None,
-                gas: None,
-                // update later
-                nonce: None,
-                value: Some(parse_ether("0.0001").unwrap()),
-                access_list: AccessList::default(),
-            };
-            new_paths.push(ArbPath {
-                tx: tx_request,
-                path: MevPath::new(
-                    mergeable.iter().map(|m| m.path.pools.clone()).flatten().collect::<Vec<Pool>>(),
-                    &mergeable.iter().map(|m| m.path.locked_pools.clone()).flatten().collect::<Vec<Arc<RwLock<Pool>>>>(),
-                    &"".to_string()
-                ),
-                profit: mergeable.iter().map(|m| m.profit).reduce(|a,b| a + b).unwrap(),
-                gas_cost: mergeable.iter().enumerate().map(|(i, m)| m.gas_cost / i).reduce(|a,b| a + b).unwrap(),
-                block_number: mergeable.first().unwrap().block_number,
-                result: PathResult {
-                    ix_data: ix_data,
-                    profit: mergeable.iter().map(|m| m.profit).reduce(|a,b| a + b).unwrap().as_u128(),
-                    is_good: true,
-                    steps: vec![],
-                },
-            })
+            if mergeable.len() == i {
+                let ix_data = "00000000".to_string() + &mergeable.iter().map(|m| m.result.ix_data[8..].to_string()).reduce(|a, b| a + &b).unwrap();
+                let tx_request = Eip1559TransactionRequest {
+                    // update later
+                    to: None,
+                    // update later
+                    from: None,
+                    data: Some(ethers::types::Bytes::from_str(&ix_data).unwrap()),
+                    chain_id: Some(U64::from(1)),
+                    max_priority_fee_per_gas: None,
+                    // update later
+                    max_fee_per_gas: None,
+                    gas: None,
+                    // update later
+                    nonce: None,
+                    value: Some(parse_ether("0.0001").unwrap()),
+                    access_list: AccessList::default(),
+                };
+                new_paths.push(ArbPath {
+                    tx: tx_request,
+                    path: MevPath::new(
+                        mergeable.iter().map(|m| m.path.pools.clone()).flatten().collect::<Vec<Pool>>(),
+                        &mergeable.iter().map(|m| m.path.locked_pools.clone()).flatten().collect::<Vec<Arc<RwLock<Pool>>>>(),
+                        &"".to_string(),
+                    ),
+                    profit: mergeable.iter().map(|m| m.profit).reduce(|a, b| a + b).unwrap(),
+                    gas_cost: mergeable.iter().enumerate().map(|(i, m)| m.gas_cost / i.max(1)).reduce(|a, b| a + b).unwrap(),
+                    block_number: mergeable.first().unwrap().block_number,
+                    result: PathResult {
+                        ix_data: ix_data,
+                        profit: mergeable.iter().map(|m| m.profit).reduce(|a, b| a + b).unwrap().as_u128(),
+                        is_good: true,
+                        steps: vec![],
+                    },
+                })
+            }
         }
     }
     new_paths
 }
+
 pub async fn transactor(
     rt: &mut kanal::Receiver<Vec<ArbPath>>,
     rts: Arc<tokio::sync::Mutex<kanal::Sender<Vec<ArbPath>>>>,
@@ -374,11 +377,20 @@ pub async fn transactor(
                     *w = vec![];
                     continue;
                 }
+
                 let r = block_paths_update.read().await;
+                if r.len() == 0 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
                 let merged = merge_paths(r.clone());
+                if merged.len() == 0 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
                 let mut w = rt.lock().await;
                 w.send(merged).unwrap();
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }));
         let rts = rts.clone();
@@ -462,24 +474,21 @@ pub async fn transactor(
                         if let Some(res) = res {
                             if res.transactions.iter().all(|tx| tx.error.is_none()) {
                                 info!("{} -> {:?}: {}", op.block_number, op.path.optimal_path, op.result.ix_data);
-                                let pools = futures::future::join_all(op.path.locked_pools.iter().map(|p| async { p.read().await.clone() })).await;
-                                if let Some((tx, result)) = op.path.get_transaction_sync(pools) {
-                                    if result.ix_data == op.result.ix_data {
-                                        tx_request.gas = Some(res.gas_used + 10000);
-                                        if op.profit > res.gas_used * tx_request.max_fee_per_gas.unwrap() {
-                                            let extra = op.profit - res.gas_used * tx_request.max_fee_per_gas.unwrap();
-                                            let bribe = (extra * 90) / 100;
-                                            tx_request.value = Some(tx_request.value.unwrap().max(bribe));
-                                        } else {
-                                            let max_fee = op.profit / res.gas_used;
-                                            tx_request.max_fee_per_gas = Some(max_fee);
-                                        }
-                                        let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
-                                        let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
-                                        let signed_tx = typed_tx.rlp_signed(&tx_sig);
-                                        let mut bundle = vec![];
-                                        bundle.push(signed_tx);
-                                        info!(
+                                tx_request.gas = Some(res.gas_used + 10000);
+                                if op.profit > res.gas_used * tx_request.max_fee_per_gas.unwrap() {
+                                    let extra = op.profit - res.gas_used * tx_request.max_fee_per_gas.unwrap();
+                                    let bribe = (extra * 90) / 100;
+                                    tx_request.value = Some(tx_request.value.unwrap().max(bribe));
+                                } else {
+                                    let max_fee = op.profit / res.gas_used;
+                                    tx_request.max_fee_per_gas = Some(max_fee);
+                                }
+                                let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
+                                let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
+                                let signed_tx = typed_tx.rlp_signed(&tx_sig);
+                                let mut bundle = vec![];
+                                bundle.push(signed_tx);
+                                info!(
                                         "Trying {}. ->  {} {} {:?} {:?} {:?} {} {:?}",
                                         i+1,
                                         tx_request.gas.unwrap(),
@@ -490,34 +499,20 @@ pub async fn transactor(
                                         op.result.ix_data.clone(),
                                         op.path.optimal_path.clone()
                                     );
-                                        let mut futs = FuturesUnordered::new();
-                                        for handler in &bundle_handlers {
-                                            futs.push(
-                                                FlashBotsBundleHandler::submit(
-                                                    bundle.clone(),
-                                                    handler.clone(),
-                                                    op.block_number,
-                                                    op.block_number+2)
-                                            );
-
-                                        }
-                                        futs.collect::<Vec<()>>().await;
-                                        // let res = client.send_escalating( &typed_tx, 5, Box::new(|start, escalation_index| start * U256::from(10666).pow(escalation_index.into()) / U256::from(10000).pow(escalation_index.into()))).await;
-
-                                        // info!("{:?}", res.unwrap().await)
-                                    } else {
-                                        let path = ArbPath {
-                                            path: op.path,
-                                            tx,
-                                            profit: U256::from(result.profit),
-                                            gas_cost,
-                                            block_number: blk,
-                                            result,
-                                        };
-                                        let mut w = rts.lock().await;
-                                        w.send(vec![path]).unwrap();
-                                    }
+                                let mut futs = FuturesUnordered::new();
+                                for handler in &bundle_handlers {
+                                    futs.push(
+                                        FlashBotsBundleHandler::submit(
+                                            bundle.clone(),
+                                            handler.clone(),
+                                            op.block_number,
+                                            op.block_number + 2)
+                                    );
                                 }
+                                futs.collect::<Vec<()>>().await;
+                                // let res = client.send_escalating( &typed_tx, 5, Box::new(|start, escalation_index| start * U256::from(10666).pow(escalation_index.into()) / U256::from(10000).pow(escalation_index.into()))).await;
+
+                                // info!("{:?}", res.unwrap().await)
                             }
                         }
                     });
