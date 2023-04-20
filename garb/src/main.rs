@@ -389,18 +389,19 @@ pub async fn transactor(
         let rts = rts.clone();
 
         workers.push(tokio::spawn(async move {
-            let mut last_block = 0_u64;
             while let Ok(orders) = routes.recv() {
                 if orders.len() == 0 {
                     continue
                 }
-                if last_block != orders.first().unwrap().block_number {
-                    last_block = orders.first().unwrap().block_number;
-                    let mut w = block_paths.write().await;
+                let mut w = block_paths.write().await;
+                if w.len() == 0 {
                     *w = orders.clone()
                 } else {
-                    let mut w = block_paths.write().await;
-                    w.append(&mut orders.clone());
+                    if w.first().unwrap().block_number == orders.first().unwrap().block_number {
+                        w.append(&mut orders.clone());
+                    } else {
+                        *w = orders.clone()
+                    }
                 }
 
                 let futs = futures::stream::FuturesUnordered::new();
