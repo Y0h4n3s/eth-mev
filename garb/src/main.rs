@@ -302,6 +302,31 @@ pub async fn transactor(
         ));
         bundle_handlers.push(client)
     }
+    let sender = rts.clone();
+    let block_paths: Arc<RwLock<Vec<ArbPath>>> = Arc::new(RwLock::new(vec![]));
+    let block_paths_update = block_paths.clone();
+    workers.push(tokio::runtime::Handle::current().spawn(async move {
+        let mut last_size = 0;
+        loop {
+            let r = block_paths_update.read().await.clone();
+            if r.len() == 0 || r.len() == last_size {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            last_size = r.len();
+
+            let merged = merge_paths(r.clone());
+            if merged.len() == 0 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            let mut w = sender.lock().await;
+            w.send(merged).unwrap();
+            drop(w);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }));
+
     let rt = rt.clone();
     for i in 0..15 {
         let signer = PRIVATE_KEY.clone().parse::<LocalWallet>().unwrap();
@@ -359,36 +384,7 @@ pub async fn transactor(
 
         let signer = Arc::new(signer);
         let signer_wallet_address = signer.address();
-        let rt = rts.clone();
-        let block_paths: Arc<RwLock<Vec<ArbPath>>> = Arc::new(RwLock::new(vec![]));
-        let block_paths_update = block_paths.clone();
-        let block_update = block.clone();
-        workers.push(tokio::runtime::Handle::current().spawn(async move {
-            let mut last_size = 0;
-            loop {
-                let block = block_update.read().await.clone();
-                if block.number.is_none() {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    continue;
-                }
-
-                let r = block_paths_update.read().await;
-                if r.len() == 0 || r.len() == last_size {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
-                }
-                last_size = r.len();
-
-                let merged = merge_paths(r.clone());
-                if merged.len() == 0 {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
-                }
-                let mut w = rt.lock().await;
-                w.send(merged).unwrap();
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        }));
+        let block_paths = block_paths.clone();
 
         let rts = rts.clone();
 
@@ -404,7 +400,7 @@ pub async fn transactor(
                     *w = orders.clone()
                 } else {
                     let mut w = block_paths.write().await;
-                    w.extend(orders.clone());
+                    w.append(&mut orders.clone());
                 }
 
                 let futs = futures::stream::FuturesUnordered::new();
