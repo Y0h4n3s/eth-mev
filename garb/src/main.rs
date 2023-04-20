@@ -389,24 +389,24 @@ pub async fn transactor(
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }));
-        let ap = client.clone();
-        let block_paths_update = block_paths.clone();
-        
-        workers.push(tokio::runtime::Handle::current().spawn(async move {
-            let block_stream = ap.watch_blocks().await.unwrap();
-            let mut s = block_stream.stream();
-            while let Some(_) = s.next().await {
-                let mut w = block_paths_update.write().await;
-                *w = vec![];
-            }
-        }));
+
         let rts = rts.clone();
 
         workers.push(tokio::spawn(async move {
+            let mut last_block = 0_u64;
             while let Ok(orders) = routes.recv() {
-                let mut w = block_paths.write().await;
-                w.extend(orders.clone());
-                drop(w);
+                if orders.len() == 0 {
+                    continue
+                }
+                if last_block != orders.first().unwrap().block_number {
+                    last_block = orders.first().unwrap().block_number;
+                    let mut w = block_paths.write().await;
+                    *w = orders.clone()
+                } else {
+                    let mut w = block_paths.write().await;
+                    w.extend(orders.clone());
+                }
+
                 let futs = futures::stream::FuturesUnordered::new();
                 for op in orders {
                     let nonce_num = nonce.clone();
