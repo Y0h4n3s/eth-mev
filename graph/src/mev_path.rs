@@ -120,113 +120,117 @@ impl MevPath {
         let calc2 = second.provider.build_calculator();
 
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
-            let mut steps = vec![];
-            let mut instruction = vec![];
-            let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
-            let mut asset = U256::from(i_atomic as u128);
+            let func = |mid| {
+                let mut steps = vec![];
+                let mut instruction = vec![];
+                let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
+                let mut asset = U256::from(i_atomic as u128);
 
 
-            let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
-                x
-            } else {
-                continue
-            };
-            let final_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
-                x
-            } else {
-                continue;
-            };
 
-            let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
-            if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
-            }
+                let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
+                    x
+                } else {
+                    return (I256::min_value(), vec![], vec![])
+                };
+                let final_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
+                    x
+                } else {
+                    return (I256::min_value(), vec![], vec![])
+                };
 
-            let (asset_token, debt_token) = if first.x_to_y {
-                (first.y_address.clone(), first.x_address.clone())
-            } else {
-                (first.x_address.clone(), first.y_address.clone())
-            };
-            #[cfg(not(feature = "optimized"))]
-            steps.push(StepMeta {
-                step_id: "scsn_1".to_string(),
-                asset: I256::from_raw(asset),
-                debt: I256::from_raw(first_debt),
-                asset_token: asset_token,
-                debt_token: debt_token,
-                step: first.clone(),
-            });
+                let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
+                if final_debt > asset {
+                    return (final_balance, vec![], vec![])
+                }
 
-            let mut ix = first.provider.pay_self_signature(false) + &first.address[2..];
-            // first is guaranteed to be either v3 pools or v2 variants
-            let packed_asset = Self::encode_packed_uint(asset);
-            ix += &(if first.x_to_y { "01".to_string() } else { "00".to_string() }
-                + &(packed_asset.len() as u8).encode_hex()[64..]
-                + &packed_asset);
+                let (asset_token, debt_token) = if first.x_to_y {
+                    (first.y_address.clone(), first.x_address.clone())
+                } else {
+                    (first.x_address.clone(), first.y_address.clone())
+                };
+                #[cfg(not(feature = "optimized"))]
+                steps.push(StepMeta {
+                    step_id: "scsn_1".to_string(),
+                    asset: I256::from_raw(asset),
+                    debt: I256::from_raw(first_debt),
+                    asset_token: asset_token,
+                    debt_token: debt_token,
+                    step: first.clone(),
+                });
+
+                let mut ix = first.provider.pay_self_signature(false) + &first.address[2..];
+                // first is guaranteed to be either v3 pools or v2 variants
+                let packed_asset = Self::encode_packed_uint(asset);
+                ix += &(if first.x_to_y { "01".to_string() } else { "00".to_string() }
+                    + &(packed_asset.len() as u8).encode_hex()[64..]
+                    + &packed_asset);
 
 
-            let (asset_token, debt_token) = if second.x_to_y {
-                (second.y_address.clone(), second.x_address.clone())
-            } else {
-                (second.x_address.clone(), second.y_address.clone())
-            };
-            instruction.push(ix);
-            let packed_debt = Self::encode_packed_uint(final_debt);
+                let (asset_token, debt_token) = if second.x_to_y {
+                    (second.y_address.clone(), second.x_address.clone())
+                } else {
+                    (second.x_address.clone(), second.y_address.clone())
+                };
+                instruction.push(ix);
+                let packed_debt = Self::encode_packed_uint(final_debt);
 
-            #[cfg(not(feature = "optimized"))]
-            steps.push(StepMeta {
-                step_id: "scsn_3".to_string(),
-                asset: I256::from_raw(first_debt),
-                debt: I256::from_raw(final_debt),
-                asset_token: asset_token.clone(),
-                debt_token: debt_token.clone(),
-                step: second.clone(),
-            });
-            let mut ix = second.provider.pay_sender_signature(false);
-            let packed_asset = Self::encode_packed_uint(first_debt);
-            // second is guaranteed to be balancer pools
+                #[cfg(not(feature = "optimized"))]
+                steps.push(StepMeta {
+                    step_id: "scsn_3".to_string(),
+                    asset: I256::from_raw(first_debt),
+                    debt: I256::from_raw(final_debt),
+                    asset_token: asset_token.clone(),
+                    debt_token: debt_token.clone(),
+                    step: second.clone(),
+                });
+                let mut ix = second.provider.pay_sender_signature(false);
+                let packed_asset = Self::encode_packed_uint(first_debt);
+                // second is guaranteed to be balancer pools
 
-            match &second.provider {
-                LiquidityProviders::BalancerWeighted(meta) => {
-                    ix += &(meta.id[2..].to_string()
+                match &second.provider {
+                    LiquidityProviders::BalancerWeighted(meta) => {
+                        ix += &(meta.id[2..].to_string()
                             + &debt_token[2..]
                             + &asset_token[2..]
                             + &(packed_asset.len() as u8).encode_hex()[64..]
                             + &packed_asset
                             + &(packed_debt.len() as u8).encode_hex()[64..]
                             + &packed_debt)
+                    }
+                    // only balancer pools support niether so this should never match
+                    _ => {}
                 }
-                // only balancer pools support niether so this should never match
-                _ => {}
-            }
-            instruction.push(ix);
+                instruction.push(ix);
 
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+                return (final_balance, instruction, steps)
+            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
+
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -262,121 +266,123 @@ impl MevPath {
         let calc1 = first.provider.build_calculator();
         let calc2 = second.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
-            let mut steps = vec![];
-            let mut instruction = vec![];
-            let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
-            let mut asset = U256::from(i_atomic as u128);
+            let func = |mid| {
+                let mut steps = vec![];
+                let mut instruction = vec![];
+                let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
+                let mut asset = U256::from(i_atomic as u128);
 
 
-            let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
-                x
-            } else {
-                continue
+                let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
+                    x
+                } else {
+                    return (I256::min_value(), vec![], vec![])
+                };
+                let final_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
+                    x
+                } else {
+                    return (I256::min_value(), vec![], vec![])
+                };
+
+                let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
+                if final_debt > asset {
+                    return (I256::min_value(), vec![], vec![])
+                }
+
+
+                let (asset_token, debt_token) = if first.x_to_y {
+                    (first.y_address.clone(), first.x_address.clone())
+                } else {
+                    (first.x_address.clone(), first.y_address.clone())
+                };
+
+                #[cfg(not(feature = "optimized"))]
+                steps.push(StepMeta {
+                    step_id: "scsc_1".to_string(),
+                    asset: I256::from_raw(asset),
+                    debt: I256::from_raw(first_debt),
+                    asset_token: asset_token,
+                    debt_token: debt_token,
+                    step: first.clone(),
+                });
+
+                let mut ix = first.provider.pay_self_signature(false) + &first.address[2..];
+                // first is guaranteed to be either v3 pools or v2 variants
+                let packed_asset = Self::encode_packed_uint(asset);
+                ix += &(if first.x_to_y { "01".to_string() } else { "00".to_string() }
+                    + &(packed_asset.len() as u8).encode_hex()[64..]
+                    + &packed_asset);
+
+                instruction.push(ix);
+                let (asset_token, debt_token) = if second.x_to_y {
+                    (second.y_address.clone(), second.x_address.clone())
+                } else {
+                    (second.x_address.clone(), second.y_address.clone())
+                };
+                #[cfg(not(feature = "optimized"))]
+                steps.push(StepMeta {
+                    step_id: "scsc_2".to_string(),
+                    asset: I256::from_raw(first_debt),
+                    debt: I256::from_raw(final_debt),
+                    asset_token: asset_token.clone(),
+                    debt_token: debt_token.clone(),
+                    step: second.clone(),
+                });
+                let mut ix = second.provider.pay_sender_signature(false) + &second.address[2..];
+                let packed_asset = Self::encode_packed_uint(first_debt);
+                let packed_debt = Self::encode_packed_uint(final_debt);
+
+                // second is guaranteed to be v3 pools
+                // since v2 pools will be matched by scsp
+
+                ix += &(if second.x_to_y { "01".to_string() } else { "00".to_string() }
+                    + &(packed_asset.len() as u8).encode_hex()[64..]
+                    + &packed_asset);
+                instruction.push(ix);
+
+                #[cfg(not(feature = "optimized"))]
+                steps.push(StepMeta {
+                    step_id: "scsc_3".to_string(),
+                    asset: I256::from_raw(first_debt),
+                    debt: I256::from_raw(final_debt),
+                    asset_token: asset_token.clone(),
+                    debt_token: debt_token.clone(),
+                    step: second.clone(),
+                });
+                let mut ix = PAY_SENDER.to_string()
+                    + &debt_token[2..]
+                    + &(packed_debt.len() as u8).encode_hex()[64..]
+                    + &packed_debt;
+
+                instruction.push(ix);
+                return (final_balance, instruction, steps)
             };
-            let final_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
-                x
-            } else {
-                continue;
-            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-            let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
-            if final_debt > asset {
-                best_route_profit = final_balance;
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
+            } else {
                 right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
             }
 
 
-            let (asset_token, debt_token) = if first.x_to_y {
-                (first.y_address.clone(), first.x_address.clone())
-            } else {
-                (first.x_address.clone(), first.y_address.clone())
-            };
-
-            #[cfg(not(feature = "optimized"))]
-            steps.push(StepMeta {
-                step_id: "scsc_1".to_string(),
-                asset: I256::from_raw(asset),
-                debt: I256::from_raw(first_debt),
-                asset_token: asset_token,
-                debt_token: debt_token,
-                step: first.clone(),
-            });
-
-            let mut ix = first.provider.pay_self_signature(false) + &first.address[2..];
-            // first is guaranteed to be either v3 pools or v2 variants
-            let packed_asset = Self::encode_packed_uint(asset);
-            ix += &(if first.x_to_y { "01".to_string() } else { "00".to_string() }
-                + &(packed_asset.len() as u8).encode_hex()[64..]
-                + &packed_asset);
-
-            instruction.push(ix);
-            let (asset_token, debt_token) = if second.x_to_y {
-                (second.y_address.clone(), second.x_address.clone())
-            } else {
-                (second.x_address.clone(), second.y_address.clone())
-            };
-            #[cfg(not(feature = "optimized"))]
-            steps.push(StepMeta {
-                step_id: "scsc_2".to_string(),
-                asset: I256::from_raw(first_debt),
-                debt: I256::from_raw(final_debt),
-                asset_token: asset_token.clone(),
-                debt_token: debt_token.clone(),
-                step: second.clone(),
-            });
-            let mut ix = second.provider.pay_sender_signature(false) + &second.address[2..];
-            let packed_asset = Self::encode_packed_uint(first_debt);
-            let packed_debt = Self::encode_packed_uint(final_debt);
-
-            // second is guaranteed to be v3 pools
-            // since v2 pools will be matched by scsp
-
-            ix += &(if second.x_to_y { "01".to_string() } else { "00".to_string() }
-                + &(packed_asset.len() as u8).encode_hex()[64..]
-                + &packed_asset);
-            instruction.push(ix);
-
-            #[cfg(not(feature = "optimized"))]
-            steps.push(StepMeta {
-                step_id: "scsc_3".to_string(),
-                asset: I256::from_raw(first_debt),
-                debt: I256::from_raw(final_debt),
-                asset_token: asset_token.clone(),
-                debt_token: debt_token.clone(),
-                step: second.clone(),
-            });
-            let mut ix = PAY_SENDER.to_string()
-                + &debt_token[2..]
-                + &(packed_debt.len() as u8).encode_hex()[64..]
-                + &packed_debt;
-
-            instruction.push(ix);
-
-            steps_meta.push(steps);
-            instructions.push(instruction);
             if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
                 best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                right = mid;
             }
             mid = (left + right) / 2.0;
         }
@@ -412,6 +418,7 @@ impl MevPath {
         let calc1 = first.provider.build_calculator();
         let calc2 = second.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -421,20 +428,17 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let final_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
             } else {
-                continue;
+                return (I256::min_value(), vec![], vec![]);
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
 
 
@@ -502,30 +506,34 @@ impl MevPath {
                     + &(packed_asset.len() as u8).encode_hex()[64..]
                     + &packed_asset);
             instruction.push(ix);
+                return (final_balance, instruction, steps)
+            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -563,6 +571,7 @@ impl MevPath {
         let calc2 = second.provider.build_calculator();
         let calc3 = third.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -572,24 +581,21 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let final_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
 
             let (asset_token, debt_token) = if first.x_to_y {
@@ -680,29 +686,34 @@ impl MevPath {
                     + &(packed_asset.len() as u8).encode_hex()[64..]
                     + &packed_asset);
             instruction.push(ix);
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+                return (final_balance, instruction, steps)
+            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
+
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -740,6 +751,7 @@ impl MevPath {
         let calc2 = second.provider.build_calculator();
         let calc3 = third.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -747,24 +759,21 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let final_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
             let (asset_token, debt_token) = if first.x_to_y {
                 (first.y_address.clone(), first.x_address.clone())
@@ -861,30 +870,34 @@ impl MevPath {
                 + &packed_debt;
 
             instruction.push(ix);
+                return (final_balance, instruction, steps)
+            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -922,6 +935,7 @@ impl MevPath {
         let calc2 = second.provider.build_calculator();
         let calc3 = third.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -929,24 +943,21 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let final_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
             let (asset_token, debt_token) = if first.x_to_y {
                 (first.y_address.clone(), first.x_address.clone())
@@ -1030,31 +1041,34 @@ impl MevPath {
 
 
             instruction.push(ix);
+                return (final_balance, instruction, steps)
+            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -1092,6 +1106,7 @@ impl MevPath {
         let calc2 = second.provider.build_calculator();
         let calc3 = third.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -1099,24 +1114,21 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let final_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
             let (asset_token, debt_token) = if first.x_to_y {
                 (first.y_address.clone(), first.x_address.clone())
@@ -1209,31 +1221,34 @@ impl MevPath {
 
 
             instruction.push(ix);
+                return (final_balance, instruction, steps)
+            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -1271,6 +1286,7 @@ impl MevPath {
         let calc2 = second.provider.build_calculator();
         let calc3 = third.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -1278,27 +1294,24 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
             let (asset_token, debt_token) = if first.x_to_y {
                 (first.y_address.clone(), first.x_address.clone())
@@ -1392,30 +1405,34 @@ impl MevPath {
                          + &packed_debt;
 
             instruction.push(ix);
+                return (final_balance, instruction, steps)
+            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -1453,6 +1470,7 @@ impl MevPath {
         let calc2 = second.provider.build_calculator();
         let calc3 = third.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -1460,24 +1478,21 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let final_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
             let (asset_token, debt_token) = if first.x_to_y {
                 (first.y_address.clone(), first.x_address.clone())
@@ -1563,31 +1578,35 @@ impl MevPath {
                 _ => {}
             }
             instruction.push(ix);
+                return (final_balance, instruction, steps)
+            };
 
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -1625,6 +1644,7 @@ impl MevPath {
         let calc2 = second.provider.build_calculator();
         let calc3 = third.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -1632,24 +1652,21 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let final_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
             let (asset_token, debt_token) = if first.x_to_y {
                 (first.y_address.clone(), first.x_address.clone())
@@ -1758,31 +1775,35 @@ impl MevPath {
                 _ => {}
             }
             instruction.push(ix);
+                return (final_balance, instruction, steps)
+            };
 
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -1820,6 +1841,7 @@ impl MevPath {
         let calc2 = second.provider.build_calculator();
         let calc3 = third.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -1827,24 +1849,21 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let final_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
             let (asset_token, debt_token) = if first.x_to_y {
                 (first.y_address.clone(), first.x_address.clone())
@@ -1947,31 +1966,35 @@ impl MevPath {
                 _ => {}
             }
             instruction.push(ix);
+                return (final_balance, instruction, steps)
+            };
 
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -2009,6 +2032,7 @@ impl MevPath {
         let calc2 = second.provider.build_calculator();
         let calc3 = third.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -2016,24 +2040,21 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let final_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
             let (asset_token, debt_token) = if first.x_to_y {
                 (first.y_address.clone(), first.x_address.clone())
@@ -2131,31 +2152,35 @@ impl MevPath {
                 _ => {}
             }
             instruction.push(ix);
+                return (final_balance, instruction, steps)
+            };
 
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -2194,6 +2219,7 @@ impl MevPath {
         let calc3 = third.provider.build_calculator();
         let calc4 = fourth.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -2203,30 +2229,27 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let third_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_debt = if let Ok(x) = calc4.calculate_in(third_debt, fourth) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
 
             // 1. initial pay self
@@ -2348,30 +2371,34 @@ impl MevPath {
                 + &packed_asset);
             instruction.push(ix);
 
+                return (final_balance, instruction, steps)
+            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -2410,6 +2437,7 @@ impl MevPath {
         let calc3 = third.provider.build_calculator();
         let calc4 = fourth.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -2419,30 +2447,27 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let third_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_debt = if let Ok(x) = calc4.calculate_in(third_debt, fourth) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
 
             // 1. initial pay self
@@ -2564,30 +2589,34 @@ impl MevPath {
                 + &packed_asset);
 
             instruction.push(ix);
+                return (final_balance, instruction, steps)
+            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -2626,6 +2655,7 @@ impl MevPath {
         let calc3 = third.provider.build_calculator();
         let calc4 = fourth.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -2635,30 +2665,27 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let third_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_debt = if let Ok(x) = calc4.calculate_in(third_debt, fourth) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
 
             // 1. initial pay self
@@ -2786,29 +2813,34 @@ impl MevPath {
                 + &packed_debt;
 
             instruction.push(ix);
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+                return (final_balance, instruction, steps)
+            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
+
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }
@@ -2847,6 +2879,7 @@ impl MevPath {
         let calc3 = third.provider.build_calculator();
         let calc4 = fourth.provider.build_calculator();
         'binary_search: for i in 0..BINARY_SEARCH_ITERS {
+            let func = |mid| {
             let mut steps = vec![];
             let mut instruction = vec![];
             let i_atomic = (mid) * 10_u128.pow(decimals as u32) as f64;
@@ -2856,30 +2889,27 @@ impl MevPath {
             let first_debt = if let Ok(x) = calc1.calculate_in(asset, first) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
             let second_debt = if let Ok(x) = calc2.calculate_in(first_debt, second) {
                 x
-            } else { continue };
+            } else { return (I256::min_value(), vec![], vec![]) };
 
             let third_debt = if let Ok(x) = calc3.calculate_in(second_debt, third) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_debt = if let Ok(x) = calc4.calculate_in(third_debt, fourth) {
                 x
             } else {
-                continue
+                return (I256::min_value(), vec![], vec![])
             };
 
             let final_balance = sub_i256(I256::from_raw(asset), I256::from_raw(final_debt));
             if final_debt > asset {
-                best_route_profit = final_balance;
-                right = mid;
-                mid = (left + right) / 2.0;
-                continue
+                return (I256::min_value(), vec![], vec![])
             }
 
             // 1. initial pay self
@@ -2996,30 +3026,34 @@ impl MevPath {
                 + &(packed_debt.len() as u8).encode_hex()[64..]
                 + &packed_debt;
             instruction.push(ix);
+                return (final_balance, instruction, steps)
+            };
+            let ((rightDiff, right_ix, right_steps), (leftDiff, left_ix, left_steps)) = (func((right + mid) / 2.0), func((left + mid) / 2.0));
 
-            steps_meta.push(steps);
-            instructions.push(instruction);
-            if i == 0 {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
-            } else if final_balance >= best_route_profit {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
-                best_route_index = instructions.len() - 1;
-                if best_route_profit > I256::from(0) {
-                    left = mid;
-                } else {
-                    right = mid;
-                }
+            let mut input = 0.0;
+            let mut diff = I256::from(0);
+            if rightDiff > leftDiff {
+                left = mid;
+                input = (right + mid) / 2.0;
+                steps_meta.push(right_steps);
+                instructions.push(right_ix);
+                diff = rightDiff;
             } else {
-                best_route_profit = final_balance;
-                best_route_size = i_atomic;
                 right = mid;
+                input = (left + mid) / 2.0;
+                steps_meta.push(left_steps);
+                instructions.push(left_ix);
+                diff = leftDiff;
+            }
+
+
+            if i == 0 {
+                best_route_profit = diff;
+                best_route_size = input;
+            } else if diff >= best_route_profit {
+                best_route_profit = diff;
+                best_route_size = input;
+                best_route_index = instructions.len() - 1;
             }
             mid = (left + right) / 2.0;
         }

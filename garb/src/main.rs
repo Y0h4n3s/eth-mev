@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -199,6 +200,9 @@ pub fn calculate_next_block_base_fee(block: Block<TxHash>) -> anyhow::Result<U25
 
 pub fn merge_paths(paths: Vec<ArbPath>) -> Vec<ArbPath> {
     let mut new_paths = vec![];
+    let mut paths = paths;
+    paths.sort_by(|a,b| if a.profit > b.profit {Ordering::Less} else {Ordering::Greater});
+    info!("{} {}", paths.first().unwrap().profit, paths.last().unwrap().profit);
     for i in 2..7 {
         for j in 0..paths.len() {
             let mut mergeable = vec![];
@@ -489,8 +493,12 @@ pub async fn transactor(
                                     tx_request.value = Some(tx_request.value.unwrap().max(bribe));
                                 } else {
                                     let max_fee = op.profit / res.gas_used;
+                                    if max_fee < base_fee {
+                                        return
+                                    }
                                     tx_request.max_fee_per_gas = Some(max_fee);
                                 }
+
                                 let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
                                 let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
                                 let signed_tx = typed_tx.rlp_signed(&tx_sig);

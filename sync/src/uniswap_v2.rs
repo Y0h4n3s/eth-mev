@@ -259,7 +259,11 @@ impl EventEmitter<Box<dyn EventSource<Event=PoolUpdateEvent>>> for UniSwapV2 {
                 let mut first = true;
                 let subscribers = subscribers.read().unwrap();
                 let subs = subscribers.first().unwrap().clone();
+
                 while let Some(blk) = s.next().await {
+                    // if let Ok(Some(b)) = client.get_block_with_txs(blk).await {
+                    //     info!("{}", b.transactions.len());
+                    // }
                     let mut futs = FuturesUnordered::new();
                     let now = SystemTime::now();
                     for p in pools.iter() {

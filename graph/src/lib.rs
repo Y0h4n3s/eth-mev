@@ -881,6 +881,9 @@ DETACH DELETE n",
                                 }
 
                             }).collect::<Vec<ArbPath>>();
+                        if paths.len() == 0 {
+                            return
+                        }
                         let mut w = single_routes.lock().unwrap();
                         w.send(paths).unwrap()
                     });
