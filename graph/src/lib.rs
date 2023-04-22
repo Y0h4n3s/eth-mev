@@ -848,7 +848,7 @@ DETACH DELETE n",
                     .map(|pool| (pool.address.clone(), pool))
                     .collect::<HashMap<String, Pool>>();
                 let r = gas_lookup.read().unwrap().clone();
-                market_routes.chunks(20)
+                market_routes.chunks(200)
                     .collect_vec()
                     .into_par_iter()
                     .for_each(|routes| {

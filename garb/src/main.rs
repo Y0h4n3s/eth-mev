@@ -202,7 +202,6 @@ pub fn merge_paths(paths: Vec<ArbPath>) -> Vec<ArbPath> {
     let mut new_paths = vec![];
     let mut paths = paths;
     paths.sort_by(|a,b| if a.profit > b.profit {Ordering::Less} else {Ordering::Greater});
-    info!("{} {}", paths.first().unwrap().profit, paths.last().unwrap().profit);
     for i in 2..7 {
         for j in 0..paths.len() {
             let mut mergeable = vec![];
@@ -314,20 +313,20 @@ pub async fn transactor(
         loop {
             let r = block_paths_update.read().await.clone();
             if r.len() == 0 || r.len() == last_size {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(300)).await;
                 continue;
             }
             last_size = r.len();
 
             let merged = merge_paths(r.clone());
             if merged.len() == 0 {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(300)).await;
                 continue;
             }
             let mut w = sender.lock().await;
             w.send(merged).unwrap();
             drop(w);
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
         }
     }));
 
@@ -465,7 +464,7 @@ pub async fn transactor(
                         let signed_tx = typed_tx.rlp_signed(&tx_sig);
                         let mut bundle = vec![];
                         bundle.push(signed_tx);
-                        info!(
+                        debug!(
                                         "Simulating {}. ->  {} {} {:?} {:?} {:?} {} {:?}",
                                         i+1,
                                         gas_cost,
@@ -478,14 +477,14 @@ pub async fn transactor(
                                 );
                         for (i, locked_pool) in op.path.locked_pools.iter().enumerate() {
                             let pool = locked_pool.read().await;
-                            info!("{}. {}", i, pool);
+                            debug!("{}. {}", i, pool);
                         }
-                        info!("\n\n");
+                        debug!("\n\n");
 
                         let res = FlashBotsBundleHandler::simulate(bundle.clone(), &handler, op.block_number, true).await;
                         if let Some(res) = res {
                             if res.transactions.iter().all(|tx| tx.error.is_none()) {
-                                info!("{} -> {:?}: {}", op.block_number, op.path.optimal_path, op.result.ix_data);
+                                debug!("{} -> {:?}: {}", op.block_number, op.path.optimal_path, op.result.ix_data);
                                 tx_request.gas = Some(res.gas_used + 10000);
                                 if op.profit > res.gas_used * tx_request.max_fee_per_gas.unwrap() {
                                     let extra = op.profit - res.gas_used * tx_request.max_fee_per_gas.unwrap();
@@ -505,8 +504,9 @@ pub async fn transactor(
                                 let mut bundle = vec![];
                                 bundle.push(signed_tx);
                                 info!(
-                                        "Trying {}. ->  {} {} {:?} {:?} {:?} {} {:?}",
+                                        "Trying {}. -> {} {} {} {:?} {:?} {:?} {} {:?}",
                                         i+1,
+                                    op.profit.checked_div(U256::from(10).pow(U256::from(9))).unwrap().as_u128() as f64 / 10_f64.powf(9.0),
                                         tx_request.gas.unwrap(),
                                             tx_request.value.unwrap(),
                                         op.block_number,
@@ -621,7 +621,7 @@ impl FlashBotsBundleHandler {
         if let Ok(res) = simulation_result {
             if only_successful {
                 if res.transactions.iter().all(|tx| tx.error.is_none()) {
-                    info!("{:?}", res);
+                    // info!("{:?}", res);
                 }
             } else {
                 info!("{:?}", res);
