@@ -486,17 +486,16 @@ pub async fn transactor(
                             if res.transactions.iter().all(|tx| tx.error.is_none()) {
                                 debug!("{} -> {:?}: {}", op.block_number, op.path.optimal_path, op.result.ix_data);
                                 tx_request.gas = Some(res.gas_used + 10000);
-                                if op.profit > res.gas_used * tx_request.max_fee_per_gas.unwrap() {
-                                    let extra = op.profit - res.gas_used * tx_request.max_fee_per_gas.unwrap();
-                                    let bribe = (extra * 90) / 100;
-                                    tx_request.value = Some(tx_request.value.unwrap().max(bribe));
-                                } else {
-                                    let max_fee = op.profit / res.gas_used;
-                                    if max_fee < base_fee {
-                                        return
-                                    }
-                                    tx_request.max_fee_per_gas = Some(max_fee);
+                                let mut max_fee = op.profit / res.gas_used;
+                                if max_fee < base_fee {
+                                    return
                                 }
+                                let bribe_fee = max_fee - base_fee;
+                                max_fee += (bribe_fee * 20) / 100;
+                                let bribe = (bribe_fee * res.gas_used * 80) / 100;
+                                tx_request.value = Some(tx_request.value.unwrap().max(bribe));
+                                tx_request.max_fee_per_gas = Some(max_fee);
+                                tx_request.max_priority_fee_per_gas = Some((bribe_fee * res.gas_used * 20) / 100);
 
                                 let typed_tx = TypedTransaction::Eip1559(tx_request.clone());
                                 let tx_sig = signer.sign_transaction(&typed_tx).await.unwrap();
@@ -564,6 +563,7 @@ impl FlashBotsBundleHandler {
         from_block: u64,
         to_block: u64,
     ) {
+
         for block in from_block..to_block + 1 {
             let mut bundle = BundleRequest::new();
             for tx in &txs {
